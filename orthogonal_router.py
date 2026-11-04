@@ -6,9 +6,10 @@ inside simulated annealing. Component placements and pin portals are immutable.
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 import heapq
 from itertools import count
-from math import inf
+from math import inf, isfinite
 from time import perf_counter
 
 
@@ -54,7 +55,7 @@ def _scene_rectangles(scene):
     return [rect for _, rect in scene.body_rects] + [rect for _, rect in scene.marker_rects]
 
 
-def _axes(scene, occupied, tree, margin):
+def _axes(scene, occupied, tree, margin, extra_points=()):
     """Hanan-style coordinates plus clearance tracks and outer escape channels."""
     spacing = scene.options.center_spacing
     quiet = scene.options.cross_clearance
@@ -75,6 +76,9 @@ def _axes(scene, occupied, tree, margin):
                            point[0]-quiet, point[0]+quiet))
                 ys.update((point[1], point[1]-spacing, point[1]+spacing,
                            point[1]-quiet, point[1]+quiet))
+    for x, y in extra_points:
+        xs.add(x)
+        ys.add(y)
     x0, y0, x1, y1 = scene.bounds
     low_x, high_x, low_y, high_y = x0-margin, x1+margin, y0-margin, y1+margin
     xs.update((low_x, high_x)); ys.update((low_y, high_y))
@@ -92,10 +96,11 @@ def _history_cost(a, b, history):
 
 
 def _find_path(scene, net, start, tree, occupied, margin, history, statistics,
-               checks=None, prepared=None, deadline=None):
+               checks=None, prepared=None, deadline=None, *, extra_points=(),
+               initial_direction=None):
     """A* carries heading; only actual turns and attachments need quiet zones."""
     _check_deadline(deadline, net=net, stage='branch_search')
-    xs, ys = _axes(scene, occupied, tree, margin)
+    xs, ys = _axes(scene, occupied, tree, margin, extra_points=extra_points)
     nodes = len(xs)*len(ys)
     statistics['graph_nodes'] = max(statistics['graph_nodes'], nodes)
     statistics['attempts'] += 1
@@ -127,7 +132,15 @@ def _find_path(scene, net, start, tree, occupied, margin, history, statistics,
     allowed, _, rejected_by = vertex(start)
     if not allowed:
         return None, Counter(rejected_by)
-    initial = (x_index[start[0]], y_index[start[1]], -1)
+    initial_heading = -1
+    if initial_direction is not None:
+        if (len(initial_direction) != 2
+                or any(type(value) not in (int, float) or not isfinite(value)
+                       for value in initial_direction)
+                or (initial_direction[0] == 0) == (initial_direction[1] == 0)):
+            raise ValueError('The initial routing direction must be a non-zero axis vector')
+        initial_heading = 0 if initial_direction[0] else 1
+    initial = (x_index[start[0]], y_index[start[1]], initial_heading)
     distances, parents = {initial: 0.0}, {}
     serial = count()
     heap = [(_distance(start, tree), 0.0, next(serial), initial)]
@@ -167,6 +180,10 @@ def _find_path(scene, net, start, tree, occupied, margin, history, statistics,
             if not (0 <= jx < len(xs) and 0 <= jy < len(ys)):
                 continue
             target = (xs[jx], ys[jy])
+            if (initial_direction is not None and point == start
+                    and ((target[0]-point[0])*initial_direction[0]
+                         + (target[1]-point[1])*initial_direction[1]) < 0):
+                continue
             if not free(target):
                 continue
             turning = heading != -1 and next_heading != heading
@@ -196,7 +213,7 @@ def _find_path(scene, net, start, tree, occupied, margin, history, statistics,
 
 
 def _route_net(scene, net, occupied, margin, history, statistics, shared_free=None,
-               deadline=None):
+               deadline=None, *, _rescue_state=None):
     from routing_rules import canonical_topology
     _check_deadline(deadline, net=net, stage='net_start')
     pins = sorted(scene.pins[net], key=lambda pin:(pin.point,pin.component,pin.pin))
@@ -216,6 +233,10 @@ def _route_net(scene, net, occupied, margin, history, statistics, shared_free=No
         _check_deadline(deadline, net=net, stage='branch_start')
         remaining.sort(key=lambda pin:(_distance(pin.escape,tree),pin.point,pin.component,pin.pin))
         pin = remaining.pop(0)
+        if _rescue_state is not None:
+            _rescue_state['branch'] = {'net': net, 'component': pin.component,
+                                       'pin': pin.pin, 'point': pin.point,
+                                       'escape': pin.escape}
         if any(_on(pin.point,a,b) for a,b in tree):
             continue
         paths, blocked = _find_path(scene,net,pin.escape,tree,occupied,margin,history,statistics,
@@ -252,6 +273,7 @@ def route_scene(scene, deadline=None):
     history=[]
     order=list(initial_order)
     shared_free={}
+    rescue_state=None
     try:
         _check_deadline(deadline, stage='routing_start')
         for margin in scene.options.margins:
@@ -265,8 +287,13 @@ def route_scene(scene, deadline=None):
                 occupied={name:list(segments) for name,segments in scene.fixed_segments.items()}
                 for name,segments in completed.items():
                     occupied.setdefault(name,[]).extend(segments)
+                # Keep references to immutable accepted routes until failure;
+                # the potentially larger deep copy is never on the success path.
+                rescue_state={'completed':dict(completed), 'failed_net':net,
+                              'pending':list(pending), 'margin':margin, 'branch':None}
                 result,blockers=_route_net(scene,net,occupied,margin,history,diagnostics,
-                                           shared_free,deadline=deadline)
+                                           shared_free,deadline=deadline,
+                                           _rescue_state=rescue_state)
                 failure={'reason':'no_path','net':net,
                          'branch':diagnostics.get('failed_branch')}
                 if result is not None:
@@ -283,6 +310,9 @@ def route_scene(scene, deadline=None):
                         failure={'reason':'candidate_validation','net':net,'violations':relevant}
                 if result is not None:
                     completed[net]=result
+                    # A later deadline must not label this accepted net as the
+                    # failure. A fresh checkpoint starts at the next real call.
+                    rescue_state=None
                     continue
                 movable=[name for name,_ in sorted(blockers.items(),key=lambda item:(-item[1],_priority(scene,item[0]) if item[0] in scene.pins else (0,0,item[0])))
                          if name in completed]
@@ -318,4 +348,9 @@ def route_scene(scene, deadline=None):
     except RoutingFailure as exc:
         diagnostics.update(exc.diagnostics)
         diagnostics['elapsed_seconds']=round(perf_counter()-started,6)
-        raise RoutingFailure(str(exc),diagnostics) from exc
+        if rescue_state is None:
+            diagnostics.setdefault('rescue_checkpoint_unavailable', 'no_active_net')
+        failure=RoutingFailure(str(exc),diagnostics)
+        failure._rescue_context=(None if rescue_state is None else
+            {'scene':scene, **deepcopy(rescue_state), 'options':deepcopy(scene.options)})
+        raise failure from exc

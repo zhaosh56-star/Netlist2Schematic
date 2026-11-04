@@ -26,7 +26,8 @@ ROUTING_FAILURES = (RoutingFailure, RoutingValidationError)
 def run(path, *, mode='layered', iterations=20000, seed=20261029,
         out_dir=None, cell=None, analog_canvas_root=None, routing_options=None,
         layout_style='structured', quality_seconds=300, candidate_id=None,
-        fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60):
+        fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
+        local_rescue=None, rescue_seconds=60):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -38,6 +39,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     if fallback not in (None, 'auto', 'off', 'only'):
         raise ValueError('fallback must be auto, off or only')
     policy = fallback if fallback is not None else ('off' if candidate_id is not None else 'auto')
+    rescue_policy = _rescue_policy(local_rescue, policy == 'auto')
+    _validate_rescue_seconds(rescue_seconds)
     if policy == 'only' and candidate_id is not None:
         raise ValueError('fallback only cannot be combined with candidate_id')
     for name, value, minimum, inclusive in (
@@ -76,20 +79,30 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                 result = _normal_result(source, par, mode, layout_style, cell, iterations,
                                         seed, quality_seconds, candidate_id, options)
             except ROUTING_FAILURES as exc:
+                if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
+                    raise
                 _check_source(source, source_hash)
                 stages.append(_failed_stage('normal', exc, perf_counter() - started))
-                if policy == 'off':
+                if policy == 'off' and rescue_policy == 'off':
                     raise
-                context = getattr(exc, 'retry_context', None)
+                context = deepcopy(getattr(exc, 'retry_context', None))
+                checkpoint = deepcopy(getattr(exc, '_rescue_context', None))
                 retry_options = getattr(exc, 'retry_options', None) or options
-                result = None
-                if context is not None and spacing_seconds > 0:
+                result = _try_local_rescue(context, checkpoint, retry_options,
+                                           rescue_policy, rescue_seconds, stages)
+                _check_source(source, source_hash)
+                if result is None and policy == 'off':
+                    if stages[-1]['status'] == 'failed':
+                        raise RoutingFailure('No verified route completed in the recovery stages',
+                            {'reason': 'recovery_failed', 'stages': deepcopy(stages)}) from exc
+                    raise
+                if result is None and context is not None and spacing_seconds > 0:
                     from spacing_retry import retry_spacing
                     print(f'Normal routing failed; spacing retry x{spacing_scale:g}, '
                           f'budget={spacing_seconds:g}s', flush=True)
                     started = perf_counter()
                     try:
-                        result = retry_spacing(context, routing_options=retry_options,
+                        result = retry_spacing(deepcopy(context), routing_options=retry_options,
                                                scale=spacing_scale, seconds=spacing_seconds)
                     except ROUTING_FAILURES as retry_exc:
                         stages.append(_failed_stage('spacing_retry', retry_exc,
@@ -97,7 +110,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                     else:
                         stages.append(_valid_stage('spacing_retry', result,
                                                    perf_counter() - started))
-                else:
+                elif result is None:
                     stages.append({'stage': 'spacing_retry', 'status': 'skipped',
                                    'reason': 'disabled' if spacing_seconds == 0 else 'no_attempted_layout'})
                 _check_source(source, source_hash)
@@ -113,7 +126,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     placement, comps, nets, comp_index, metadata, routed_result = result
     metadata = deepcopy(metadata)
     metadata.setdefault('routing_stage', 'normal')
-    metadata['recovery'] = {'policy': policy, 'stages': stages}
+    metadata['recovery'] = {'policy': policy, 'local_rescue': rescue_policy,
+                            'rescue_seconds': rescue_seconds, 'stages': stages}
     if len(set(placement.cell_of)) != len(comps) or any(p is None for p in placement.cell_of):
         raise ValueError('Placement contains unassigned or duplicate cells')
     data = {
@@ -166,6 +180,45 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
 def _check_source(source, expected_hash):
     if hashlib.sha256(Path(source).read_bytes()).hexdigest() != expected_hash:
         raise ValueError('Source netlist changed while the flow was running; rerun with the current input')
+
+
+def _rescue_policy(value, automatic):
+    if value not in (None, 'auto', 'off'):
+        raise ValueError('local_rescue must be auto or off')
+    return value if value is not None else ('auto' if automatic else 'off')
+
+
+def _validate_rescue_seconds(seconds):
+    if type(seconds) not in (int, float) or not isfinite(seconds) or seconds < 0:
+        raise ValueError('rescue_seconds must be finite and >= 0')
+
+
+def _try_local_rescue(context, checkpoint, options, policy, seconds, stages):
+    """Only the top-level failed-normal path may invoke this recovery stage."""
+    reason = ('disabled' if policy == 'off' or seconds == 0 else
+              'no_attempted_layout' if context is None else
+              'no_failure_checkpoint' if checkpoint is None else None)
+    if reason is not None:
+        stages.append({'stage': 'local_rescue', 'status': 'skipped', 'reason': reason})
+        return None
+    from local_rescue import rescue_routing
+    print(f'Normal routing failed; local rescue, budget={seconds:g}s', flush=True)
+    started = perf_counter()
+    try:
+        result = rescue_routing(deepcopy(context), deepcopy(checkpoint),
+                                routing_options=deepcopy(options), seconds=seconds)
+        if not result[5][2].get('valid', False):
+            raise RoutingFailure('Local rescue did not pass final validation',
+                                 {'reason': 'local_rescue_validation'})
+    except ROUTING_FAILURES as exc:
+        if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
+            raise
+        stages.append(_failed_stage('local_rescue', exc, perf_counter() - started))
+        return None
+    stages.append(_valid_stage('local_rescue', result, perf_counter() - started))
+    result[4]['routing_stage'] = 'local_rescue'
+    result[4].setdefault('local_rescue', {})['prior_stages'] = deepcopy(stages[:-1])
+    return result
 
 
 def _failed_stage(stage, exc, seconds):
@@ -265,7 +318,10 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
     return data
 
 
-def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None):
+def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
+                      *, local_rescue=None, rescue_seconds=60):
+    rescue_policy = _rescue_policy(local_rescue, False)
+    _validate_rescue_seconds(rescue_seconds)
     source_json = Path(jpath).expanduser().resolve()
     data, source, par, placement, comps, nets, comp_index = load_placement(
         source_json, analog_canvas_root=analog_canvas_root)
@@ -277,11 +333,46 @@ def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opti
     metadata.update(source_netlist=str(source), analog_canvas_root=str(resource_root()),
                     rerouted_from=str(source_json))
     options = routing_options or saved_routing_options(data)
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     routed_result = None
     if is_bus_layout(data):
         from fallback_bus import reroute_fallback
         routed_result = reroute_fallback(par, placement, comps, nets, comp_index, metadata,
                                           routing_options=options, deadline=perf_counter() + 60)
+    elif rescue_policy == 'auto' and rescue_seconds > 0:
+        _, diagnostic_path = _output_targets(base, data.get('mode', 'layered'), destination,
+                                             {source, source_json})
+        stages = []
+        started = perf_counter()
+        try:
+            routed_result = final_route(par, nets, placement, comp_index, options=options)
+        except ROUTING_FAILURES as exc:
+            if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
+                raise
+            _check_source(source, source_hash)
+            stages.append(_failed_stage('normal', exc, perf_counter() - started))
+            # These coordinates are the entire recovery boundary: fixed
+            # rerouting never invokes spacing or constructive relayout.
+            context = deepcopy((placement, comps, nets, comp_index, metadata))
+            result = _try_local_rescue(context, getattr(exc, '_rescue_context', None),
+                                       options, rescue_policy, rescue_seconds, stages)
+            _check_source(source, source_hash)
+            if result is None:
+                failure = RoutingFailure('No verified fixed-placement route completed',
+                    {'reason': 'recovery_failed', 'stages': deepcopy(stages)})
+                _record_failure(failure, diagnostic_path, source)
+                raise failure from exc
+            placement, comps, nets, comp_index, metadata, routed_result = result
+            metadata['recovery'] = {'policy': 'off', 'local_rescue': rescue_policy,
+                                    'rescue_seconds': rescue_seconds, 'stages': stages}
+        else:
+            _check_source(source, source_hash)
+            stages.append(_valid_stage('normal',
+                (placement, comps, nets, comp_index, metadata, routed_result),
+                perf_counter() - started))
+            metadata['routing_stage'] = 'normal'
+            metadata['recovery'] = {'policy': 'off', 'local_rescue': rescue_policy,
+                                    'rescue_seconds': rescue_seconds, 'stages': stages}
     return _finish(metadata, par, placement, comps, nets, comp_index, base, destination,
                    protected_paths={source, source_json},
                    options=options, routed_result=routed_result)
@@ -297,6 +388,9 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--candidate-id', help='Replay one structured candidate identifier')
     parser.add_argument('--fallback', choices=('auto', 'off', 'only'),
                         help='Default: auto for netlists, off for candidate replay')
+    parser.add_argument('--local-rescue', choices=('auto', 'off'),
+                        help='Failure-only local routing; defaults to fallback policy, off for saved rerouting')
+    parser.add_argument('--rescue-seconds', type=float, default=60)
     parser.add_argument('--spacing-scale', type=float, default=1.5)
     parser.add_argument('--spacing-seconds', type=float, default=60)
     parser.add_argument('--fallback-seconds', type=float, default=60)
@@ -313,13 +407,15 @@ def main(argv=None, default_mode='layered'):
             if args.fallback in ('auto', 'only'):
                 parser.error('--reroute-placement preserves coordinates; it cannot request fallback relayout')
             reroute_placement(args.reroute_placement, out_dir=args.out_dir,
-                              analog_canvas_root=args.analog_canvas_root)
+                              analog_canvas_root=args.analog_canvas_root,
+                              local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds)
         else:
             run(args.netlist, mode=args.mode, iterations=args.iterations, seed=args.seed,
                 out_dir=args.out_dir, cell=args.cell, analog_canvas_root=args.analog_canvas_root,
                 layout_style=args.layout_style, quality_seconds=args.quality_seconds, candidate_id=args.candidate_id,
                 fallback=args.fallback, spacing_scale=args.spacing_scale,
-                spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds)
+                spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
+                local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds)
     except (ValueError, OSError, KeyError) as exc:
         parser.exit(2, f'Error: {exc}\n')
     return 0

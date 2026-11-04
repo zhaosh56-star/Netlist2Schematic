@@ -34,10 +34,11 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\setup_python.ps1
 | 阶段 | 处理方式 | 默认预算 |
 | --- | --- | ---: |
 | 正常优化 | 结构化布局、SA、最多四个候选的最终 A* 布线 | 300 秒 |
-| 扩距重试 | 正常阶段全部失败后，物理间距扩大 1.5 倍重布一次 | 60 秒 |
+| 局部救援 | 正常候选全部失败后，保持布局，延长安全接口并小组重布 | 60 秒 |
+| 扩距重试 | 局部救援仍失败后，物理间距扩大 1.5 倍重布一次 | 60 秒 |
 | 总线后备 | 扩距仍失败后，用独立通道直接构造完整总线图 | 60 秒 |
 
-SA 循环使用快速估价，不调用 A*。已有合格结果时不进入恢复阶段。
+SA 循环使用快速估价，不调用 A*。已有合格结果时不进入恢复阶段，默认最坏优化预算约480秒。
 所有成功输出都要通过真实引脚连接、同网连通、异网分离及几何规则检查。
 原网表按只读输入处理。
 
@@ -50,6 +51,9 @@ SA 循环使用快速估价，不调用 A*。已有合格结果时不进入恢�
 
 # 固定已有布局，跳过 SA，仅重新布线
 .\.venv\Scripts\python.exe .\run_flow.py --reroute-placement .\output\3\3-placement.json --out-dir .\output\3-rerouted
+
+# 固定布局重布失败时，显式允许局部救援；保持器件位置，不扩距或重新排布
+.\.venv\Scripts\python.exe .\run_flow.py --reroute-placement .\tests\fixtures\junction-clearance\5-candidate2-placement.json --local-rescue auto --rescue-seconds 60 --out-dir .\output\local-rescue\5
 
 # 使用保存的线路独立生成黑白图
 .\.venv\Scripts\python.exe .\render-clean.py .\output\3\3-placement.json .\output\3-redraw.svg

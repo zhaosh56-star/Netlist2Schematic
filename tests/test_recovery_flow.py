@@ -36,11 +36,14 @@ class RecoveryFlowTests(unittest.TestCase):
             return run_flow.run(self.source, iterations=0, seed=17,
                                 out_dir=self.destination, **kwargs)
 
-    def failure(self, *, context=True):
+    def failure(self, *, context=True, checkpoint=False):
         failure = RoutingFailure('normal search exhausted', {'reason': 'time_budget'})
         if context:
             failure.retry_context = deepcopy(self.normal[:5])
             failure.retry_options = RoutingOptions()
+        if checkpoint:
+            # A private execution checkpoint must never reach output JSON.
+            failure._rescue_context = {'marker': object()}
         return failure
 
     def artifacts(self):
@@ -49,6 +52,7 @@ class RecoveryFlowTests(unittest.TestCase):
 
     def test_normal_success_never_attempts_either_recovery(self):
         with patch('run_flow._normal_result', return_value=deepcopy(self.normal)), \
+                patch('run_flow._try_local_rescue', side_effect=AssertionError('extra rescue')), \
                 patch('spacing_retry.retry_spacing', side_effect=AssertionError('extra spacing')), \
                 patch('fallback_bus.create_fallback', side_effect=AssertionError('extra bus')):
             data = self.generate()
@@ -67,7 +71,109 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(1, retry.call_count)
         self.assertEqual(1.75, retry.call_args.kwargs['scale'])
         self.assertEqual(7, retry.call_args.kwargs['seconds'])
+        self.assertEqual(['failed', 'skipped', 'valid'], [s['status'] for s in data['recovery']['stages']])
+        self.assertEqual('no_failure_checkpoint', data['recovery']['stages'][1]['reason'])
+
+    def test_local_rescue_success_preserves_layout_and_skips_later_stages(self):
+        result = deepcopy(self.normal)
+        with patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                patch('local_rescue.rescue_routing', return_value=result) as rescue, \
+                patch('spacing_retry.retry_spacing', side_effect=AssertionError('extra spacing')), \
+                patch('fallback_bus.create_fallback', side_effect=AssertionError('extra bus')):
+            data = self.generate(rescue_seconds=7)
+        self.assertEqual(1, rescue.call_count)
+        self.assertEqual(7, rescue.call_args.kwargs['seconds'])
+        self.assertEqual('local_rescue', data['routing_stage'])
+        self.assertEqual(['normal', 'local_rescue'],
+                         [s['stage'] for s in data['recovery']['stages']])
         self.assertEqual(['failed', 'valid'], [s['status'] for s in data['recovery']['stages']])
+        self.assertNotIn('_rescue_context', json.dumps(data))
+        for comp in self.normal[1]:
+            i = self.normal[3][comp['id']]
+            self.assertEqual(tuple(data['placement'][comp['id']][key] for key in ('row', 'col')),
+                             tuple(self.normal[0].cell_of[i]))
+        self.assertEqual(self.original, self.source.read_bytes())
+
+    def test_explicit_local_rescue_works_with_fallback_off(self):
+        with patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                patch('local_rescue.rescue_routing', return_value=deepcopy(self.normal)) as rescue, \
+                patch('spacing_retry.retry_spacing', side_effect=AssertionError('disabled')), \
+                patch('fallback_bus.create_fallback', side_effect=AssertionError('disabled')):
+            data = self.generate(fallback='off', local_rescue='auto')
+        self.assertEqual(1, rescue.call_count)
+        self.assertEqual('local_rescue', data['routing_stage'])
+        self.assertEqual('off', data['recovery']['policy'])
+
+    def test_failed_local_rescue_is_transactional_before_spacing(self):
+        failure = self.failure(checkpoint=True)
+        original_cells = deepcopy(failure.retry_context[0].cell_of)
+
+        def failed_rescue(context, checkpoint, **kwargs):
+            context[0].cell_of[0] = (99, 99)
+            context[4]['uncommitted'] = True
+            checkpoint.clear()
+            raise RoutingFailure('still blocked', {'reason': 'no_safe_goal'})
+
+        with patch('run_flow._normal_result', side_effect=failure), \
+                patch('local_rescue.rescue_routing', side_effect=failed_rescue), \
+                patch('spacing_retry.retry_spacing', return_value=deepcopy(self.normal)) as spacing:
+            data = self.generate(rescue_seconds=4, spacing_seconds=9)
+        self.assertEqual(original_cells, spacing.call_args.args[0][0].cell_of)
+        self.assertNotIn('uncommitted', spacing.call_args.args[0][4])
+        self.assertEqual(original_cells, failure.retry_context[0].cell_of)
+        self.assertEqual(9, spacing.call_args.kwargs['seconds'])
+        self.assertEqual(['normal', 'local_rescue', 'spacing_retry'],
+                         [s['stage'] for s in data['recovery']['stages']])
+        self.assertEqual('no_safe_goal', data['recovery']['stages'][1]['diagnostics']['reason'])
+
+    def test_zero_or_disabled_local_rescue_never_calls_it(self):
+        for kwargs in ({'rescue_seconds': 0}, {'local_rescue': 'off'}):
+            with self.subTest(kwargs=kwargs), \
+                    patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                    patch('local_rescue.rescue_routing', side_effect=AssertionError('disabled')), \
+                    patch('spacing_retry.retry_spacing', return_value=deepcopy(self.normal)):
+                data = self.generate(**kwargs)
+            self.assertEqual('disabled', data['recovery']['stages'][1]['reason'])
+
+    def test_source_edit_during_local_rescue_stops_before_spacing(self):
+        def edit(*args, **kwargs):
+            self.source.write_bytes(self.original + b'* changed during rescue\n')
+            raise RoutingFailure('still blocked', {'reason': 'no_path'})
+
+        with patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                patch('local_rescue.rescue_routing', side_effect=edit), \
+                patch('spacing_retry.retry_spacing', side_effect=AssertionError('changed source')):
+            with self.assertRaisesRegex(ValueError, 'Source netlist changed'):
+                self.generate()
+
+    def test_invalid_power_schema_does_not_enter_recovery(self):
+        failure = run_flow.RoutingValidationError('invalid saved power', {'reason': 'power_connections'})
+        with patch('run_flow._normal_result', side_effect=failure), \
+                patch('run_flow._try_local_rescue', side_effect=AssertionError('invalid input')), \
+                patch('fallback_bus.create_fallback', side_effect=AssertionError('invalid input')):
+            with self.assertRaises(run_flow.RoutingValidationError):
+                self.generate()
+
+    def test_invalid_rescue_arguments_are_rejected_before_routing(self):
+        for kwargs in ({'local_rescue': 'unknown'}, {'rescue_seconds': -1},
+                       {'rescue_seconds': float('nan')}, {'rescue_seconds': True}):
+            with self.subTest(kwargs=kwargs), \
+                    patch('run_flow._normal_result', side_effect=AssertionError('invalid options')):
+                with self.assertRaises(ValueError):
+                    self.generate(**kwargs)
+
+    def test_local_only_failure_preserves_success_artifacts_and_both_diagnostics(self):
+        self.generate(fallback='only')
+        previous = self.artifacts()
+        with patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                patch('local_rescue.rescue_routing', side_effect=RoutingFailure(
+                    'no safe port', {'reason': 'no_safe_goal'})):
+            with self.assertRaises(RoutingFailure):
+                self.generate(fallback='off', local_rescue='auto')
+        self.assertEqual(previous, self.artifacts())
+        diagnostic = json.loads((self.destination / 'routing-diagnostics.json').read_text(encoding='utf-8'))
+        self.assertEqual(['normal', 'local_rescue'],
+                         [s['stage'] for s in diagnostic['diagnostics']['stages']])
 
     def test_failed_normal_and_spacing_use_verified_bus_and_keep_diagnostics(self):
         with patch('run_flow._normal_result', side_effect=self.failure()), \
@@ -78,9 +184,9 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual('bus_fallback', data['routing_stage'])
         self.assertEqual('constructive-bus-v1', data['validation']['router'])
         self.assertTrue(data['validation']['valid'])
-        self.assertEqual(['normal', 'spacing_retry', 'bus_fallback'],
+        self.assertEqual(['normal', 'local_rescue', 'spacing_retry', 'bus_fallback'],
                          [s['stage'] for s in data['recovery']['stages']])
-        self.assertEqual('no_path', data['recovery']['stages'][1]['diagnostics']['reason'])
+        self.assertEqual('no_path', data['recovery']['stages'][2]['diagnostics']['reason'])
         self.assertEqual(self.original, self.source.read_bytes())
 
     def test_no_attempted_layout_skips_spacing(self):
@@ -88,18 +194,20 @@ class RecoveryFlowTests(unittest.TestCase):
                 patch('spacing_retry.retry_spacing', side_effect=AssertionError('no layout')):
             data = self.generate()
         self.assertEqual('no_attempted_layout', data['recovery']['stages'][1]['reason'])
+        self.assertEqual('no_attempted_layout', data['recovery']['stages'][2]['reason'])
         self.assertEqual('bus_fallback', data['routing_stage'])
 
     def test_zero_spacing_budget_skips_retry(self):
         with patch('run_flow._normal_result', side_effect=self.failure()), \
                 patch('spacing_retry.retry_spacing', side_effect=AssertionError('disabled')):
             data = self.generate(spacing_seconds=0)
-        self.assertEqual('disabled', data['recovery']['stages'][1]['reason'])
+        self.assertEqual('disabled', data['recovery']['stages'][2]['reason'])
 
     def test_only_skips_normal_and_spacing_and_uses_separate_bus_deadline(self):
         import fallback_bus
         actual = fallback_bus.create_fallback
         with patch('run_flow._normal_result', side_effect=AssertionError('normal called')), \
+                patch('run_flow._try_local_rescue', side_effect=AssertionError('rescue called')), \
                 patch('spacing_retry.retry_spacing', side_effect=AssertionError('spacing called')), \
                 patch('fallback_bus.create_fallback', wraps=actual) as bus:
             data = self.generate(fallback='only', quality_seconds=.001, fallback_seconds=10)
@@ -156,7 +264,7 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(originals, self.artifacts())
         diagnostic = json.loads((self.destination / 'routing-diagnostics.json').read_text(encoding='utf-8'))
         self.assertEqual('recovery_failed', diagnostic['diagnostics']['reason'])
-        self.assertEqual(['normal', 'spacing_retry', 'bus_fallback'],
+        self.assertEqual(['normal', 'local_rescue', 'spacing_retry', 'bus_fallback'],
                          [s['stage'] for s in diagnostic['diagnostics']['stages']])
         self.assertEqual(self.original, self.source.read_bytes())
 
@@ -232,6 +340,49 @@ class RecoveryFlowTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as error, contextlib.redirect_stderr(io.StringIO()):
             run_flow.main(['--reroute-placement', 'saved.json', '--fallback', 'auto'])
         self.assertEqual(2, error.exception.code)
+
+    def test_fixed_reroute_can_explicitly_rescue_without_relayout(self):
+        with patch('run_flow._normal_result', return_value=deepcopy(self.normal)):
+            saved_data = self.generate(fallback='off')
+        saved = self.destination / 'small-placement.json'
+        failure = self.failure(checkpoint=True)
+
+        def rescued(context, checkpoint, **kwargs):
+            return (*deepcopy(context), deepcopy(self.normal[5]))
+
+        with patch('run_flow.final_route', side_effect=failure), \
+                patch('local_rescue.rescue_routing', side_effect=rescued) as rescue, \
+                patch('spacing_retry.retry_spacing', side_effect=AssertionError('fixed coordinates')), \
+                patch('fallback_bus.create_fallback', side_effect=AssertionError('fixed coordinates')), \
+                contextlib.redirect_stdout(io.StringIO()):
+            data = run_flow.reroute_placement(saved, out_dir=self.directory / 'rerouted',
+                                               local_rescue='auto', rescue_seconds=8)
+        self.assertEqual(8, rescue.call_args.kwargs['seconds'])
+        self.assertEqual('local_rescue', data['routing_stage'])
+        self.assertEqual(saved_data['placement'], data['placement'])
+        self.assertEqual(saved_data['layout_grid'], data['layout_grid'])
+        self.assertEqual(self.original, self.source.read_bytes())
+
+    def test_saved_reroute_defaults_to_no_recovery(self):
+        with patch('run_flow._normal_result', return_value=deepcopy(self.normal)):
+            self.generate(fallback='off')
+        saved = self.destination / 'small-placement.json'
+        with patch('run_flow.final_route', side_effect=self.failure(checkpoint=True)), \
+                patch('run_flow._try_local_rescue', side_effect=AssertionError('default disabled')), \
+                self.assertRaises(RoutingFailure):
+            run_flow.reroute_placement(saved, out_dir=self.directory / 'rerouted')
+
+    def test_cli_routes_rescue_options_for_saved_and_new_input(self):
+        with patch('run_flow.run') as run:
+            run_flow.main([str(self.source), '--local-rescue', 'auto', '--rescue-seconds', '5',
+                           '--fallback', 'off'])
+        self.assertEqual('auto', run.call_args.kwargs['local_rescue'])
+        self.assertEqual(5, run.call_args.kwargs['rescue_seconds'])
+        with patch('run_flow.reroute_placement') as reroute:
+            run_flow.main(['--reroute-placement', 'saved.json', '--local-rescue', 'auto',
+                           '--rescue-seconds', '9'])
+        self.assertEqual('auto', reroute.call_args.kwargs['local_rescue'])
+        self.assertEqual(9, reroute.call_args.kwargs['rescue_seconds'])
 
 
 if __name__ == '__main__':

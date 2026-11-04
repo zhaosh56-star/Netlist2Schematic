@@ -195,6 +195,41 @@ class CandidateSelectionTests(unittest.TestCase):
         self.assertEqual('time_budget', caught.exception.diagnostics['reason'])
         self.assertEqual('failed', caught.exception.diagnostics['candidates'][0]['status'])
 
+    def test_rescue_checkpoint_matches_last_failed_candidate_and_is_private(self):
+        first = RoutingFailure('first blocked', {'reason': 'no_path'})
+        first._rescue_context = {'failed_net': 'first', 'mutable': [1]}
+        second = RoutingFailure('second blocked', {'reason': 'no_path'})
+        second._rescue_context = {'failed_net': 'second', 'mutable': [2]}
+        with self.assertRaises(RoutingFailure) as caught:
+            self.select([candidate(0), candidate(1)], [first, second])
+        failure = caught.exception
+        self.assertEqual(1, failure.retry_context[0].identifier)
+        self.assertEqual('second', failure._rescue_context['failed_net'])
+        second._rescue_context['mutable'].append(3)
+        self.assertEqual([2], failure._rescue_context['mutable'])
+        self.assertNotIn('_rescue_context', json.dumps(failure.diagnostics))
+
+    def test_later_failure_without_checkpoint_cannot_reuse_earlier_wires(self):
+        first = RoutingFailure('first blocked', {'reason': 'no_path'})
+        first._rescue_context = {'failed_net': 'stale'}
+        with self.assertRaises(RoutingFailure) as caught:
+            self.select([candidate(0), candidate(1)],
+                        [first, RoutingFailure('second blocked', {'reason': 'no_path'})])
+        self.assertEqual(1, caught.exception.retry_context[0].identifier)
+        self.assertFalse(hasattr(caught.exception, '_rescue_context'))
+
+    def test_failed_first_candidate_does_not_rescue_before_later_success(self):
+        failed = RoutingFailure('blocked', {'reason': 'no_path'})
+        failed._rescue_context = {'failed_net': 'first'}
+        with patch('run_flow._try_local_rescue', side_effect=AssertionError('early rescue')):
+            chosen, _ = self.select([candidate(0), candidate(1)], [failed, route_result()])
+        self.assertEqual(1, chosen[0].identifier)
+
+    def test_invalid_power_connections_are_not_search_failure_candidates(self):
+        failure = run_flow.RoutingValidationError('invalid power', {'reason': 'power_connections'})
+        with self.assertRaises(run_flow.RoutingValidationError):
+            self.select([candidate(0)], [failure])
+
     def test_best_result_is_a_snapshot_when_router_reuses_mutable_buffers(self):
         shared_routes, shared_metrics, shared_validation = route_result()
 

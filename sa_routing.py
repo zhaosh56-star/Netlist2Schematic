@@ -186,12 +186,21 @@ def validate_final_routes(par, nets, placement, comp_index, routed, options=None
 def final_route(par, nets, placement, comp_index, options=None, deadline=None):
     """Route frozen placement through one shared rule set; no legacy cleanup."""
     from routing_rules import build_scene
-    from orthogonal_router import route_scene
+    from orthogonal_router import RoutingFailure, route_scene
     started = perf_counter()
     scene = build_scene(par, nets, placement, comp_index, options=options, deadline=deadline)
     routed, diagnostics = (route_scene(scene) if deadline is None else
                            route_scene(scene, deadline=deadline))
-    routed, metrics, analysis = _verify(par, nets, placement, comp_index, routed, scene, deadline=deadline)
+    try:
+        routed, metrics, analysis = _verify(par, nets, placement, comp_index, routed, scene,
+                                            deadline=deadline)
+    except (RoutingFailure, RoutingValidationError) as exc:
+        # Search acceptance alone does not establish original-pin connectivity.
+        # Do not freeze a possibly invalid net or spend an expired budget trying
+        # to prove which subsets remain safe. Recovery may use the placement.
+        exc._rescue_context = None
+        exc.diagnostics.setdefault('rescue_checkpoint_unavailable', 'final_verification_failed')
+        raise
     return routed, metrics, {
         'valid': True, 'router': 'orthogonal-a-star-v1',
         'parameters': asdict(scene.options), 'signal_nets': len(scene.pins),

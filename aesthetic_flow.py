@@ -29,7 +29,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     deadline = started + quality_seconds
     par = load_local('place_and_route', 'place-and-route.py')
     records, best = [], None
-    retry_context = retry_options = None
+    retry_context = retry_options = rescue_context = None
     candidate_data_error = False
     effective_options = routing_options if routing_options is not None else RoutingOptions()
     stop_reason = 'candidates_exhausted'
@@ -72,6 +72,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             # replacement, and never serialize this executable placement object.
             retry_context = deepcopy((placement, comps, nets, index, metadata))
             retry_options = deepcopy(effective_options)
+            # A checkpoint belongs to this exact routing attempt.  In
+            # particular, a later failure without a checkpoint must never
+            # recover an earlier candidate's already-routed wires.
+            rescue_context = None
             try:
                 routed, metrics, validation = final_route(
                     par, nets, placement, index, options=effective_options, deadline=deadline)
@@ -91,6 +95,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 print(f"Quality candidate {identifier}: score={quality['score']:.3f}, "
                       f"WL={metrics['wirelength']:.0f}, X={metrics['crossings']}", flush=True)
             except (RoutingFailure, RoutingValidationError) as exc:
+                if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
+                    raise
+                rescue_context = deepcopy(getattr(exc, '_rescue_context', None))
                 diagnostics = getattr(exc, 'diagnostics', {})
                 record.update(status='failed', message=str(exc), diagnostics=diagnostics)
                 print(f'Quality candidate {identifier}: {exc}', flush=True)
@@ -133,6 +140,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         if best is None:
             failure.retry_context = retry_context
             failure.retry_options = retry_options or deepcopy(effective_options)
+            if rescue_context is not None:
+                failure._rescue_context = rescue_context
         raise failure
     _, placement, comps, nets, index, metadata, routed_result, quality, identifier = best
     metadata.update(layout_style='structured', quality={
