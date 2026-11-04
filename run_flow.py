@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+from dataclasses import asdict
 import hashlib
+import json
 from math import isfinite
 import random
 from pathlib import Path
@@ -15,7 +17,7 @@ from time import perf_counter
 
 from sa_common import ROOT, configure_resources, load_local, read_json, resource_root, write_json
 from sa_render import render_svg
-from sa_routing import final_route, RoutingValidationError
+from sa_routing import final_route, validate_final_routes, RoutingValidationError
 from sa_geometry import validate_geometry
 from sa_saved import load_placement, saved_routing_options, is_bus_layout, BUS_ROUTER
 from orthogonal_router import RoutingFailure
@@ -27,7 +29,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         out_dir=None, cell=None, analog_canvas_root=None, routing_options=None,
         layout_style='structured', quality_seconds=300, candidate_id=None,
         fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
-        local_rescue=None, rescue_seconds=60):
+        local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -41,6 +43,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     policy = fallback if fallback is not None else ('off' if candidate_id is not None else 'auto')
     rescue_policy = _rescue_policy(local_rescue, policy == 'auto')
     _validate_rescue_seconds(rescue_seconds)
+    _validate_simplification(simplify_routes, simplify_seconds)
     if policy == 'only' and candidate_id is not None:
         raise ValueError('fallback only cannot be combined with candidate_id')
     for name, value, minimum, inclusive in (
@@ -141,7 +144,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                       for i, comp in enumerate(comps)},
     }
     return _finish(data, par, placement, comps, nets, comp_index, base, destination,
-                   protected_paths={source}, options=options, routed_result=routed_result)
+                   protected_paths={source}, options=options, routed_result=routed_result,
+                   simplify_routes=simplify_routes, simplify_seconds=simplify_seconds)
 
 
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
@@ -191,6 +195,91 @@ def _rescue_policy(value, automatic):
 def _validate_rescue_seconds(seconds):
     if type(seconds) not in (int, float) or not isfinite(seconds) or seconds < 0:
         raise ValueError('rescue_seconds must be finite and >= 0')
+
+
+def _validate_simplification(policy, seconds):
+    if policy not in ('safe', 'off'):
+        raise ValueError('simplify_routes must be safe or off')
+    if type(seconds) not in (int, float) or not isfinite(seconds) or seconds < 0:
+        raise ValueError('simplify_seconds must be finite and >= 0')
+
+
+def _routes_sha256(routed):
+    """Fingerprint drawn geometry independently of segment cuts and ordering."""
+    from routing_rules import merge_runs
+    canonical = [(net, [[[float(value) for value in point] for point in segment]
+                        for segment in merge_runs(segments)])
+                 for net, segments in sorted(routed)]
+    return hashlib.sha256(json.dumps(canonical, separators=(',', ':'),
+                                    ensure_ascii=True).encode('utf-8')).hexdigest()
+
+
+def _simplification_context_sha256(data, par):
+    geometry = hashlib.sha256(json.dumps(par.GEO_DOC, sort_keys=True,
+        separators=(',', ':'), ensure_ascii=True).encode('utf-8')).hexdigest()
+    context = {key: data.get(key) for key in
+               ('source_sha256', 'source_cell', 'placement', 'layout_grid', 'power_connections')}
+    context['symbol_geometry_sha256'] = geometry
+    return hashlib.sha256(json.dumps(context, sort_keys=True, separators=(',', ':'),
+                                    ensure_ascii=True).encode('utf-8')).hexdigest()
+
+
+def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_result,
+                        options, policy, seconds, *, allow_verified_replay=False):
+    """Postprocess one selected route; candidate selection is already finished."""
+    routed, metrics, validation = routed_result
+    data = deepcopy(data)
+    reason = ('bus_fallback' if is_bus_layout({**data, 'validation': validation}) else
+              'disabled' if policy == 'off' else 'zero_budget' if seconds == 0 else None)
+    if reason is not None:
+        data['route_simplification'] = {
+            'mode': policy, 'status': 'skipped', 'budget_seconds': seconds,
+            'before_metrics': deepcopy(metrics), 'after_metrics': deepcopy(metrics),
+            'changed_nets': [], 'changed_net_count': 0, 'candidate_counts': {},
+            'elapsed_seconds': 0.0, 'stop_reason': reason}
+        return data, routed_result
+    from simplify_routes import simplify_routes as simplify, VERSION
+    effective_options = options or saved_routing_options({'validation': validation})
+    routing_parameters = json.loads(json.dumps(asdict(effective_options)))
+    # A saved result can have stopped at its finite budget. Reprocessing that
+    # exact verified geometry with unchanged inputs must not keep optimizing it
+    # indefinitely. A changed route, layout, resource, rule or budget invalidates
+    # this replay shortcut; the caller has already revalidated saved geometry.
+    previous = data.get('route_simplification')
+    context_sha = _simplification_context_sha256(data, par)
+    if (allow_verified_replay and isinstance(previous, dict)
+            and previous.get('version') == VERSION
+            and previous.get('budget_seconds') == seconds
+            and previous.get('routing_parameters') == routing_parameters
+            and previous.get('context_sha256') == context_sha
+            and previous.get('output_routes_sha256') == _routes_sha256(routed)):
+        data['route_simplification'] = deepcopy(previous)
+        data['route_simplification']['verified_saved_replay'] = True
+        return data, routed_result
+    simplified, final_metrics, checked, report = simplify(
+        par, nets, placement, comp_index, routed_result, options=effective_options, seconds=seconds)
+    final_validation = deepcopy(validation)
+    final_validation.update(checked)
+    # Search diagnostics describe the original selected router invocation, not
+    # shortcut enumeration. Keep that provenance even when validation replaces
+    # some fields with freshly checked geometry.
+    if 'search' in validation:
+        final_validation['search'] = deepcopy(validation['search'])
+    if 'router' in validation:
+        final_validation['router'] = validation['router']
+    from layout_quality import evaluate_quality
+    final_quality = evaluate_quality(par, placement, comps, nets, comp_index,
+                                     simplified, final_metrics, data.get('structs', []))
+    report = deepcopy(report)
+    report.update(mode=policy, routing_parameters=routing_parameters,
+                  context_sha256=context_sha, output_routes_sha256=_routes_sha256(simplified),
+                  quality_before=deepcopy(data.get('quality')), quality_after=deepcopy(final_quality))
+    quality = deepcopy(data.get('quality')) if isinstance(data.get('quality'), dict) else {}
+    quality.update(score=final_quality['score'], details=final_quality,
+                   candidate_metrics_stage='before_route_simplification')
+    data['quality'] = quality
+    data['route_simplification'] = report
+    return data, (simplified, final_metrics, final_validation)
 
 
 def _try_local_rescue(context, checkpoint, options, policy, seconds, stages):
@@ -282,9 +371,12 @@ def _record_failure(exc, diagnostic_path, source):
 
 
 def _finish(data, par, placement, comps, nets, comp_index, base, destination,
-            *, protected_paths=(), options=None, routed_result=None):
+            *, protected_paths=(), options=None, routed_result=None,
+            simplify_routes='safe', simplify_seconds=5, allow_verified_replay=False,
+            input_hashes=None):
     """Route and validate before staging any success artifacts."""
     destination = Path(destination).resolve()
+    _validate_simplification(simplify_routes, simplify_seconds)
     names, diagnostic_path = _output_targets(base, data.get('mode', 'layered'), destination, protected_paths)
     try:
         routed, metrics, validation = (routed_result if routed_result is not None else
@@ -292,8 +384,18 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
     except ValueError as exc:
         _record_failure(exc, diagnostic_path, data['source_netlist'])
         raise
-    if data.get('source_sha256') and hashlib.sha256(Path(data['source_netlist']).read_bytes()).hexdigest() != data['source_sha256']:
-        raise ValueError('Source netlist changed while the flow was running; rerun with the current input')
+    source = Path(data['source_netlist'])
+    expected_hash = data.get('source_sha256') or hashlib.sha256(source.read_bytes()).hexdigest()
+    _check_source(source, expected_hash)
+    data = deepcopy(data)
+    data['source_sha256'] = expected_hash
+    data, (routed, metrics, validation) = _postprocess_routes(
+        data, par, placement, comps, nets, comp_index, (routed, metrics, validation), options,
+        simplify_routes, simplify_seconds, allow_verified_replay=allow_verified_replay)
+    _check_source(source, expected_hash)
+    for path, expected in (input_hashes or {}).items():
+        if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
+            raise ValueError('Source placement JSON changed while the flow was running')
     data = dict(data, routes={net: segments for net, segments in routed},
                 metrics=metrics, validation=validation)
     placement.routing_stage = data.get('routing_stage', 'normal')
@@ -305,6 +407,10 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
                        staging / name, clean=clean, structs=data.get('structs', []),
                        validation=validation)
         write_json(staging / names[2], data)
+        _check_source(source, expected_hash)
+        for path, expected in (input_hashes or {}).items():
+            if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
+                raise ValueError('Source placement JSON changed while the flow was running')
         for name in names:
             os.replace(staging / name, destination / name)
     # A successful rerun supersedes only the diagnostic generated by this tool.
@@ -319,9 +425,11 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
 
 
 def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
-                      *, local_rescue=None, rescue_seconds=60):
+                      *, local_rescue=None, rescue_seconds=60,
+                      simplify_routes='safe', simplify_seconds=5):
     rescue_policy = _rescue_policy(local_rescue, False)
     _validate_rescue_seconds(rescue_seconds)
+    _validate_simplification(simplify_routes, simplify_seconds)
     source_json = Path(jpath).expanduser().resolve()
     data, source, par, placement, comps, nets, comp_index = load_placement(
         source_json, analog_canvas_root=analog_canvas_root)
@@ -375,13 +483,59 @@ def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opti
                                     'rescue_seconds': rescue_seconds, 'stages': stages}
     return _finish(metadata, par, placement, comps, nets, comp_index, base, destination,
                    protected_paths={source, source_json},
-                   options=options, routed_result=routed_result)
+                   options=options, routed_result=routed_result,
+                   simplify_routes=simplify_routes, simplify_seconds=simplify_seconds)
+
+
+def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
+                       *, simplify_routes='safe', simplify_seconds=5):
+    """Validate and simplify saved wires without invoking any layout/router."""
+    _validate_simplification(simplify_routes, simplify_seconds)
+    source_json = Path(jpath).expanduser().resolve()
+    original_hash = hashlib.sha256(source_json.read_bytes()).hexdigest()
+    data, source, par, placement, comps, nets, comp_index = load_placement(
+        source_json, analog_canvas_root=analog_canvas_root)
+    if 'routes' not in data or not isinstance(data['routes'], dict):
+        raise ValueError('--simplify-placement requires a saved routes object')
+    base = source_json.stem.removesuffix('-placement')
+    destination = (Path(out_dir).expanduser().resolve() if out_dir else
+                   ROOT / 'output' / f'{base}-simplified')
+    _, diagnostic_path = _output_targets(base, data.get('mode', 'layered'), destination,
+                                         {source, source_json})
+    options = routing_options or saved_routing_options(data)
+    try:
+        for net, segments in data['routes'].items():
+            if not isinstance(segments, list):
+                raise ValueError(f'Saved routes for {net} must be a list of segments')
+        routed_result = validate_final_routes(par, nets, placement, comp_index,
+            list(sorted(data['routes'].items())), options=options)
+    except (TypeError, IndexError) as exc:
+        raise ValueError('Malformed saved routes') from exc
+    except ValueError as exc:
+        _record_failure(exc, diagnostic_path, source)
+        raise
+    routed, metrics, checked = routed_result
+    validation = deepcopy(data.get('validation', {}))
+    original_router = validation.get('router')
+    validation.update(checked)
+    if original_router is not None:
+        validation['router'] = original_router
+    metadata = {key: deepcopy(value) for key, value in data.items()
+                if key not in ('routes', 'metrics', 'validation')}
+    metadata.update(source_netlist=str(source), analog_canvas_root=str(resource_root()),
+                    simplified_from=str(source_json))
+    return _finish(metadata, par, placement, comps, nets, comp_index, base, destination,
+                   protected_paths={source, source_json}, options=options,
+                   routed_result=(routed, metrics, validation),
+                   simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
+                   allow_verified_replay=True, input_hashes={source_json: original_hash})
 
 
 def main(argv=None, default_mode='layered'):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('netlist', nargs='?', help='SPICE input file (.cir/.sp/.spi)')
     parser.add_argument('--reroute-placement', help='Reuse saved coordinates; skip SA and reroute')
+    parser.add_argument('--simplify-placement', help='Validate and simplify saved routes; no SA or A*')
     parser.add_argument('--mode', choices=('baseline', 'layered'), default=default_mode)
     parser.add_argument('--layout-style', choices=('structured', 'legacy'), default='structured')
     parser.add_argument('--quality-seconds', type=float, default=300)
@@ -391,6 +545,8 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--local-rescue', choices=('auto', 'off'),
                         help='Failure-only local routing; defaults to fallback policy, off for saved rerouting')
     parser.add_argument('--rescue-seconds', type=float, default=60)
+    parser.add_argument('--simplify-routes', choices=('safe', 'off'), default='safe')
+    parser.add_argument('--simplify-seconds', type=float, default=5)
     parser.add_argument('--spacing-scale', type=float, default=1.5)
     parser.add_argument('--spacing-seconds', type=float, default=60)
     parser.add_argument('--fallback-seconds', type=float, default=60)
@@ -401,21 +557,29 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--analog-canvas-root', help='Read-only original project directory')
     args = parser.parse_args(argv)
     try:
-        if bool(args.netlist) == bool(args.reroute_placement):
-            parser.error('provide either a netlist or --reroute-placement JSON')
-        if args.reroute_placement:
+        if sum(map(bool, (args.netlist, args.reroute_placement, args.simplify_placement))) != 1:
+            parser.error('provide exactly one netlist, --reroute-placement JSON or --simplify-placement JSON')
+        if args.simplify_placement:
+            if args.fallback in ('auto', 'only') or args.local_rescue == 'auto':
+                parser.error('--simplify-placement only uses saved routes; it cannot request recovery')
+            simplify_placement(args.simplify_placement, out_dir=args.out_dir,
+                               analog_canvas_root=args.analog_canvas_root,
+                               simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds)
+        elif args.reroute_placement:
             if args.fallback in ('auto', 'only'):
                 parser.error('--reroute-placement preserves coordinates; it cannot request fallback relayout')
             reroute_placement(args.reroute_placement, out_dir=args.out_dir,
                               analog_canvas_root=args.analog_canvas_root,
-                              local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds)
+                              local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
+                              simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds)
         else:
             run(args.netlist, mode=args.mode, iterations=args.iterations, seed=args.seed,
                 out_dir=args.out_dir, cell=args.cell, analog_canvas_root=args.analog_canvas_root,
                 layout_style=args.layout_style, quality_seconds=args.quality_seconds, candidate_id=args.candidate_id,
                 fallback=args.fallback, spacing_scale=args.spacing_scale,
                 spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
-                local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds)
+                local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
+                simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds)
     except (ValueError, OSError, KeyError) as exc:
         parser.exit(2, f'Error: {exc}\n')
     return 0

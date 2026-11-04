@@ -2,6 +2,7 @@
 
 把 SPICE 结构网表转换为布局 JSON、彩色 SVG 和黑白 SVG 的 Python 工具。
 默认按电流层级组织器件，用模拟退火优化布局，再执行正交 A* 布线与连接、几何验收。
+最终路线默认再执行最多5秒的安全简化，减少折角；只接受线长和交叉数都不增加的完整合法方案。
 
 ## 运行
 
@@ -39,6 +40,8 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\setup_python.ps1
 | 总线后备 | 扩距仍失败后，用独立通道直接构造完整总线图 | 60 秒 |
 
 SA 循环使用快速估价，不调用 A*。已有合格结果时不进入恢复阶段，默认最坏优化预算约480秒。
+安全简化在最终候选选定后独立执行，不改变候选选择或恢复链；总线后备跳过此步骤。
+安全简化额外预算默认为5秒，按各项预算上限合计约485秒。
 所有成功输出都要通过真实引脚连接、同网连通、异网分离及几何规则检查。
 原网表按只读输入处理。
 
@@ -57,6 +60,12 @@ SA 循环使用快速估价，不调用 A*。已有合格结果时不进入恢�
 
 # 使用保存的线路独立生成黑白图
 .\.venv\Scripts\python.exe .\render-clean.py .\output\3\3-placement.json .\output\3-redraw.svg
+
+# 只简化已有合法线路，不重新布局或运行 A*；输出到独立目录
+.\.venv\Scripts\python.exe .\run_flow.py --simplify-placement .\output\3\3-placement.json --out-dir .\output\3-simplified
+
+# 关闭最终安全简化，保留原路由器的完整线路
+.\.venv\Scripts\python.exe .\run_flow.py .\examples\3.cir --simplify-routes off --out-dir .\output\3-original-routing
 ```
 
 完整参数、支持器件及边界见 [README-SA.md](README-SA.md)。

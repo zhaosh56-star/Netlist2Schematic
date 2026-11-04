@@ -8,7 +8,7 @@
 ## 一次默认 flow 用到哪些代码
 
 入口是 `run_flow.py`，默认执行 `layered + structured`；包含失败恢复时，运行可能涉及下列
-**21 个 Python 文件**（按当前工作区源码核对）：
+**22 个 Python 文件**（按当前工作区源码核对）：
 
 | 环节 | 文件 | 作用 |
 | --- | --- | --- |
@@ -20,6 +20,7 @@
 | 布局与基础布线 | `place-layered.py`、`place-and-route.py` | 旧布局参考、分层挂位、符号坐标及快速布线估价 |
 | 最终布线 | `sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 统一几何规则、正交图 A*、拆网重布、原引脚连接检查及最终统计 |
 | 失败恢复 | `local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 保持布局局部救援；扩大物理间距重试一次；必要时构造大画布总线图 |
+| 最终安全简化 | `simplify_routes.py` | 已验收路线的有限局部捷径；减少折角且不增加线长、交叉数 |
 | SVG 输出 | `sa_render.py` | 使用同一份最终线段生成彩色和黑白图 |
 | 公共支持 | `sa_common.py`、`sa_geometry.py`、`sa_saved.py` | 模块加载、资源路径、JSON、符号检查和固定布局恢复 |
 
@@ -43,8 +44,10 @@ Set-Location D:\gongzuo
 
 默认使用结构化分层布局，`--iterations 20000`、种子 `20261029`，每张图的
 正常优化预算为 `--quality-seconds 300`。预算包括候选生成和最终布线；最多比较四个
-通过最终路由器评估的候选，并选取已验收结果中综合评分最好的一份。有合格结果就结束；
+通过最终路由器评估的候选，并选取已验收结果中综合评分最好的一份。有合格结果就退出恢复链；
 完全失败时默认再尝试60秒局部救援、60秒扩距布线、60秒总线后备，优化预算合计约480秒。
+选定最终结果后默认独立执行最多5秒安全简化；它不占用原SA、A*或恢复链预算。
+按各项预算上限合计约485秒；总线后备不执行安全简化。
 资源检查、文件输出及系统调度可能另有少量耗时。结果位于：
 
 - `output/common-source/circuit-placement.json`：位置、朝向、层级、结构、布线和指标。
@@ -138,6 +141,49 @@ foreach ($caseId in 1..4) {
 支持范围内的有效符号几何会在阶段预算内尝试构造并验收；超大输入、损坏资源、非法固定端口或预算耗尽
 仍可能失败，不能把“任意网表都必出图”作为接口承诺。所有阶段失败时只写诊断，不覆盖已有成功产物。
 
+## 最终路线的安全简化
+
+默认 `--simplify-routes safe --simplify-seconds 5`，在最终候选选定并通过完整验收后、生成JSON和两种SVG前执行。
+它保持器件位置、真实引脚、固定出线段、电源几何和所有间距规则，只尝试有限的正交局部捷径。
+每个被接受的方案必须通过完整连接与几何验收，且折角严格减少、总线长和交叉数都不增加。
+最多四轮、512个候选，5秒到期保留最后已完整验收的结果；没有改进时保留原路线。
+
+这一步不运行SA或A*，不改变正常阶段的候选胜者、恢复顺序、路由权重或 `routing_stage`。
+总线后备直接跳过；`--simplify-routes off` 或 `--simplify-seconds 0` 也会跳过。
+最终 `metrics`、质量评分和两种SVG均使用简化后的线路；原候选评分和原路由搜索诊断作为来源记录保留。
+
+```powershell
+# 新的完整flow默认包含安全简化。
+.\.venv\Scripts\python.exe .\run_flow.py .\examples\4.cir --out-dir .\output\safe\4
+
+# 关闭安全简化，用于复现原路由器的结果。
+.\.venv\Scripts\python.exe .\run_flow.py .\examples\4.cir --simplify-routes off --out-dir .\output\before-simplification\4
+
+# 对已保存的合法线路单独简化，不运行布局、SA、A*或任何恢复阶段。
+.\.venv\Scripts\python.exe .\run_flow.py --simplify-placement .\output\structured\4\4-placement.json --simplify-seconds 5 --out-dir .\output\simplified\4
+.\.venv\Scripts\python.exe .\run_flow.py --simplify-placement .\output\local-rescue\5\5-dut-placement.json --simplify-seconds 5 --out-dir .\output\simplified\5
+```
+
+`--simplify-placement JSON` 必须包含完整 `routes`，先按源网表和当前几何规则重新验收，不能依赖旧的 `valid=true`。
+它与网表输入、`--reroute-placement` 三选一；默认输出到 `output/<名称>-simplified`，不覆盖输入JSON或网表。
+失败时保留已有成功输出。已经安全简化的文件在版本、预算、规则、布局/资源和规范化线路指纹均匹配时，
+会在完整输入验收后直接复用保存结果，使同配置重复处理保持稳定；改线路或参数会重新尝试。
+`render-clean.py` 独立重绘只验收和绘制保存的最终线路，不再次简化。
+
+当前固定布局的实测结果如下。每个候选都经过整图连接与几何验收，器件位置、朝向及固定出线保持原样：
+
+| 电路 | 线长：简化前→后 | 折角：简化前→后 | 交叉：简化前→后 | 简化耗时 |
+| --- | ---: | ---: | ---: | ---: |
+| 图4 | 3160→3060 | 38→19 | 6→6 | 约0.47秒 |
+| 图5 | 9188→9130 | 64→47 | 19→19 | 约2.27秒 |
+
+图4中 M4/M5 的共同 G 网 `f3` 已直接连接；它们的 S 极属于不同网络，没有相连。
+图5中 XM14.D 保留向上的固定出线，之后用 L 形接入原 `vout` 干线，去除了中间阶梯。
+两例均在第二轮确认没有进一步的本地改进，完整验收中的穿体、重叠及间距违规均为0。
+结果位于 `output/simplified/4/`、`output/simplified/5/`；总对照记录为
+`output/simplified/comparison.json`。关闭简化时图1～4的线路、位置和指标保持不变；
+重复处理与独立重绘也已验证。这里的收敛只针对有限直线/L形候选，不代表全局最少折角。
+
 ### 其他电路
 
 ```powershell
@@ -204,6 +250,9 @@ foreach ($caseId in 1..4) {
 | `--fallback` | `auto`：必要时局部救援、扩距及总线恢复；`off`：默认仅正常流程；`only`：直接总线构造 | 网表输入为 `auto`；指定候选为 `off` |
 | `--local-rescue` | `auto`：正常阶段全部失败后尝试局部救援；`off`：禁用；显式开启可与 `--fallback off` 配合 | 跟随 `--fallback`；固定布局重布为 `off` |
 | `--rescue-seconds` | 独立局部构造、搜索和完整验收预算；0表示跳过 | `60` |
+| `--simplify-routes` | `safe`：在最终结果选定后安全简化；`off`：保留原路由线路 | `safe` |
+| `--simplify-seconds` | 独立安全简化预算；0表示跳过，不占用SA/A*或恢复链预算 | `5` |
+| `--simplify-placement` | 对已有合法 `routes` 单独简化；不重新布局、布线或恢复 | 不启用 |
 | `--spacing-scale` | 扩距时相邻物理行列间距的倍率，必须大于 1 | `1.5` |
 | `--spacing-seconds` | 独立扩距 A* 的预算；0 表示跳过扩距阶段 | `60` |
 | `--fallback-seconds` | 独立总线构造和完整验收预算，必须大于 0 | `60` |
@@ -320,6 +369,8 @@ JSON 的主要字段：
 - `validation`：最终几何检查、路由参数、搜索统计和耗时。
 - `routing_stage`：`normal`、`local_rescue`、`spacing_retry` 或 `bus_fallback`；`recovery.stages` 保存各阶段结果、耗时和失败诊断。
 - `local_rescue`：构造版本、来源候选、安全接口延长、被重布网络、耗时和实际最终质量；检查点运行对象不写入JSON。
+- `route_simplification`：版本、独立预算、简化前后指标、改变的网络、候选计数、耗时及停止原因；`quality_before` 保留原质量与原候选记录，`quality_after` 对应最终线路。
+- `quality.score/details` 在安全简化后重新计算；`quality.candidates` 仍描述原候选选择，`candidate_metrics_stage: before_route_simplification` 明确其来源阶段。`validation.search` 保留原路由搜索记录。
 - `spacing_retry`：来源候选、扩距倍率、原/新物理轴和原优化记录；扩距后最终指标重新计算。
 - `fallback`：总线版本、pitch、器件顺序、bus 坐标和构造参数。
 - `power_connections`：逐端口保存 `component_id/pin/net/symbol/anchor/segments`；anchor 是 glyph **真实引脚的世界坐标**，
@@ -362,12 +413,13 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\setup_python.ps1
 power 穿体/marker 审计、禁止后备调用 SA/A*、JSON 保存恢复及确定性。正常流程另有 RC、RLC、共源级、
 指定 OTA 子电路及混合器件样例，历史结果位于 `output/structured/smoke/`。
 
-图5冻结候选2的局部救援实测从已复验的失败检查点开始，不重新运行 SA：约11.6秒完成整图验收，
+图5冻结候选2的历史局部救援实测（安全简化前）从已复验的失败检查点开始，不重新运行 SA：约11.6秒完成整图验收，
 信号线长9188、交叉19、折角64，穿体、重叠和间距违规均为0。器件逻辑位置、朝向和物理坐标不变，
 原来已完成的5个网络保持原线路，本例只需初始续布，没有拆网。
 结果及对照记录保存在 `output/local-rescue/5/`，正常图1～4的完整线路一致性记录位于
 `output/local-rescue/regression/comparison.json`。生成物不随Git提交；上面的固定布局重布命令可重新生成，
 其总耗时还包含原A*失败前的搜索，60秒仅指失败后新增的救援阶段。
+复现该阶段的原始路线时添加 `--simplify-routes off`；当前默认还会执行后续安全简化。
 
 `validation.valid` 证明几何硬约束通过，并不表示图形达到全部美观目标。评估新旧
 布局应同时比较最终线长、交叉、折角、结构跨度/对齐和逐网绕行，并查看 SVG。
