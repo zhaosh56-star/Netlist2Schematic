@@ -1,0 +1,6 @@
+# Netlists and saved placements contain hashes of exact source bytes.
+# Preserve the original bytes on every platform, including line endings.
+* -text
+
+analog-canvas-main/** linguist-vendored=true
+symbol-geometry.json linguist-generated=true

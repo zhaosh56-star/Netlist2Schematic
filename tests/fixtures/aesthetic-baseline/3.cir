@@ -1,0 +1,17 @@
+* Unit Gain Buffer
+* authentic netlist from analog-canvas projectText
+
+M1 f4 f1 VDD VDD PMOS W=1u L=150n NF=1 M=1
+M2 f1 0 f4 VDD PMOS W=1u L=150n NF=1 M=1
+M3 f1 f6 0 0 NMOS W=1u L=150n NF=1 M=1
+M4 f2 VB VDD VDD PMOS W=1u L=150n NF=1 M=1
+M5 f6 VO1 f2 VDD PMOS W=1u L=150n NF=1 M=1
+M6 f3 Vcmi f2 VDD PMOS W=1u L=150n NF=1 M=1
+M7 f6 f6 0 0 NMOS W=1u L=150n NF=1 M=1
+M8 f3 f3 0 0 NMOS W=1u L=150n NF=1 M=1
+M9 f5 f1 VDD VDD PMOS W=1u L=150n NF=1 M=1
+M10 VO1 0 f5 VDD PMOS W=1u L=150n NF=1 M=1
+M11 VO1 f3 0 0 NMOS W=1u L=150n NF=1 M=1
+C1 VO1 0 1p
+
+.end

@@ -1,0 +1,16 @@
+* StrongArm Comparator
+* authentic netlist from analog-canvas projectText
+
+M1 f5 f6 f4 f4 PMOS W=1u L=150n NF=1 M=1
+M2 f6 f5 f4 f4 PMOS W=1u L=150n NF=1 M=1
+M3 f6 CLK f4 f4 PMOS W=1u L=150n NF=1 M=1
+M4 f2 CLK f4 f4 PMOS W=1u L=150n NF=1 M=1
+M6 f3 CLK f4 f4 PMOS W=1u L=150n NF=1 M=1
+M7 f5 f6 f3 0 NMOS W=1u L=150n NF=1 M=1
+M8 f6 f5 f2 0 NMOS W=1u L=150n NF=1 M=1
+M9 f2 Vinp f1 0 NMOS W=1u L=150n NF=1 M=1
+M10 f3 Vinn f1 0 NMOS W=1u L=150n NF=1 M=1
+M11 f1 CLK 0 0 NMOS W=1u L=150n NF=1 M=1
+M12 f5 CLK f4 f4 PMOS W=1u L=150n NF=1 M=1
+
+.end

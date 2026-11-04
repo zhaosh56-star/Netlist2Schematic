@@ -1,0 +1,41 @@
+
+.subckt dut VDD VSS IBIAS vin- vin+ vout
+Cc net3 vout 1p
+CL vout VSS 1p
+XM1 net1 vin- net5 VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+XM10 net7 IBIAS VSS VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+XM11 net6 net7 net4 VDD sky130_fd_pr__pfet_01v8 l=0.15 w=1 nf=1 m=1
+XM12 net4 net6 VDD VDD sky130_fd_pr__pfet_01v8 l=0.15 w=1 nf=1 m=1
+XM13 vout net6 VDD VDD sky130_fd_pr__pfet_01v8 l=0.15 w=1 nf=1 m=1
+XM14 vout net3 VSS VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+XM15 IBIAS IBIAS VDD VDD sky130_fd_pr__pfet_01v8 l=0.15 w=1 nf=1 m=1
+XM16 IBIAS IBIAS VSS VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+XM2 net2 vin+ net5 VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+XM3 net1 IBIAS VDD VDD sky130_fd_pr__pfet_01v8 l=0.15 w=1 nf=1 m=1
+XM4 net2 IBIAS VDD VDD sky130_fd_pr__pfet_01v8 l=0.15 w=1 nf=1 m=1
+XM5 net5 IBIAS VSS VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+XM6 net0 net7 net1 VDD sky130_fd_pr__pfet_01v8 l=0.15 w=1 nf=1 m=1
+XM7 net3 net7 net2 VDD sky130_fd_pr__pfet_01v8 l=0.15 w=1 nf=1 m=1
+XM8 net0 net0 VSS VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+XM9 net3 net0 VSS VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+R1 net6 net7 1k
+.ends dut
+
+CN N VSS 1p
+CNC NC VSS 10p
+CP VDD P 1p
+CPC VDD PC 10p
+MN1 N N VSS VSS NMOS l=1u m=1 nf=1 w=160u
+MN2 net3 N net1 VSS NMOS l=1u m=1 nf=1 w=640u
+MN3 NC NC N VSS NMOS l=1u m=1 nf=1 w=160u
+MN4 PC NC net3 VSS NMOS l=1u m=1 nf=1 w=160u
+MN5 SU NC VSS VSS NMOS l=1u m=1 nf=1 w=10u
+MN6 PC SU N VSS NMOS l=2u m=1 nf=1 w=1u
+MP1 net2 P VDD VDD PMOS l=.5u m=1 nf=1 w=640u
+MP2 P P VDD VDD PMOS l=.5u m=1 nf=1 w=640u
+MP3 NC PC net2 VDD PMOS l=.5u m=1 nf=1 w=640u
+MP4 PC PC P VDD PMOS l=.5u m=1 nf=1 w=640u
+MP5 SU NC net0 VDD PMOS l=8u m=1 nf=1 w=1u
+RLIM VDD net0 500meg
+RS net1 VSS 532256.566593
+.ends Dual_Cascode_Constant_gm_Bias_with_Bypass_Capacitors

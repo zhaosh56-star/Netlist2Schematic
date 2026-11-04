@@ -1,0 +1,13 @@
+
+* Wien-bridge oscillator
+* authentic netlist from analog-canvas projectText
+
+E1 vout 0 f2 f3 1e6
+R1 f1 f2 10kΩ
+C1 vout f1 1p
+R2 f2 0 10kΩ
+C2 f2 0 1p
+R3 vout f3 22kΩ
+R4 f3 0 10kΩ
+
+.end
