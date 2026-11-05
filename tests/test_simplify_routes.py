@@ -13,7 +13,7 @@ from routing_rules import Pin, RoutingOptions, Scene, canonical_topology, inters
 from sa_routing import _verify
 
 
-def case(*, foreign=False, cycle_trap=False):
+def case(*, foreign=False, cycle_trap=False, parallel_escapes=False):
     """Independent pin oracle: actual validation, no bodies or resource files."""
     positions = [(0, 0), (100, 0)]
     pins = {'a': [Pin('a', 0, 'P', positions[0], (10, 0), (1, 0)),
@@ -22,15 +22,20 @@ def case(*, foreign=False, cycle_trap=False):
     routes = [('a', [((0, 0), (10, 0)), ((10, 0), (10, height)),
                      ((10, height), (90, height)), ((90, height), (90, 0)),
                      ((90, 0), (100, 0))])]
+    if parallel_escapes:
+        pins['a'] = [Pin('a', i, 'P', positions[i], (positions[i][0], -20), (0, -1))
+                     for i in (0, 1)]
+        routes = [('a', [((0, 0), (0, -100)), ((0, -100), (100, -100)),
+                         ((100, -100), (100, 0))])]
     nets = {'a': [('A', 'P'), ('B', 'P')]}
     index = {'A': 0, 'B': 1}
     if foreign:
-        positions.extend(((50, -20), (50, 20)))
+        positions.extend(((50, -60), (50, 20)))
         pins['foreign'] = [Pin('foreign', i, 'P', positions[i], positions[i], (0, 1))
                            for i in (2, 3)]
         nets['foreign'] = [('C', 'P'), ('D', 'P')]
         index.update(C=2, D=3)
-        routes.append(('foreign', [((50, -20), (50, 20))]))
+        routes.append(('foreign', [((50, -60), (50, 20))]))
     if cycle_trap:
         positions.append((50, 20))
         pins['a'].append(Pin('a', 2, 'P', positions[2], positions[2], (0, 1)))
@@ -65,6 +70,86 @@ def run_case(fixture, **kwargs):
 
 
 class ShortcutSafetyTests(unittest.TestCase):
+    def test_operations_rebuild_from_latest_incumbent_without_restoring_old_geometry(self):
+        fixture = case()
+        observed = []
+
+        def old_shortcuts(scene, routed, deadline):
+            observed.append(('chain_shortcut', shortcuts._wire_metrics(dict(routed)['a'])[0]))
+            if shortcuts._wire_metrics(dict(routed)['a'])[0] > 140:
+                yield {'net': 'a', 'segments': [((0, 0), (10, 0)), ((10, 0), (10, 20)),
+                    ((10, 20), (90, 20)), ((90, 20), (90, 0)), ((90, 0), (100, 0))]}
+
+        def new_attachments(scene, routed, deadline):
+            length = shortcuts._wire_metrics(dict(routed)['a'])[0]
+            observed.append(('leaf_reattachment', length))
+            if length > 100:
+                self.assertEqual(140, length, 'new operation must see the accepted shortcut')
+                yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
+
+        with patch('simplify_routes._shortcut_candidates', side_effect=old_shortcuts), \
+                patch('simplify_routes.reattachment_candidates', side_effect=new_attachments):
+            routes, metrics, validation, report = run_case(fixture)
+        self.assertEqual(100, metrics['wirelength'])
+        self.assertEqual(0, metrics['bends'])
+        self.assertTrue(validation['valid'])
+        self.assertEqual(['chain_shortcut', 'leaf_reattachment'],
+                         [change['operation'] for change in report['accepted_changes']])
+        self.assertIn(('leaf_reattachment', 140), observed)
+        self.assertIn(('chain_shortcut', 100), observed)
+        self.assertEqual(report['accepted_changes'][0]['after_metrics'],
+                         report['accepted_changes'][1]['before_metrics'])
+        self.assertEqual(metrics, report['accepted_changes'][-1]['after_metrics'])
+        _verify(*fixture[:4], routes, fixture[5])
+
+    def test_rejected_duplicate_shortcuts_leave_budget_for_branch_reattachment(self):
+        fixture = case()
+
+        def many_rejections(scene, routed, deadline):
+            for _ in range(20):
+                yield {'net': 'a', 'segments': fixture[4][0][0][1]}
+
+        def improvement(scene, routed, deadline):
+            yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
+
+        with patch('simplify_routes._shortcut_candidates', side_effect=many_rejections), \
+                patch('simplify_routes.reattachment_candidates', side_effect=improvement), \
+                patch('simplify_routes.MAX_CANDIDATES', 2):
+            routes, metrics, _, report = run_case(fixture)
+        self.assertEqual(100, metrics['wirelength'])
+        self.assertEqual(2, report['candidate_counts']['considered'])
+        self.assertEqual(1, report['operations']['chain_shortcut']['considered'])
+        self.assertEqual(1, report['operations']['leaf_reattachment']['considered'])
+        self.assertEqual('leaf_reattachment', report['accepted_changes'][0]['operation'])
+        _verify(*fixture[:4], routes, fixture[5])
+
+    def test_existing_shortcuts_finish_before_branch_moves_can_change_the_tree(self):
+        fixture = case()
+
+        def warmup(scene, routed, deadline):
+            length = shortcuts._wire_metrics(dict(routed)['a'])[0]
+            if length > 120:
+                height = 20 if length > 140 else 10
+                yield {'net': 'a', 'segments': [((0, 0), (10, 0)), ((10, 0), (10, height)),
+                    ((10, height), (90, height)), ((90, height), (90, 0)), ((90, 0), (100, 0))]}
+
+        def reattach(scene, routed, deadline):
+            length = shortcuts._wire_metrics(dict(routed)['a'])[0]
+            if length > 100:
+                self.assertEqual(120, length, 'all existing shortcuts must run before reattachment')
+                yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
+
+        with patch('simplify_routes._shortcut_candidates', side_effect=warmup), \
+                patch('simplify_routes.reattachment_candidates', side_effect=reattach):
+            routes, metrics, _, report = run_case(fixture)
+        self.assertEqual(100, metrics['wirelength'])
+        self.assertEqual(120, report['warmup_metrics']['wirelength'])
+        self.assertEqual(['chain_shortcut', 'chain_shortcut', 'leaf_reattachment'],
+                         [change['operation'] for change in report['accepted_changes']])
+        self.assertEqual(['chain_warmup', 'chain_warmup', 'coordinated_refinement'],
+                         [change['phase'] for change in report['accepted_changes']])
+        _verify(*fixture[:4], routes, fixture[5])
+
     def test_a_straight_shortcut_is_fully_verified_and_preserves_search_metadata(self):
         fixture = case()
         original = deepcopy(fixture[4])
@@ -89,6 +174,30 @@ class ShortcutSafetyTests(unittest.TestCase):
         self.assertEqual(0, metrics['crossings'])
         self.assertGreater(report['candidate_counts']['objective_rejected'], 0)
         self.assertEqual(0, report['candidate_counts']['geometry_rejected'])
+
+    def test_equal_bend_shortening_still_rejects_an_extra_legal_crossing(self):
+        fixture = case(foreign=True, parallel_escapes=True)
+        routed, metrics, _, report = run_case(fixture)
+        self.assertEqual(fixture[4][0], routed)
+        self.assertEqual(fixture[4][1], metrics)
+        self.assertGreater(report['candidate_counts']['validated'], 0)
+        self.assertGreater(report['candidate_counts']['objective_rejected'], 0)
+        self.assertEqual(0, report['candidate_counts']['geometry_rejected'])
+
+    def test_objective_requires_a_strict_gain_without_new_bends_or_length(self):
+        incumbent = {'wirelength': 300.0, 'bends': 2, 'crossings': 0}
+        candidates = (
+            ({'wirelength': 140.0, 'bends': 2, 'crossings': 0}, True),
+            ({'wirelength': 300.0, 'bends': 1, 'crossings': 0}, True),
+            ({'wirelength': 300.0, 'bends': 2, 'crossings': 0}, False),
+            ({'wirelength': 140.0, 'bends': 3, 'crossings': 0}, False),
+            ({'wirelength': 301.0, 'bends': 1, 'crossings': 0}, False),
+            ({'wirelength': 140.0, 'bends': 2, 'crossings': 1}, False),
+            ({'wirelength': 300.0-shortcuts.EPS/2, 'bends': 2, 'crossings': 0}, False),
+        )
+        for candidate, expected in candidates:
+            with self.subTest(candidate=candidate):
+                self.assertEqual(expected, shortcuts._improves(candidate, incumbent))
 
     def test_reusing_own_tree_cannot_introduce_a_cycle(self):
         fixture = case(cycle_trap=True)

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +61,24 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(3, len(clean.findall('svg:g[@data-component]', namespace)))
         title = clean.findall('svg:text', namespace)[-1].text
         self.assertIn(f"WL={data['metrics']['wirelength']:.0f}", title)
+
+    def test_default_outputs_use_one_project_folder_per_netlist_and_cell(self):
+        project = self.directory / 'project'
+        source = self.directory / 'filters' / 'circuit.spi'
+        source.parent.mkdir()
+        source.write_text('.subckt small IN OUT\nR1 IN OUT 1k\nC1 OUT 0 1n\n.ends small\n',
+                          encoding='utf-8')
+        with mock.patch.object(run_flow, 'ROOT', project):
+            first = self.quiet_run(source, cell='small', iterations=0)
+            destination = project / 'output' / 'filters-small'
+            saved = destination / 'circuit-small-placement.json'
+            self.assertTrue(saved.is_file())
+            self.assertTrue((destination / 'circuit-small-layered.svg').is_file())
+            self.assertTrue((destination / 'circuit-small-clean.svg').is_file())
+            second = self.quiet_run(source, cell='small', iterations=0)
+        self.assertEqual(['filters-small'], sorted(p.name for p in (project / 'output').iterdir()))
+        self.assertEqual(first['routes'], second['routes'])
+        self.assertEqual(second['metrics'], json.loads(saved.read_text(encoding='utf-8'))['metrics'])
 
     def test_saved_spi_json_redraw_uses_recorded_source_and_identical_routes(self):
         destination = self.directory / 'saved'

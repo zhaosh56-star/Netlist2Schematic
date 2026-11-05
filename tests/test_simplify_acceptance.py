@@ -25,7 +25,8 @@ def schematic_par():
     # geometry here. No Analog Canvas example or generated SVG is a fixture.
     real = load_local('place_and_route', 'place-and-route.py')
     orientations = []
-    for x, y, direction in ((10, 0, 'east'), (-10, 0, 'west'), (0, -10, 'north')):
+    for x, y, direction in ((10, 0, 'east'), (-10, 0, 'west'), (0, -10, 'north'),
+                             (0, 10, 'south')):
         orientations.append({'viewBoxAABB': {'x': -10, 'y': -10, 'width': 20, 'height': 20},
                              'pins': [{'name': 'P', 'at': {'x': x, 'y': y},
                                        'direction': direction}]})
@@ -53,11 +54,11 @@ class FixturePlacement:
 
     def pin_world(self, index, pin):
         x, y = self.pos_of(index)
-        dx, dy = ((10, 0), (-10, 0), (0, -10))[self.orient[index]]
+        dx, dy = ((10, 0), (-10, 0), (0, -10), (0, 10))[self.orient[index]]
         return x+dx, y+dy
 
     def pin_dir(self, index, pin):
-        return ('east', 'west', 'north')[self.orient[index]]
+        return ('east', 'west', 'north', 'south')[self.orient[index]]
 
 
 def fixture(*, feedback=True, obstacle=False, rename=False, reverse=False,
@@ -127,6 +128,34 @@ def run_simplifier(case, **kwargs):
                             options=options, seconds=kwargs.pop('seconds', 5), **kwargs)
 
 
+def same_direction_bridge(*, turns=0, mirror=False, shift=(0, 0), obstacle=False):
+    """A tall two-bend bridge between two parallel outward pin corridors."""
+    def transform(point):
+        x, y = point
+        if mirror:
+            x = -x
+        for _ in range(turns):
+            x, y = -y, x
+        return x+shift[0], y+shift[1]
+
+    names = ['arbitrary_device_83', 'arbitrary_device_19']
+    comps = [{'id': name, 'symbol': 'terminal'} for name in names]
+    positions = list(map(transform, ((0, 0), (100, 0))))
+    orientations = [[2, 0, 3, 1][turns]] * 2
+    if obstacle:
+        comps.append({'id': 'physical_obstacle', 'symbol': 'block'})
+        positions.append(transform((50, -24)))
+        orientations.append(0)
+    placement = FixturePlacement(comps, positions, orientations)
+    index = {comp['id']: number for number, comp in enumerate(comps)}
+    nets = {'arbitrary_wire_512': [(names[1], 'P'), (names[0], 'P')]}
+    path = list(map(transform, ((0, -10), (0, -80), (100, -80), (100, -10))))
+    routed = [('arbitrary_wire_512', list(zip(path, path[1:])))]
+    par, options = schematic_par(), RoutingOptions()
+    result = validate_final_routes(par, nets, placement, index, routed, options=options)
+    return par, nets, placement, index, result, options
+
+
 def cycle_rank(segments):
     topology = canonical_topology(segments)
     adjacency = topology['adjacency']
@@ -161,6 +190,36 @@ class SimplificationAcceptanceTests(unittest.TestCase):
         for net, segments in routes:
             self.assertEqual(0, cycle_rank(segments), (net, segments))
         return routes, metrics, report
+
+    def test_equal_bend_bridge_compacts_in_all_four_directions_and_keeps_stubs(self):
+        for turns in range(4):
+            for mirrored in (False, True):
+                with self.subTest(turns=turns, mirror=mirrored):
+                    case = same_direction_bridge(turns=turns, mirror=mirrored,
+                                                 shift=(137, -53))
+                    routes, metrics, report = self.assert_checked(case, run_simplifier(case))
+                    self.assertEqual(2, case[4][1]['bends'])
+                    self.assertEqual(case[4][1]['bends'], metrics['bends'])
+                    self.assertEqual(128, metrics['wirelength'])
+                    self.assertLess(metrics['wirelength'], case[4][1]['wirelength'])
+                    self.assertEqual(0, metrics['crossings'])
+                    self.assertGreater(report['candidate_counts']['accepted'], 0)
+                    scene = build_scene(*case[:4], options=case[5])
+                    runs = canonical_topology(routes[0][1])['runs']
+                    for pin in scene.pins['arbitrary_wire_512']:
+                        self.assertTrue(any(on_segment(pin.point, a, b)
+                                            and on_segment(pin.escape, a, b) for a, b in runs))
+                    repeated = run_simplifier((*case[:4], (routes, metrics, {'valid': True}), case[5]))
+                    self.assert_checked(case, repeated)
+                    self.assertEqual(metrics, repeated[1])
+                    self.assertEqual(0, repeated[3]['candidate_counts']['accepted'])
+
+    def test_equal_bend_bridge_cannot_compact_through_a_real_body(self):
+        case = same_direction_bridge(obstacle=True)
+        routes, metrics, report = self.assert_checked(case, run_simplifier(case))
+        self.assertEqual(case[4][0], routes)
+        self.assertEqual(case[4][1], metrics)
+        self.assertGreater(report['candidate_counts']['geometry_rejected'], 0)
 
     def test_shared_three_terminal_tree_straightens_without_leaving_old_t_cycle(self):
         case = fixture()

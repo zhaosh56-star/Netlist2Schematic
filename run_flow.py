@@ -62,7 +62,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     label = source.parent.name if source.stem.lower() == 'circuit' else source.stem
     if cell:
         label += '-' + cell
-    destination = Path(out_dir).expanduser().resolve() if out_dir else ROOT / 'output' / f'{label}-{mode}'
+    destination = Path(out_dir).expanduser().resolve() if out_dir else ROOT / 'output' / label
     _, diagnostic_path = _output_targets(base, mode, destination, {source})
     configure_resources(analog_canvas_root)
     par = load_local('place_and_route', 'place-and-route.py')
@@ -552,7 +552,7 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--fallback-seconds', type=float, default=60)
     parser.add_argument('--iterations', type=int, default=20000)
     parser.add_argument('--seed', type=int, default=20261029)
-    parser.add_argument('--out-dir')
+    parser.add_argument('--out-dir', help='Output directory (default: project/output/<netlist label>)')
     parser.add_argument('--cell', help='Explicit .subckt name; no recursive expansion')
     parser.add_argument('--analog-canvas-root', help='Read-only original project directory')
     args = parser.parse_args(argv)

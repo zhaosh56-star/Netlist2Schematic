@@ -151,6 +151,38 @@ class SimplifyFlowTests(unittest.TestCase):
             self.assertNotIn('verified_saved_replay', data['route_simplification'])
         self.assertEqual(first['placement'], data['placement'])
 
+    def test_previous_algorithm_version_does_not_skip_new_simplification(self):
+        from simplify_routes import VERSION, simplify_routes as actual
+        first = self.simplify()
+        saved = self.directory / 'previous-placement.json'
+        for previous in ('orthogonal-shortcuts-v1', 'orthogonal-shortcuts-v2'):
+            with self.subTest(version=previous):
+                first['route_simplification']['version'] = previous
+                saved.write_text(json.dumps(first), encoding='utf-8')
+                with patch('simplify_routes.simplify_routes', wraps=actual) as simplify:
+                    data = self.simplify(saved, out_dir=self.directory / 'upgraded')
+                self.assertEqual(1, simplify.call_count)
+                self.assertEqual(VERSION, data['route_simplification']['version'])
+                self.assertNotIn('verified_saved_replay', data['route_simplification'])
+                self.assertTrue(data['validation']['valid'])
+                self.assertEqual(first['placement'], data['placement'])
+
+    def test_publication_preserves_operation_trace_and_its_final_incumbent(self):
+        data = self.simplify()
+        saved = json.loads((self.destination / 'small-placement.json').read_text(encoding='utf-8'))
+        report = saved['route_simplification']
+        self.assertEqual(['chain_shortcut', 'leaf_reattachment'], report['operation_order'])
+        self.assertEqual('chain_warmup_then_alternate_rebuild_after_accept', report['scheduling'])
+        self.assertEqual(['chain_warmup', 'coordinated_refinement'], report['phase_order'])
+        self.assertTrue(report['warmup_completed'])
+        for key, total in report['candidate_counts'].items():
+            self.assertEqual(total, sum(counts[key] for counts in report['operations'].values()))
+        if report['accepted_changes']:
+            self.assertEqual(saved['metrics'], report['accepted_changes'][-1]['after_metrics'])
+        self.assertEqual(data['metrics'], saved['metrics'])
+        self.assertEqual(saved['metrics'], report['after_metrics'])
+        self.assertEqual(self.original['validation']['search'], saved['validation']['search'])
+
     def test_quality_is_final_and_original_candidate_records_are_retained(self):
         original_quality = deepcopy(self.original['quality'])
         original_quality['score'] = -12345

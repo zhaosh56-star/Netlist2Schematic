@@ -156,7 +156,7 @@ def _html(report):
 
 
 def compare(*, baseline_dir=ROOT / 'tests/fixtures/aesthetic-baseline',
-            new_dir=ROOT / 'output/structured', out_dir=None, live_dir=ROOT / 'examples'):
+            new_dir=ROOT / 'output', out_dir=None, live_dir=ROOT / 'examples'):
     baseline_dir, new_dir, live_dir = map(lambda p: Path(p).resolve(), (baseline_dir, new_dir, live_dir))
     out_dir = Path(out_dir).resolve() if out_dir else new_dir
     assets = out_dir / 'report/assets'
@@ -233,7 +233,7 @@ def compare(*, baseline_dir=ROOT / 'tests/fixtures/aesthetic-baseline',
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-dir', type=Path, default=ROOT / 'tests/fixtures/aesthetic-baseline')
-    parser.add_argument('--new-dir', type=Path, default=ROOT / 'output/structured')
+    parser.add_argument('--new-dir', type=Path, default=ROOT / 'output')
     parser.add_argument('--out-dir', type=Path)
     parser.add_argument('--live-dir', type=Path, default=ROOT / 'examples')
     args = parser.parse_args(argv)

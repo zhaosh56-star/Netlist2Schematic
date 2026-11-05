@@ -11,13 +11,15 @@ from math import isfinite
 from time import perf_counter
 
 from orthogonal_router import RoutingFailure
+from route_reattachment import MAX_TARGETS_PER_BRANCH, reattachment_candidates
 from routing_rules import (EPS, build_scene, canonical_topology, check_deadline,
                            on_segment)
 from sa_routing import RoutingValidationError, _verify
 
-VERSION = 'orthogonal-shortcuts-v1'
+VERSION = 'orthogonal-shortcuts-v3'
 MAX_ROUNDS = 4
 MAX_CANDIDATES = 512
+OPERATIONS = ('chain_shortcut', 'leaf_reattachment')
 
 
 def _edge(a, b):
@@ -137,9 +139,45 @@ def _replacements(path):
                    if {_edge(p, q) for p, q in choice if p != q} != original})
 
 
+def _shortcut_candidates(scene, routed, deadline=None):
+    for chain in _chains(scene, routed, deadline):
+        check_deadline(deadline, 'simplify_shortcut_generation')
+        path = chain['path']
+        removed = {_edge(a, b) for a, b in zip(path, path[1:])}
+        base = [segment for segment in chain['segments'] if _edge(*segment) not in removed]
+        for replacement in _replacements(path):
+            yield {'net': chain['net'], 'segments': base + list(replacement),
+                   'shortcut_identity': (chain['net'], tuple(chain['segments']), replacement)}
+
+
+def _candidate_stream(scene, routed, first_operation=0, deadline=None):
+    """Give each operation one candidate in turn on this immutable incumbent."""
+    iterators = {
+        0: iter(_shortcut_candidates(scene, routed, deadline)),
+        1: iter(reattachment_candidates(scene, routed, deadline)),
+    }
+    turn = first_operation
+    while iterators:
+        check_deadline(deadline, 'simplify_candidate_generation')
+        if turn in iterators:
+            try:
+                proposal = next(iterators[turn])
+            except StopIteration:
+                del iterators[turn]
+            else:
+                yield OPERATIONS[turn], proposal
+        turn = 1 - turn
+
+
+def _shape_improves(length, bends, old_length, old_bends):
+    """Require no regression and a strict gain in length or bend count."""
+    return (bends <= old_bends and length <= old_length + EPS
+            and (bends < old_bends or length < old_length - EPS))
+
+
 def _improves(metrics, incumbent):
-    return (metrics['bends'] < incumbent['bends']
-            and metrics['wirelength'] <= incumbent['wirelength'] + EPS
+    return (_shape_improves(metrics['wirelength'], metrics['bends'],
+                            incumbent['wirelength'], incumbent['bends'])
             and metrics['crossings'] <= incumbent['crossings'])
 
 
@@ -171,7 +209,12 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
     deadline = started + seconds
     incumbent = deepcopy(tuple(routed_result))
     report = {'version': VERSION, 'budget_seconds': seconds,
-              'parameters': {'max_rounds': MAX_ROUNDS, 'max_candidates': MAX_CANDIDATES},
+              'parameters': {'max_rounds': MAX_ROUNDS, 'max_candidates': MAX_CANDIDATES,
+                             'max_targets_per_branch': MAX_TARGETS_PER_BRANCH},
+              'operation_order': list(OPERATIONS),
+              'phase_order': ['chain_warmup', 'coordinated_refinement'],
+              'scheduling': 'chain_warmup_then_alternate_rebuild_after_accept',
+              'warmup_completed': False,
               'before_metrics': deepcopy(incumbent[1]), 'after_metrics': deepcopy(incumbent[1]),
               'changed_nets': [], 'changed_net_count': 0, 'rounds': 0,
               'candidate_counts': {'considered': 0, 'validated': 0, 'accepted': 0,
@@ -179,6 +222,9 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                                    'coverage_rejected': 0, 'cycle_rejected': 0},
               'original_revalidated': False, 'converged': False,
               'stop_reason': 'disabled' if seconds == 0 else 'round_budget'}
+    report['operations'] = {name: dict(report['candidate_counts']) for name in OPERATIONS}
+    report['accepted_changes'] = []
+    report['topology_rebuilds'] = 0
     changed = set()
     if seconds == 0:
         report['elapsed_seconds'] = round(perf_counter()-started, 6)
@@ -194,68 +240,107 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
         incumbent = (checked, actual, incumbent[2])
         report['before_metrics'] = deepcopy(actual)
         report['original_revalidated'] = True
+        first_operation = 0
+        warmup = True
         for round_number in range(1, MAX_ROUNDS + 1):
             report['rounds'] = round_number
-            seen, changed_this_round = set(), False
+            changed_this_round = False
+            warmup_seen = set()
             while True:
                 check_deadline(deadline, 'simplify_candidate_generation')
                 accepted = False
-                for chain in _chains(scene, incumbent[0], deadline):
-                    net, path = chain['net'], chain['path']
-                    by_net = dict(incumbent[0])
-                    state = tuple(chain['segments'])
-                    removed = {_edge(a, b) for a, b in zip(path, path[1:])}
-                    base = [segment for segment in chain['segments'] if _edge(*segment) not in removed]
-                    old_rank = _cycle_rank(by_net[net], deadline)
-                    old_length, old_bends = _wire_metrics(by_net[net], deadline)
-                    for replacement in _replacements(path):
-                        check_deadline(deadline, 'simplify_candidate')
-                        identity = (net, state, replacement)
-                        if identity in seen:
-                            continue
-                        seen.add(identity)
-                        counts = report['candidate_counts']
-                        if counts['considered'] >= MAX_CANDIDATES:
-                            report['stop_reason'] = 'candidate_budget'
-                            raise _StopSimplifying
-                        counts['considered'] += 1
-                        candidate = _trim_tails(scene, net, base + list(replacement), deadline)
-                        if not _covers_fixed(scene, net, candidate, deadline):
-                            counts['coverage_rejected'] += 1
-                            continue
-                        if _cycle_rank(candidate, deadline) > old_rank:
-                            counts['cycle_rejected'] += 1
-                            continue
-                        length, bends = _wire_metrics(candidate, deadline)
-                        if bends >= old_bends or length > old_length + EPS:
-                            counts['objective_rejected'] += 1
-                            continue
-                        trial = [(name, candidate if name == net else segments)
-                                 for name, segments in incumbent[0]]
-                        try:
-                            counts['validated'] += 1
-                            routed, metrics, analysis = _verify(
-                                par, nets, placement, comp_index, trial, scene, deadline=deadline)
-                        except RoutingValidationError:
-                            counts['geometry_rejected'] += 1
-                            continue
-                        if not _improves(metrics, incumbent[1]):
-                            counts['objective_rejected'] += 1
-                            continue
-                        validation = deepcopy(incumbent[2])
-                        validation.update(valid=True, parameters=asdict(scene.options),
-                            signal_nets=len(scene.pins), violations=[],
-                            power_connections_checked=analysis['power_connections_checked'])
-                        incumbent = (routed, metrics, validation)
-                        counts['accepted'] += 1
-                        changed.add(net)
-                        changed_this_round = accepted = True
-                        break
-                    if accepted:
-                        break
+                # Every generator below reads exactly this accepted geometry.
+                # Coordinated refinement discards all rejected identities after
+                # a commit. Warmup keeps the original per-round shortcut policy
+                # before allowing new branch moves to change its opportunities.
+                seen = warmup_seen if warmup else set()
+                by_net = dict(incumbent[0])
+                net_facts = {}
+                proposals = ((('chain_shortcut', proposal) for proposal in
+                              _shortcut_candidates(scene, incumbent[0], deadline))
+                             if warmup else _candidate_stream(
+                                 scene, incumbent[0], first_operation, deadline))
+                for operation, proposal in proposals:
+                    check_deadline(deadline, 'simplify_candidate')
+                    net = proposal['net']
+                    geometry = tuple(sorted({_edge(a, b)
+                        for a, b in proposal['segments'] if tuple(a) != tuple(b)}))
+                    identity = (proposal.get('shortcut_identity',
+                        (net, tuple(by_net[net]), geometry)) if warmup else (net, geometry))
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    counts = report['candidate_counts']
+                    op_counts = report['operations'][operation]
+                    if counts['considered'] >= MAX_CANDIDATES:
+                        report['stop_reason'] = 'candidate_budget'
+                        raise _StopSimplifying
+
+                    def count(key):
+                        counts[key] += 1
+                        op_counts[key] += 1
+
+                    count('considered')
+                    if net not in net_facts:
+                        net_facts[net] = (_cycle_rank(by_net[net], deadline),
+                                         *_wire_metrics(by_net[net], deadline))
+                    old_rank, old_length, old_bends = net_facts[net]
+                    candidate = _trim_tails(scene, net, proposal['segments'], deadline)
+                    if not _covers_fixed(scene, net, candidate, deadline):
+                        count('coverage_rejected')
+                        continue
+                    if _cycle_rank(candidate, deadline) > old_rank:
+                        count('cycle_rejected')
+                        continue
+                    length, bends = _wire_metrics(candidate, deadline)
+                    if not _shape_improves(length, bends, old_length, old_bends):
+                        count('objective_rejected')
+                        continue
+                    trial = [(name, candidate if name == net else segments)
+                             for name, segments in incumbent[0]]
+                    try:
+                        count('validated')
+                        routed, metrics, analysis = _verify(
+                            par, nets, placement, comp_index, trial, scene, deadline=deadline)
+                    except RoutingValidationError:
+                        count('geometry_rejected')
+                        continue
+                    if not _improves(metrics, incumbent[1]):
+                        count('objective_rejected')
+                        continue
+                    validation = deepcopy(incumbent[2])
+                    validation.update(valid=True, parameters=asdict(scene.options),
+                        signal_nets=len(scene.pins), violations=[],
+                        power_connections_checked=analysis['power_connections_checked'])
+                    change = {'operation': operation, 'net': net,
+                              'phase': 'chain_warmup' if warmup else 'coordinated_refinement',
+                              'before_metrics': deepcopy(incumbent[1]),
+                              'after_metrics': deepcopy(metrics)}
+                    for key in ('source', 'source_pin', 'component', 'pin',
+                                'old_attachment', 'new_attachment',
+                                'old_branch_length', 'new_branch_length'):
+                        if key in proposal:
+                            change[key] = deepcopy(proposal[key])
+                    report['accepted_changes'].append(change)
+                    incumbent = (routed, metrics, validation)
+                    count('accepted')
+                    report['topology_rebuilds'] += 1
+                    first_operation = 0 if warmup else 1 - OPERATIONS.index(operation)
+                    changed.add(net)
+                    changed_this_round = accepted = True
+                    break
                 if not accepted:
                     break
             if not changed_this_round:
+                if warmup:
+                    # Only switch after the original per-round search has
+                    # reached a stable result. All rounds and candidates count
+                    # against the same existing limits and deadline.
+                    report['warmup_completed'] = True
+                    report['warmup_metrics'] = deepcopy(incumbent[1])
+                    warmup = False
+                    first_operation = 1
+                    continue
                 report.update(stop_reason='no_improvement', converged=True)
                 break
     except _StopSimplifying:
