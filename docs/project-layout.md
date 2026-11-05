@@ -41,12 +41,12 @@ Netlist2Schematic/
 | 基础布局与估价 | `place-layered.py`、`place-and-route.py` | 分层和自由布局参考、快速布线估价及符号位置 |
 | 最终路由与验收 | `sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 正交 A*、拆网重布、统一几何与真实引脚检查 |
 | 失败恢复 | `local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 局部救援、扩距重试、确定性总线后备 |
-| 最终安全简化 | `simplify_routes.py`、`route_reattachment.py` | 统一调度路径缩短和通用叶支路重接；不运行SA/A*，线长/折角/交叉均不增加 |
+| 最终安全简化 | `simplify_routes.py`、`route_reattachment.py`、`route_patterns.py` | 按阶段调度路径缩短、叶支路重接和三段式候选；不运行SA/A*，线长/折角/交叉均不增加 |
 | 图形输出 | `sa_render.py` | 从同一份已验收线路生成彩色与黑白 SVG |
 | 共同支持 | `sa_common.py`、`sa_geometry.py`、`sa_saved.py` | 路径、动态模块加载、几何缓存、JSON和固定结果恢复 |
 | 独立重绘 | `render-clean.py` | 读取并复验保存的路线，单独生成黑白 SVG |
 
-前十一组共23个 Python 文件，包含默认流程及必要时的恢复路径；`render-clean.py` 是额外的独立工具。一次成功运行不一定执行所有阶段，但这些文件都有用途，不能仅凭当次未调用就删除。
+前十一组共24个 Python 文件，包含默认流程及必要时的恢复路径；`render-clean.py` 是额外的独立工具。一次成功运行不一定执行所有阶段，但这些文件都有用途，不能仅凭当次未调用就删除。
 
 根目录保留带连字符的旧脚本名，是为了保留已有命令和动态加载路径。未来若要改成 Python 包，应一起修改导入、独立入口、资源路径和测试，避免只移动文件导致 flow 失效。
 
@@ -64,13 +64,15 @@ Netlist2Schematic/
 
 每个成功目录主要保留 `<名称>-placement.json`、`<名称>-layered.svg`（自由布局时为 `-baseline.svg`）和 `<名称>-clean.svg`。失败时可写 `routing-diagnostics.json`，不会把冲突路线标记成功，也不会覆盖已有成功图。`--reroute-placement` 默认使用 `output/<名称>-rerouted/`，`--simplify-placement` 默认使用 `output/<名称>-simplified/`，保护原始保存结果。
 
-运行顺序是先选定正常阶段或恢复阶段的完整合法结果，再进入统一安全简化，最后写JSON与双SVG。`simplify_routes.py` 负责预算、阶段调度、验收和提交当前最佳结果；先用 `chain_warmup` 完成原有路径收紧，再进入 `coordinated_refinement`，优先尝试叶支路重接并与路径缩短轮流协同。`route_reattachment.py` 只按拓扑生成重接候选，不能直接覆盖线路。每次接受都重新提取最新拓扑，后续从已接受结果继续优化，保留前一步的收益。两阶段共用原有简化预算，前阶段耗尽预算时保留已验收结果并记录未完成；正常A*、局部救援、扩距和后备顺序不因此改变。当前含有 `routes` 的成功JSON独立重绘时只复验和绘制保存线路，不重跑这些优化。
+运行顺序是先选定正常阶段或恢复阶段的完整合法结果，再进入统一安全简化，最后写JSON与双SVG。`simplify_routes.py` 负责预算、阶段调度、验收和提交当前最佳结果：先用 `chain_warmup` 完成原有路径收紧，再以 `coordinated_refinement` 协同执行叶支路重接和路径缩短；已有v3动作稳定后，才进入 `three_segment_refinement`。新阶段逐候选轮流尝试三段式及已有两类动作，每次接受后都从最新线路重新提取拓扑，避免回写旧结果覆盖前一步收益。`route_reattachment.py` 只按拓扑生成重接候选；`route_patterns.py` 只为至少两个内部折角的自由链生成有限的横—竖—横或竖—横—竖候选，两者都不能自行提交线路。全部阶段共用原5秒、四轮、512个候选预算；前阶段耗尽预算时保留已验收结果并记录未完成，不强行放行新步骤。正常A*、局部救援、扩距和后备顺序不因此改变。当前含有 `routes` 的成功JSON独立重绘时只复验和绘制保存线路，不重跑这些优化。
 
 `tests/fixtures/` 中的布局 JSON 和冻结网表是有意保留的测试输入，包括图1～4的旧布局基线、图2/3固定布局及图5候选2失败场景。删除历史 `output/` 不影响这些回归输入。`tests/` 和 `tools/` 用于开发验证，不在日常输入目录中混放测试电路或对比报告。
 
 历史批次目录和调查报告都属于可重新生成的运行产物，不作为源码资料维护。实测指标保留在[运行说明](flow-guide.md)，复现使用 `examples/` 或 `tests/fixtures/`，不依赖历史出图。
 
 整理保留的 `output/5-dut/` 来自图5冻结候选2的已验收救援及安全简化，JSON保留真实的冻结源网表路径。`output/6/` 来自归一化输入副本，副本和说明保留在该目录；`examples/6.cir` 原始内容仍有未配对的 `.ends`，不能把旧图当作该输入直接运行的结果。各保留结果的来源以本地 `output/README.md` 和各 JSON 为准。
+
+本轮v4只更新 `output/7/` 主图，原网表和器件位置未改；线长2812→2676、交叉3→2、折角24→20，之前 `rz` 的146短桥继续保留。图1～6仅参加只读回归，没有替换主图。`output/route-improvement-1-7/` 的既有批量对比页记录的是v3结果，与本轮v4更新分开解读。v4已通过313项测试及9套保存布局的固定位置对照，后者旧v3阶段指标一致，最终各项不增加并且重复稳定。
 
 ## 常用命令
 

@@ -155,7 +155,7 @@ class SimplifyFlowTests(unittest.TestCase):
         from simplify_routes import VERSION, simplify_routes as actual
         first = self.simplify()
         saved = self.directory / 'previous-placement.json'
-        for previous in ('orthogonal-shortcuts-v1', 'orthogonal-shortcuts-v2'):
+        for previous in ('orthogonal-shortcuts-v1', 'orthogonal-shortcuts-v2', 'orthogonal-shortcuts-v3'):
             with self.subTest(version=previous):
                 first['route_simplification']['version'] = previous
                 saved.write_text(json.dumps(first), encoding='utf-8')
@@ -171,10 +171,13 @@ class SimplifyFlowTests(unittest.TestCase):
         data = self.simplify()
         saved = json.loads((self.destination / 'small-placement.json').read_text(encoding='utf-8'))
         report = saved['route_simplification']
-        self.assertEqual(['chain_shortcut', 'leaf_reattachment'], report['operation_order'])
-        self.assertEqual('chain_warmup_then_alternate_rebuild_after_accept', report['scheduling'])
-        self.assertEqual(['chain_warmup', 'coordinated_refinement'], report['phase_order'])
+        self.assertEqual(['chain_shortcut', 'leaf_reattachment', 'three_segment_shortcut'],
+                         report['operation_order'])
+        self.assertEqual('preserve_v3_then_three_segment_refinement', report['scheduling'])
+        self.assertEqual(['chain_warmup', 'coordinated_refinement', 'three_segment_refinement'],
+                         report['phase_order'])
         self.assertTrue(report['warmup_completed'])
+        self.assertTrue(report['v3_completed'])
         for key, total in report['candidate_counts'].items():
             self.assertEqual(total, sum(counts[key] for counts in report['operations'].values()))
         if report['accepted_changes']:

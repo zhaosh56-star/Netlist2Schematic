@@ -214,11 +214,17 @@ class SimplificationAcceptanceTests(unittest.TestCase):
                     self.assertEqual(metrics, repeated[1])
                     self.assertEqual(0, repeated[3]['candidate_counts']['accepted'])
 
-    def test_equal_bend_bridge_cannot_compact_through_a_real_body(self):
+    def test_equal_bend_bridge_keeps_required_body_clearance_when_compacted(self):
         case = same_direction_bridge(obstacle=True)
         routes, metrics, report = self.assert_checked(case, run_simplifier(case))
-        self.assertEqual(case[4][0], routes)
-        self.assertEqual(case[4][1], metrics)
+        par, nets, placement, index, _, options = case
+        illegal = [(next(iter(nets)), [((0, -10), (0, -24)), ((0, -24), (100, -24)),
+                                      ((100, -24), (100, -10))])]
+        with self.assertRaises(RoutingValidationError):
+            validate_final_routes(par, nets, placement, index, illegal, options=options)
+        self.assertEqual(case[4][1], report['v3_metrics'])
+        self.assertLess(metrics['wirelength'], case[4][1]['wirelength'])
+        self.assertEqual(case[4][1]['bends'], metrics['bends'])
         self.assertGreater(report['candidate_counts']['geometry_rejected'], 0)
 
     def test_shared_three_terminal_tree_straightens_without_leaving_old_t_cycle(self):

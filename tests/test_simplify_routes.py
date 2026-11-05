@@ -70,6 +70,67 @@ def run_case(fixture, **kwargs):
 
 
 class ShortcutSafetyTests(unittest.TestCase):
+    def test_three_segment_stage_preserves_both_old_operations_and_rebuilds_after_acceptance(self):
+        fixture = case()
+        observed = []
+
+        def arch(height):
+            return [((0, 0), (10, 0)), ((10, 0), (10, height)),
+                    ((10, height), (90, height)), ((90, height), (90, 0)), ((90, 0), (100, 0))]
+
+        def old_shortcuts(scene, routed, deadline):
+            length = shortcuts._wire_metrics(dict(routed)['a'])[0]
+            observed.append(('chain_shortcut', length))
+            if length > 140:
+                yield {'net': 'a', 'segments': arch(20)}
+
+        def old_reattachment(scene, routed, deadline):
+            length = shortcuts._wire_metrics(dict(routed)['a'])[0]
+            observed.append(('leaf_reattachment', length))
+            if length > 120:
+                self.assertEqual(140, length)
+                yield {'net': 'a', 'segments': arch(10)}
+
+        def patterns(scene, routed, deadline):
+            length = shortcuts._wire_metrics(dict(routed)['a'])[0]
+            observed.append(('three_segment_shortcut', length))
+            if length > 100:
+                self.assertEqual(120, length, 'the complete v3 result must be retained first')
+                yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
+
+        with patch('simplify_routes._shortcut_candidates', side_effect=old_shortcuts), \
+                patch('simplify_routes.reattachment_candidates', side_effect=old_reattachment), \
+                patch('simplify_routes._three_segment_candidates', side_effect=patterns):
+            routes, metrics, _, report = run_case(fixture)
+        self.assertEqual(100, metrics['wirelength'])
+        self.assertEqual(120, report['v3_metrics']['wirelength'])
+        self.assertEqual(['chain_shortcut', 'leaf_reattachment', 'three_segment_shortcut'],
+                         [step['operation'] for step in report['accepted_changes']])
+        self.assertEqual(['chain_warmup', 'coordinated_refinement', 'three_segment_refinement'],
+                         [step['phase'] for step in report['accepted_changes']])
+        self.assertIn(('chain_shortcut', 100), observed)
+        self.assertIn(('leaf_reattachment', 100), observed)
+        self.assertEqual(metrics, report['accepted_changes'][-1]['after_metrics'])
+        _verify(*fixture[:4], routes, fixture[5])
+
+    def test_exhausted_old_stage_budget_is_not_reset_for_new_patterns(self):
+        fixture = case()
+
+        def old_shortcuts(scene, routed, deadline):
+            for height in (20, 10):
+                yield {'net': 'a', 'segments': [((0, 0), (10, 0)), ((10, 0), (10, height)),
+                    ((10, height), (90, height)), ((90, height), (90, 0)), ((90, 0), (100, 0))]}
+
+        with patch('simplify_routes._shortcut_candidates', side_effect=old_shortcuts), \
+                patch('simplify_routes._three_segment_candidates', side_effect=AssertionError('new phase')), \
+                patch('simplify_routes.MAX_CANDIDATES', 1):
+            routes, metrics, _, report = run_case(fixture)
+        self.assertEqual(140, metrics['wirelength'])
+        self.assertEqual('candidate_budget', report['stop_reason'])
+        self.assertFalse(report['v3_completed'])
+        self.assertEqual(0, report['operations']['three_segment_shortcut']['considered'])
+        _verify(*fixture[:4], routes, fixture[5])
+
     def test_operations_rebuild_from_latest_incumbent_without_restoring_old_geometry(self):
         fixture = case()
         observed = []
@@ -168,21 +229,32 @@ class ShortcutSafetyTests(unittest.TestCase):
 
     def test_extra_legal_crossing_is_rejected_even_with_shorter_straighter_wire(self):
         fixture = case(foreign=True)
+        bad = [('a', [((0, 0), (100, 0))]), fixture[4][0][1]]
+        self.assertEqual(1, _verify(*fixture[:4], bad, fixture[5])[1]['crossings'])
         routed, metrics, _, report = run_case(fixture)
-        self.assertEqual(fixture[4][0], routed)
-        self.assertEqual(fixture[4][1], metrics)
+        self.assertEqual(fixture[4][1], report['v3_metrics'])
+        self.assertLessEqual(metrics['wirelength'], fixture[4][1]['wirelength'])
+        self.assertLessEqual(metrics['bends'], fixture[4][1]['bends'])
         self.assertEqual(0, metrics['crossings'])
         self.assertGreater(report['candidate_counts']['objective_rejected'], 0)
-        self.assertEqual(0, report['candidate_counts']['geometry_rejected'])
+        self.assertEqual(dict(fixture[4][0])['foreign'], dict(routed)['foreign'])
+        _verify(*fixture[:4], routed, fixture[5])
 
     def test_equal_bend_shortening_still_rejects_an_extra_legal_crossing(self):
         fixture = case(foreign=True, parallel_escapes=True)
+        bad = [('a', [((0, 0), (0, -20)), ((0, -20), (100, -20)),
+                       ((100, -20), (100, 0))]), fixture[4][0][1]]
+        self.assertEqual(1, _verify(*fixture[:4], bad, fixture[5])[1]['crossings'])
         routed, metrics, _, report = run_case(fixture)
-        self.assertEqual(fixture[4][0], routed)
-        self.assertEqual(fixture[4][1], metrics)
+        self.assertEqual(fixture[4][1], report['v3_metrics'])
+        self.assertLessEqual(metrics['wirelength'], fixture[4][1]['wirelength'])
+        self.assertLessEqual(metrics['bends'], fixture[4][1]['bends'])
+        self.assertEqual(0, metrics['crossings'])
         self.assertGreater(report['candidate_counts']['validated'], 0)
         self.assertGreater(report['candidate_counts']['objective_rejected'], 0)
-        self.assertEqual(0, report['candidate_counts']['geometry_rejected'])
+        self.assertEqual(dict(fixture[4][0])['foreign'], dict(routed)['foreign'])
+        self.assertTrue(shortcuts._covers_fixed(fixture[5], 'a', dict(routed)['a']))
+        _verify(*fixture[:4], routed, fixture[5])
 
     def test_objective_requires_a_strict_gain_without_new_bends_or_length(self):
         incumbent = {'wirelength': 300.0, 'bends': 2, 'crossings': 0}
