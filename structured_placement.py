@@ -293,7 +293,19 @@ def _opamp_seed(devices, structs, index, row_of, variant):
     return cells, orientations, max(c for _, c in cells.values()) + 2
 
 
-def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, variant):
+def _passive_profile(pl, devices, nets, index, structs, variant, policy):
+    if policy == 'fixed' or not any(d['cls'] == 'PASSIVE' for d in devices.values()):
+        return pl
+    from passive_placement import make_flexible
+    column_pitch, row_pitch = ((110, 112), (124, 126), (100, 106))[variant]
+    return make_flexible(pl, devices, nets, index, structs,
+                         column_pitch=column_pitch, row_pitch=row_pitch)
+
+
+def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, variant,
+                       *, passive_layout='fixed'):
+    if passive_layout not in ('flexible', 'fixed'):
+        raise ValueError('passive_layout must be flexible or fixed')
     keys = _canonical_keys(devices)
     row_of, _ = legacy._allocate_rows(devices, comps, index, levels['net_levels'],
                                       levels['device_levels'], att)
@@ -342,7 +354,7 @@ def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, 
         cells = [opamp[0][i] for i in range(len(comps))]
         orientations = [opamp[1].get(i, 0) for i in range(len(comps))]
         pl.set_state(cells, orientations)
-        return pl, alignment, pairs
+        return _passive_profile(pl, devices, nets, index, structs, variant, passive_layout), alignment, pairs
 
     # Seed branch coordinates from retained roles before the barycentric sweep.
     desired = {}
@@ -427,7 +439,7 @@ def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, 
                 pl.orient[i] = int(target > pl.cell_of[i][1])
         elif comp['symbol'] in legacy.FLIP_ORIENTS:
             pl.orient[i] = 0
-    return pl, alignment, pairs
+    return _passive_profile(pl, devices, nets, index, structs, variant, passive_layout), alignment, pairs
 
 
 def _estimate(pl, nets, index, alignment, pairs):
@@ -505,12 +517,18 @@ def _estimate(pl, nets, index, alignment, pairs):
     value = (wirelength + direction + 150 * crossings + 15 * bends
              + 100 * misalignment + 65 * dispersion + 100 * pair_spread
              + 125 * role_inversions + 8 * congestion) / 100
-    return value, {'estimated_wirelength': wirelength, 'estimated_crossings': crossings,
+    metrics = {'estimated_wirelength': wirelength, 'estimated_crossings': crossings,
                    'estimated_bends': bends, 'branch_misalignment': misalignment,
                    'structure_dispersion': dispersion, 'pair_spread': pair_spread,
                    'role_order_inversions': role_inversions,
                    'estimated_congestion': congestion, 'gate_backtracking': direction,
                    'normalized_energy': value}
+    if getattr(pl, 'passive_policy', None) == 'flexible':
+        from passive_placement import score_passives
+        regularity = score_passives(pl)
+        value += regularity['weighted_total']
+        metrics.update(passive_regularization=regularity, normalized_energy=value)
+    return value, metrics
 
 
 def _calibrated_temperature(deltas, target=.7):
@@ -729,39 +747,58 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
         result_metadata['optimization_metrics'] = {
             'scope': 'pre_feedback_legacy_estimate',
             'source': copy.deepcopy(metadata.get('optimization_metrics', {}))}
+    if getattr(clone, 'passive_policy', None) == 'flexible':
+        from passive_placement import passive_diagnostics
+        result_metadata['passive_layout'] = passive_diagnostics(clone)
+        result_metadata['passive_layout']['metrics_stage'] = 'after_feedback_axis_change'
     return clone, comps, nets, index, result_metadata
 
 
-def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None):
-    """Yield a legacy incumbent, then three independently owned structured seeds.
+def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
+                      passive_layout='flexible', include_legacy=False):
+    """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
-    The legacy proposal budget is retained for a fair reproducible comparison;
-    the additional structured proposal budget is divided among three candidates.
+    Structured seeds retain IDs 1--3, independent random streams and their
+    existing proposal budgets. Legacy parsing/SA runs only when explicitly
+    requested; structured initialization uses canonical source data directly.
     A suspended generator never mutates any previously yielded placement.
     """
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
+    if passive_layout not in ('flexible', 'fixed'):
+        raise ValueError('passive_layout must be flexible or fixed')
+    if type(include_legacy) is not bool:
+        raise ValueError('include_legacy must be boolean')
     if deadline is not None and time.perf_counter() >= deadline:
         raise ValueError('Quality budget exhausted before placement initialization')
     devices = parse_netlist(path, cell=cell)
     structs = _structures(devices)
-    # The reference is an incumbent, not the structure report for this profile.
-    # Its old VF2 diagnostic includes deliberately superseded broad matches.
-    with contextlib.redirect_stdout(io.StringIO()):
-        base = legacy.create_placement(path, cell=cell, iterations=iterations, seed=seed,
-                                       deadline=deadline)
-    pl, comps, nets, index, metadata = base
-    metadata['legacy_structs'] = metadata['structs']
-    metadata['structs'] = copy.deepcopy(structs)
-    metadata['candidate_id'] = 0
-    metadata['candidate_seed'] = seed
-    metadata['layout_style'] = 'legacy_reference'
-    metadata['layout_grid'] = {'column_x': [par.CELL * c + par.CELL / 2 for c in range(pl.cols)],
-                               'row_y': [par.CELL * r + par.CELL / 2 for r in range(max(pl.row_of) + 1)]}
-    metadata['annealing'] = {'schedule': 'legacy', 'proposed_budget': iterations,
-                              'completed_steps': getattr(pl, 'sa_iterations_completed', iterations),
-                              'stop_reason': getattr(pl, 'sa_stop_reason', 'iterations')}
-    yield pl, comps, nets, index, metadata
+    document = to_document(devices)
+    comps, nets = list(document['components']), dict(document['nets'])
+    if not comps:
+        raise ValueError('The selected netlist contains no supported devices')
+    index = {component['id']: number for number, component in enumerate(comps)}
+    if include_legacy:
+        # Keep the explicit reference identical to the old four-candidate flow.
+        # Its old VF2 diagnostic includes deliberately superseded broad matches.
+        with contextlib.redirect_stdout(io.StringIO()):
+            base = legacy.create_placement(path, cell=cell, iterations=iterations, seed=seed,
+                                           deadline=deadline)
+        pl, comps, nets, index, metadata = base
+        metadata['legacy_structs'] = metadata['structs']
+        metadata['structs'] = copy.deepcopy(structs)
+        metadata['candidate_id'] = 0
+        metadata['candidate_seed'] = seed
+        metadata['layout_style'] = 'legacy_reference'
+        metadata['passive_layout_policy'] = 'fixed'
+        metadata['passive_layout'] = {'version': 'fixed-rows-v1', 'policy': 'fixed',
+                                      'reason': 'legacy_reference'}
+        metadata['layout_grid'] = {'column_x': [par.CELL * c + par.CELL / 2 for c in range(pl.cols)],
+                                   'row_y': [par.CELL * r + par.CELL / 2 for r in range(max(pl.row_of) + 1)]}
+        metadata['annealing'] = {'schedule': 'legacy', 'proposed_budget': iterations,
+                                  'completed_steps': getattr(pl, 'sa_iterations_completed', iterations),
+                                  'stop_reason': getattr(pl, 'sa_stop_reason', 'iterations')}
+        yield pl, comps, nets, index, metadata
     levels = dl.compute_levels(devices)
     conduction = {net for device in devices.values() if _active(device)
                   for net in (device.get('d'), device.get('s'), device.get('c'), device.get('e'))
@@ -772,7 +809,8 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
             return
         candidate_seed = seed + (variant + 1) * 104729
         placement, alignment, pairs = _initial_placement(
-            devices, comps, nets, index, levels, att, structs, candidate_seed, variant)
+            devices, comps, nets, index, levels, att, structs, candidate_seed, variant,
+            passive_layout=passive_layout)
         # Leave most of the global budget to final routing, which is authoritative.
         local_deadline = min(deadline, time.perf_counter() + 12) if deadline else None
         energy, metrics, annealing = _anneal(placement, nets, index, alignment, pairs,
@@ -792,4 +830,13 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                     'alignment_relations': [{'devices': [comps[a]['id'], comps[b]['id']],
                                               'weight': weight}
                                              for a, b, weight in alignment]}
+        metadata['passive_layout_policy'] = getattr(placement, 'passive_policy', 'fixed')
+        if metadata['passive_layout_policy'] == 'flexible':
+            from passive_placement import passive_diagnostics
+            metadata['passive_layout'] = passive_diagnostics(placement)
+            metadata['passive_layout']['metrics_stage'] = 'after_sa_and_geometry_floor'
+        else:
+            metadata['passive_layout'] = {'version': 'fixed-rows-v1', 'policy': 'fixed',
+                                          'reason': 'requested_fixed' if passive_layout == 'fixed'
+                                          else 'no_passive_devices'}
         yield placement, comps, nets, index, metadata

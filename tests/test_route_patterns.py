@@ -214,8 +214,10 @@ class ThreeSegmentPatternTests(unittest.TestCase):
     def test_required_doglegs_around_a_marker_are_not_flattened_through_it(self):
         case = pattern_case(blocked=True)
         routes, metrics, report = self.assert_safe(case, simplify(case))
-        self.assertEqual(case[4][0], routes)
-        self.assertEqual(case[4][1], metrics)
+        # The three old operations cannot replace these doglegs. Track shifts
+        # may tighten them while the independent oracle still protects markers.
+        self.assertEqual(case[4][1], report['v4_metrics'])
+        self.assertGreater(metrics['bends'], 0)
         self.assertGreater(report['candidate_counts']['geometry_rejected'], 0)
 
     def test_shorter_three_segment_wire_cannot_add_an_otherwise_legal_crossing(self):
@@ -227,8 +229,8 @@ class ThreeSegmentPatternTests(unittest.TestCase):
         self.assertLess(trial_metrics['wirelength'], case[4][1]['wirelength'])
         self.assertGreater(trial_metrics['crossings'], case[4][1]['crossings'])
         routes, metrics, report = self.assert_safe(case, simplify(case))
-        self.assertEqual(case[4][0], routes)
-        self.assertEqual(case[4][1], metrics)
+        self.assertEqual(case[4][1], report['v4_metrics'])
+        self.assertEqual(case[4][1]['crossings'], metrics['crossings'])
         self.assertGreater(report['candidate_counts']['objective_rejected'], 0)
 
     def test_pattern_generation_expiry_retains_the_last_complete_incumbent(self):

@@ -155,7 +155,8 @@ class SimplifyFlowTests(unittest.TestCase):
         from simplify_routes import VERSION, simplify_routes as actual
         first = self.simplify()
         saved = self.directory / 'previous-placement.json'
-        for previous in ('orthogonal-shortcuts-v1', 'orthogonal-shortcuts-v2', 'orthogonal-shortcuts-v3'):
+        for previous in ('orthogonal-shortcuts-v1', 'orthogonal-shortcuts-v2', 'orthogonal-shortcuts-v3',
+                         'orthogonal-shortcuts-v4'):
             with self.subTest(version=previous):
                 first['route_simplification']['version'] = previous
                 saved.write_text(json.dumps(first), encoding='utf-8')
@@ -171,13 +172,16 @@ class SimplifyFlowTests(unittest.TestCase):
         data = self.simplify()
         saved = json.loads((self.destination / 'small-placement.json').read_text(encoding='utf-8'))
         report = saved['route_simplification']
-        self.assertEqual(['chain_shortcut', 'leaf_reattachment', 'three_segment_shortcut'],
+        self.assertEqual(['chain_shortcut', 'leaf_reattachment', 'three_segment_shortcut',
+                          'track_compaction'],
                          report['operation_order'])
-        self.assertEqual('preserve_v3_then_three_segment_refinement', report['scheduling'])
-        self.assertEqual(['chain_warmup', 'coordinated_refinement', 'three_segment_refinement'],
+        self.assertEqual('preserve_v4_then_track_compaction_refinement', report['scheduling'])
+        self.assertEqual(['chain_warmup', 'coordinated_refinement', 'three_segment_refinement',
+                          'track_compaction_refinement'],
                          report['phase_order'])
         self.assertTrue(report['warmup_completed'])
         self.assertTrue(report['v3_completed'])
+        self.assertTrue(report['v4_completed'])
         for key, total in report['candidate_counts'].items():
             self.assertEqual(total, sum(counts[key] for counts in report['operations'].values()))
         if report['accepted_changes']:

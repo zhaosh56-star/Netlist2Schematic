@@ -13,14 +13,16 @@ from time import perf_counter
 from orthogonal_router import RoutingFailure
 from route_patterns import MAX_TRACKS_PER_AXIS, three_segment_candidates
 from route_reattachment import MAX_TARGETS_PER_BRANCH, reattachment_candidates
+from route_tracks import MAX_TRACK_CANDIDATES_PER_CHAIN, track_compaction_candidates
 from routing_rules import (EPS, build_scene, canonical_topology, check_deadline,
                            on_segment)
 from sa_routing import RoutingValidationError, _verify
 
-VERSION = 'orthogonal-shortcuts-v4'
+VERSION = 'orthogonal-shortcuts-v5'
 MAX_ROUNDS = 4
 MAX_CANDIDATES = 512
-OPERATIONS = ('chain_shortcut', 'leaf_reattachment', 'three_segment_shortcut')
+OPERATIONS = ('chain_shortcut', 'leaf_reattachment', 'three_segment_shortcut',
+              'track_compaction')
 
 
 def _edge(a, b):
@@ -156,15 +158,22 @@ def _three_segment_candidates(scene, routed, deadline=None):
     yield from three_segment_candidates(scene, routed, _chains(scene, routed, deadline), deadline)
 
 
-def _candidate_stream(scene, routed, first_operation=0, deadline=None, *, with_patterns=False):
+def _track_compaction_candidates(scene, routed, deadline=None):
+    yield from track_compaction_candidates(scene, routed, _chains(scene, routed, deadline), deadline)
+
+
+def _candidate_stream(scene, routed, first_operation=0, deadline=None, *, with_patterns=False,
+                      with_tracks=False):
     """Give each operation one candidate in turn on this immutable incumbent."""
     iterators = {
         0: iter(_shortcut_candidates(scene, routed, deadline)),
         1: iter(reattachment_candidates(scene, routed, deadline)),
     }
-    operation_count = 3 if with_patterns else 2
+    operation_count = 4 if with_tracks else 3 if with_patterns else 2
     if with_patterns:
         iterators[2] = iter(_three_segment_candidates(scene, routed, deadline))
+    if with_tracks:
+        iterators[3] = iter(_track_compaction_candidates(scene, routed, deadline))
     turn = first_operation % operation_count
     while iterators:
         check_deadline(deadline, 'simplify_candidate_generation')
@@ -220,12 +229,15 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
     report = {'version': VERSION, 'budget_seconds': seconds,
               'parameters': {'max_rounds': MAX_ROUNDS, 'max_candidates': MAX_CANDIDATES,
                              'max_targets_per_branch': MAX_TARGETS_PER_BRANCH,
-                             'max_tracks_per_axis': MAX_TRACKS_PER_AXIS},
+                             'max_tracks_per_axis': MAX_TRACKS_PER_AXIS,
+                             'max_track_candidates_per_chain': MAX_TRACK_CANDIDATES_PER_CHAIN},
               'operation_order': list(OPERATIONS),
-              'phase_order': ['chain_warmup', 'coordinated_refinement', 'three_segment_refinement'],
-              'scheduling': 'preserve_v3_then_three_segment_refinement',
+              'phase_order': ['chain_warmup', 'coordinated_refinement', 'three_segment_refinement',
+                              'track_compaction_refinement'],
+              'scheduling': 'preserve_v4_then_track_compaction_refinement',
               'warmup_completed': False,
               'v3_completed': False,
+              'v4_completed': False,
               'before_metrics': deepcopy(incumbent[1]), 'after_metrics': deepcopy(incumbent[1]),
               'changed_nets': [], 'changed_net_count': 0, 'rounds': 0,
               'candidate_counts': {'considered': 0, 'validated': 0, 'accepted': 0,
@@ -254,6 +266,7 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
         first_operation = 0
         warmup = True
         patterns_enabled = False
+        tracks_enabled = False
         for round_number in range(1, MAX_ROUNDS + 1):
             report['rounds'] = round_number
             changed_this_round = False
@@ -272,7 +285,7 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                               _shortcut_candidates(scene, incumbent[0], deadline))
                              if warmup else _candidate_stream(
                                  scene, incumbent[0], first_operation, deadline,
-                                 with_patterns=patterns_enabled))
+                                 with_patterns=patterns_enabled, with_tracks=tracks_enabled))
                 for operation, proposal in proposals:
                     check_deadline(deadline, 'simplify_candidate')
                     net = proposal['net']
@@ -326,21 +339,25 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                         signal_nets=len(scene.pins), violations=[],
                         power_connections_checked=analysis['power_connections_checked'])
                     change = {'operation': operation, 'net': net,
-                              'phase': ('chain_warmup' if warmup else 'three_segment_refinement'
+                              'phase': ('chain_warmup' if warmup else 'track_compaction_refinement'
+                                        if tracks_enabled else 'three_segment_refinement'
                                         if patterns_enabled else 'coordinated_refinement'),
                               'before_metrics': deepcopy(incumbent[1]),
                               'after_metrics': deepcopy(metrics)}
                     for key in ('source', 'source_pin', 'component', 'pin',
                                 'old_attachment', 'new_attachment',
                                 'old_branch_length', 'new_branch_length',
-                                'target', 'track_axis', 'track_coordinate'):
+                                'target', 'track_axis', 'track_coordinate',
+                                'old_track_coordinate', 'moved_segment_index',
+                                'old_chain_length', 'new_chain_length'):
                         if key in proposal:
                             change[key] = deepcopy(proposal[key])
                     report['accepted_changes'].append(change)
                     incumbent = (routed, metrics, validation)
                     count('accepted')
                     report['topology_rebuilds'] += 1
-                    first_operation = (0 if warmup else (OPERATIONS.index(operation) + 1) % 3
+                    first_operation = (0 if warmup else (OPERATIONS.index(operation) + 1) % 4
+                                       if tracks_enabled else (OPERATIONS.index(operation) + 1) % 3
                                        if patterns_enabled else 1 - OPERATIONS.index(operation))
                     changed.add(net)
                     changed_this_round = accepted = True
@@ -354,6 +371,14 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                     report['v3_metrics'] = deepcopy(incumbent[1])
                     patterns_enabled = True
                     first_operation = 2
+                    continue
+                if not accepted and not warmup and patterns_enabled and not tracks_enabled:
+                    # Preserve the complete v4 incumbent before adding same-turn
+                    # track shifts. Reuse this round and the existing budgets.
+                    report['v4_completed'] = True
+                    report['v4_metrics'] = deepcopy(incumbent[1])
+                    tracks_enabled = True
+                    first_operation = 3
                     continue
                 if not accepted:
                     break

@@ -29,11 +29,14 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         out_dir=None, cell=None, analog_canvas_root=None, routing_options=None,
         layout_style='structured', quality_seconds=300, candidate_id=None,
         fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
-        local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5):
+        local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
+        passive_layout='flexible'):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
         raise ValueError(f'Unknown layout style: {layout_style}')
+    if passive_layout not in ('flexible', 'fixed'):
+        raise ValueError('passive_layout must be flexible or fixed')
     if mode not in ('baseline', 'layered'):
         raise ValueError(f'Unknown layout mode: {mode}')
     if candidate_id is not None and (mode != 'layered' or layout_style != 'structured'):
@@ -80,7 +83,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
             started = perf_counter()
             try:
                 result = _normal_result(source, par, mode, layout_style, cell, iterations,
-                                        seed, quality_seconds, candidate_id, options)
+                                        seed, quality_seconds, candidate_id, options,
+                                        passive_layout=passive_layout)
             except ROUTING_FAILURES as exc:
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
                     raise
@@ -129,6 +133,11 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     placement, comps, nets, comp_index, metadata, routed_result = result
     metadata = deepcopy(metadata)
     metadata.setdefault('routing_stage', 'normal')
+    metadata.setdefault('passive_layout_policy', 'fixed')
+    metadata.setdefault('passive_layout', {
+        'version': 'fixed-rows-v1', 'policy': 'fixed',
+        'reason': 'deterministic_bus' if metadata['routing_stage'] == 'bus_fallback'
+                  else 'saved_candidate'})
     metadata['recovery'] = {'policy': policy, 'local_rescue': rescue_policy,
                             'rescue_seconds': rescue_seconds, 'stages': stages}
     if len(set(placement.cell_of)) != len(comps) or any(p is None for p in placement.cell_of):
@@ -138,6 +147,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         'source_sha256': source_hash,
         'analog_canvas_root': str(resource_root()), 'mode': mode,
         'seed': seed, 'iterations': iterations, **metadata,
+        'requested_passive_layout': passive_layout,
         'placement': {comp['id']: {'row': placement.cell_of[i][0],
                                   'col': placement.cell_of[i][1],
                                   'orient': placement.orient[i]}
@@ -149,12 +159,12 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
 
 
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
-                   quality_seconds, candidate_id, options):
+                   quality_seconds, candidate_id, options, *, passive_layout='flexible'):
     if mode == 'layered' and layout_style == 'structured':
         from aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
                              quality_seconds=quality_seconds, routing_options=options,
-                             candidate_id=candidate_id)
+                             candidate_id=candidate_id, passive_layout=passive_layout)
     elif mode == 'layered':
         layered = load_local('place_layered', 'place-layered.py')
         placement, comps, nets, comp_index, metadata = layered.create_placement(
@@ -172,6 +182,9 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
         metadata = dict(source_note='baseline', levels={}, attach={}, structs=[],
                         sym_pairs=[], energy=energy, optimization_metrics=optimization_metrics)
     metadata['layout_style'] = 'legacy'
+    metadata['passive_layout_policy'] = 'fixed'
+    metadata['passive_layout'] = {'version': 'fixed-rows-v1', 'policy': 'fixed',
+                                  'reason': 'legacy_layout'}
     try:
         routed_result = final_route(par, nets, placement, comp_index, options=options)
     except ROUTING_FAILURES as exc:
@@ -538,8 +551,11 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--simplify-placement', help='Validate and simplify saved routes; no SA or A*')
     parser.add_argument('--mode', choices=('baseline', 'layered'), default=default_mode)
     parser.add_argument('--layout-style', choices=('structured', 'legacy'), default='structured')
+    parser.add_argument('--passive-layout', choices=('flexible', 'fixed'), default='flexible',
+                        help='Passive mobility for new structured candidates; saved coordinates are preserved')
     parser.add_argument('--quality-seconds', type=float, default=300)
-    parser.add_argument('--candidate-id', help='Replay one structured candidate identifier')
+    parser.add_argument('--candidate-id',
+                        help='Replay candidate 1, 2 or 3; 0 explicitly runs the legacy reference')
     parser.add_argument('--fallback', choices=('auto', 'off', 'only'),
                         help='Default: auto for netlists, off for candidate replay')
     parser.add_argument('--local-rescue', choices=('auto', 'off'),
@@ -576,6 +592,7 @@ def main(argv=None, default_mode='layered'):
             run(args.netlist, mode=args.mode, iterations=args.iterations, seed=args.seed,
                 out_dir=args.out_dir, cell=args.cell, analog_canvas_root=args.analog_canvas_root,
                 layout_style=args.layout_style, quality_seconds=args.quality_seconds, candidate_id=args.candidate_id,
+                passive_layout=args.passive_layout,
                 fallback=args.fallback, spacing_scale=args.spacing_scale,
                 spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
                 local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,

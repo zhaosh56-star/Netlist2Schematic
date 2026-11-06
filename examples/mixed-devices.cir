@@ -1,8 +1,4 @@
-* Layout regression: BJT polarities, diode and grounded E-source opamp proxy.
-* This is a structural drawing example, not a qualified simulation circuit.
-.model QN NPN (bf=100)
-.model QP PNP (bf=80)
-.model DM D (is=1e-15)
+
 VDD vdd 0 5
 VIN in 0 0.7
 R1 vdd c1 10k

@@ -16,11 +16,14 @@ _PLACEMENT_BUDGET_MESSAGES = frozenset({
 
 
 def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
-                  quality_seconds=300, routing_options=None, candidate_id=None):
+                  quality_seconds=300, routing_options=None, candidate_id=None,
+                  passive_layout='flexible'):
     if type(quality_seconds) not in (int, float) or not isfinite(quality_seconds) or quality_seconds <= 0:
         raise ValueError('quality_seconds must be positive and finite')
     if candidate_id is not None and str(candidate_id) not in ('0', '1', '2', '3'):
         raise ValueError('candidate_id must be one of 0, 1, 2, 3')
+    if passive_layout not in ('flexible', 'fixed'):
+        raise ValueError('passive_layout must be flexible or fixed')
     from structured_placement import create_candidates, feedback_candidate
     from layout_quality import evaluate_quality
     from orthogonal_router import RoutingFailure
@@ -32,26 +35,31 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     retry_context = retry_options = rescue_context = None
     candidate_data_error = False
     effective_options = routing_options if routing_options is not None else RoutingOptions()
+    include_legacy = str(candidate_id) == '0'
+    candidate_limit = 1 if include_legacy else 3
+    candidate_policy = 'legacy_reference_replay' if include_legacy else 'structured_only'
     stop_reason = 'candidates_exhausted'
     try:
         candidates = create_candidates(path, cell=cell, iterations=iterations,
-                                       seed=seed, deadline=deadline)
+                                       seed=seed, deadline=deadline, passive_layout=passive_layout,
+                                       include_legacy=include_legacy)
         for number, item in enumerate(candidates):
-            if number >= 4:
+            if number >= candidate_limit:
                 stop_reason = 'candidate_limit'
                 break
             placement, comps, nets, index, metadata = item
-            identifier = str(metadata.get('candidate_id', number))
+            identifier = str(metadata.get('candidate_id', 0 if include_legacy else number + 1))
             replay_feedback = str(candidate_id) == '3'
             if candidate_id is not None and str(candidate_id) != identifier and not replay_feedback:
                 continue
             if perf_counter() >= deadline:
                 stop_reason = 'time_budget'
                 break
-            # Reserve the last expensive routing slot for measured congestion
+            # Reserve candidate 3 for measured congestion, independently of its
+            # position in the generator (the default sequence starts at 1).
             # when a prior route has a substantial, clearly excessive detour.
             # Small unavoidable local loops still get the compact third seed.
-            if number == 3 and best is not None:
+            if identifier == '3' and best is not None:
                 detail = best[7]
                 severe = any((row.get('detour_factor') or 0) >= 2.5
                              and row.get('excess_detour', 0) >= 500
@@ -61,12 +69,14 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                                                   best[5], detail)
                     if proposal is not None:
                         placement, comps, nets, index, metadata = proposal
-                        metadata['candidate_id'] = number
+                        metadata['candidate_id'] = int(identifier)
                         metadata['candidate_seed'] = best[5].get('candidate_seed', seed)
             print(f'Quality candidate {identifier}: final routing, '
                   f'budget remaining={deadline-perf_counter():.1f}s', flush=True)
             record = {'candidate_id': identifier, 'seed': metadata.get('candidate_seed', seed),
-                      'annealing': deepcopy(metadata.get('annealing', {}))}
+                      'annealing': deepcopy(metadata.get('annealing', {})),
+                      'passive_layout_policy': metadata.get('passive_layout_policy', 'fixed'),
+                      'passive_layout': deepcopy(metadata.get('passive_layout', {}))}
             # A router or suspended producer may mutate/reuse its own buffers.
             # Keep only the last actually attempted candidate, after any feedback
             # replacement, and never serialize this executable placement object.
@@ -134,7 +144,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         failure = RoutingFailure('No verified layout candidate completed within the quality budget',
                                  {'reason': stop_reason, 'candidates': records,
                                   'requested_candidate': candidate_id,
-                                  'quality_seconds': quality_seconds})
+                                  'quality_seconds': quality_seconds,
+                                  'candidate_policy': candidate_policy,
+                                  'candidate_limit': candidate_limit,
+                                  'legacy_reference_enabled': include_legacy})
         # A valid incumbent from replay prerequisites must not silently trigger
         # recovery for a failed explicitly requested candidate.
         if best is None:
@@ -146,6 +159,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     _, placement, comps, nets, index, metadata, routed_result, quality, identifier = best
     metadata.update(layout_style='structured', quality={
         'policy': 'balanced-v1', 'budget_seconds': quality_seconds,
+        'candidate_policy': candidate_policy, 'candidate_limit': candidate_limit,
+        'legacy_reference_enabled': include_legacy,
         'elapsed_seconds': round(perf_counter()-started, 6), 'stop_reason': stop_reason,
         'selected_candidate': identifier, 'score': quality['score'],
         'details': quality, 'candidates': records})

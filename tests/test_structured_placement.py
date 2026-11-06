@@ -27,7 +27,8 @@ def seed_placement(number, seed=123, variant=0):
     att = structured.legacy.attach_info(devices, levels['net_levels'], conduction)
     records = structured._structures(devices)
     pl, alignment, pairs = structured._initial_placement(
-        devices, comps, nets, index, levels, att, records, seed, variant)
+        devices, comps, nets, index, levels, att, records, seed, variant,
+        passive_layout='fixed')
     return pl, comps, nets, index, alignment, pairs, records, levels
 
 
@@ -130,8 +131,8 @@ class StructuredPlacementTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), original)
         self.assertEqual((first[0].cell_of, first[0].orient), first_snapshot)
         self.assertEqual([first[4]['candidate_id']] + [row[4]['candidate_id'] for row in rest],
-                         [0, 1, 2, 3])
-        self.assertEqual(len({id(row[0]) for row in [first, *rest]}), 4)
+                         [1, 2, 3])
+        self.assertEqual(len({id(row[0]) for row in [first, *rest]}), 3)
         for row in rest:
             pl = row[0]
             for i, (r, c) in enumerate(pl.cell_of):

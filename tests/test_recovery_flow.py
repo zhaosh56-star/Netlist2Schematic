@@ -244,7 +244,7 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
 
     def test_source_change_during_normal_failure_stops_recovery(self):
-        def change_source(*args):
+        def change_source(*args, **kwargs):
             self.source.write_bytes(self.original + b'* edited while running\r\n')
             raise self.failure()
         with patch('run_flow._normal_result', side_effect=change_source), \

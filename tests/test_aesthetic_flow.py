@@ -136,29 +136,29 @@ class CandidateSelectionTests(unittest.TestCase):
                 'terminals': 3, 'detour_factor': 2.5 if severe else 2.49,
                 'excess_detour': 500}}}
 
-        scores = [quality(score) for score in (30, 20, 10, feedback_score)]
+        scores = [quality(score) for score in (30, 10, feedback_score)]
         with patch('structured_placement.feedback_candidate', return_value=tuple(proposal)) as feedback, \
                 patch('layout_quality.evaluate_quality', side_effect=scores):
-            chosen, routed = self.select([candidate(i, energy=-i) for i in range(4)],
-                                          [route_result()] * 4, candidate_id=candidate_id)
+            chosen, routed = self.select([candidate(i, energy=-i) for i in (1, 2, 3)],
+                                          [route_result()] * 3, candidate_id=candidate_id)
         return chosen, routed, feedback
 
-    def test_measured_severe_detour_uses_fourth_slot_for_feedback_without_losing_incumbent(self):
+    def test_measured_severe_detour_uses_last_slot_for_feedback_without_losing_incumbent(self):
         chosen, routed, feedback = self.feedback_selection(feedback_score=40)
-        self.assertEqual(4, routed.call_count)
-        self.assertEqual([0, 1, 2, 99], [call.args[2].identifier for call in routed.call_args_list])
+        self.assertEqual(3, routed.call_count)
+        self.assertEqual([1, 2, 99], [call.args[2].identifier for call in routed.call_args_list])
         self.assertEqual(1, feedback.call_count)
         self.assertEqual(2, feedback.call_args.args[0].identifier)
         self.assertEqual(2, chosen[0].identifier)
         self.assertEqual('2', chosen[4]['quality']['selected_candidate'])
         records = chosen[4]['quality']['candidates']
-        self.assertEqual(['0', '1', '2', '3'], [row['candidate_id'] for row in records])
-        self.assertEqual('signal', records[3]['feedback']['net'])
-        self.assertEqual('2', records[3]['feedback']['source_candidate'])
+        self.assertEqual(['1', '2', '3'], [row['candidate_id'] for row in records])
+        self.assertEqual('signal', records[2]['feedback']['net'])
+        self.assertEqual('2', records[2]['feedback']['source_candidate'])
 
-    def test_better_feedback_can_win_the_fourth_routing_slot(self):
+    def test_better_feedback_can_win_the_last_routing_slot(self):
         chosen, routed, feedback = self.feedback_selection(feedback_score=5)
-        self.assertEqual(4, routed.call_count)
+        self.assertEqual(3, routed.call_count)
         self.assertEqual(1, feedback.call_count)
         self.assertEqual(99, chosen[0].identifier)
         self.assertEqual(3, chosen[4]['candidate_id'])
@@ -166,28 +166,28 @@ class CandidateSelectionTests(unittest.TestCase):
         self.assertEqual(5, chosen[4]['quality']['score'])
         self.assertEqual('signal', chosen[4]['feedback']['net'])
 
-    def test_moderate_detour_keeps_normal_fourth_seed(self):
+    def test_moderate_detour_keeps_normal_third_seed(self):
         chosen, routed, feedback = self.feedback_selection(feedback_score=5, severe=False)
-        self.assertEqual(4, routed.call_count)
-        self.assertEqual([0, 1, 2, 3], [call.args[2].identifier for call in routed.call_args_list])
+        self.assertEqual(3, routed.call_count)
+        self.assertEqual([1, 2, 3], [call.args[2].identifier for call in routed.call_args_list])
         feedback.assert_not_called()
         self.assertEqual(3, chosen[0].identifier)
 
     def test_replaying_feedback_candidate_evaluates_its_sources_and_selects_requested_result(self):
         chosen, routed, feedback = self.feedback_selection(feedback_score=40, candidate_id='3')
-        self.assertEqual([0, 1, 2, 99], [call.args[2].identifier for call in routed.call_args_list])
-        self.assertEqual(4, routed.call_count)
+        self.assertEqual([1, 2, 99], [call.args[2].identifier for call in routed.call_args_list])
+        self.assertEqual(3, routed.call_count)
         self.assertEqual(1, feedback.call_count)
         self.assertEqual(99, chosen[0].identifier)
         self.assertEqual('3', chosen[4]['quality']['selected_candidate'])
         self.assertEqual('replay_complete', chosen[4]['quality']['stop_reason'])
         self.assertEqual('2', chosen[4]['feedback']['source_candidate'])
 
-    def test_only_four_candidates_are_routed(self):
-        chosen, routed = self.select([candidate(i) for i in range(6)], [route_result()] * 4)
-        self.assertEqual(4, routed.call_count)
+    def test_only_three_candidates_are_routed(self):
+        chosen, routed = self.select([candidate(i) for i in range(1, 7)], [route_result()] * 3)
+        self.assertEqual(3, routed.call_count)
         self.assertEqual('candidate_limit', chosen[4]['quality']['stop_reason'])
-        self.assertEqual(4, len(chosen[4]['quality']['candidates']))
+        self.assertEqual(3, len(chosen[4]['quality']['candidates']))
 
     def test_no_successful_candidate_never_claims_a_valid_best(self):
         with self.assertRaises(RoutingFailure) as caught:
