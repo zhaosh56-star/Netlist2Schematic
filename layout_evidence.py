@@ -392,3 +392,252 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
             'diagnostics': diagnostics}
 
 
+def extend_branch_evidence(devices, evidence, *, bridge_alignment=()):
+    """Extend calibrated seeds using unique, corresponding visible branches.
+
+    This is a separate opt-in stage.  A corresponding branch is drawing
+    evidence, not a claim that a whole circuit is a cascode, CMFB or buffer.
+    Existing explicit composites retain their parent/child partition.  New
+    ownership is deliberately left to the caller's common owner resolver.
+    """
+    result = deepcopy(evidence)
+    records = result['relations']
+    roles = result['net_roles']
+    incidence = _incidence(devices)
+    active = {n: d for n, d in devices.items() if _channel(d)}
+    report = {'version': BRANCH_VERSION, 'added_relations': [], 'skipped_branches': [],
+              'rejected_bridges': [], 'functional_claims': 'none', 'ownership': 'caller_resolves'}
+    identities = {(r['kind'], tuple(sorted(r['members']))) for r in records}
+    existing_ids = {r['id'] for r in records}
+
+    def add(row, *, repeated_ports=False):
+        identity = row['kind'], tuple(sorted(row['members']))
+        if repeated_ports:
+            identity += (row['id'],)
+        if row['id'] in existing_ids or identity in identities or len(row['members']) < 2:
+            return None
+        identities.add(identity)
+        existing_ids.add(row['id'])
+        records.append(row)
+        report['added_relations'].append(row['id'])
+        return row
+
+    def neighbor(name, direction):
+        device = devices[name]
+        out, _, src = _channel(device)
+        anchor_pin, other_pin = (out, src) if direction == 'out' else (src, out)
+        net = _ports(device)[anchor_pin]
+        if _power(roles, net):
+            return None, 'power_endpoint'
+        users = [(n, pin) for n, pin in incidence[net] if n != name and n in active
+                 and pin in (_channel(active[n])[0], _channel(active[n])[2])]
+        if len(users) != 1 or users[0][1] != other_pin:
+            return None, 'nonunique_conduction_continuation'
+        other = users[0][0]
+        if (active[other]['cls'], active[other]['type']) != (device['cls'], device['type']):
+            return None, 'different_channel_family'
+        if any(devices[n].get('cls') in ('VSRC', 'ISRC') for n, _ in incidence[net]):
+            return None, 'source_at_branch_junction'
+        return (other, net, anchor_pin, other_pin), None
+
+    priority = {'differential_pair': 0, 'bjt_differential_pair': 0,
+                'current_mirror': 1, 'bjt_current_mirror': 1, 'matched_branch_pair': 2}
+    roots = []
+    seen_roots = set()
+    for row in sorted(list(records), key=lambda r: (priority.get(r['kind'], 3), r['id'])):
+        for pair in row.get('layout', {}).get('pairs', ()):
+            identity = frozenset(pair)
+            if len(pair) == 2 and all(n in active for n in pair) and identity not in seen_roots:
+                seen_roots.add(identity)
+                roots.append((list(pair), row))
+    explored = set()
+    for initial, anchor_relation in roots:
+        queue, children, members, edges = [initial], [], set(initial), []
+        while queue:
+            pair = queue.pop(0)
+            identity = frozenset(pair)
+            if identity in explored:
+                continue
+            explored.add(identity)
+            for direction in ('out', 'source'):
+                left, left_error = neighbor(pair[0], direction)
+                right, right_error = neighbor(pair[1], direction)
+                if not left or not right or left[0] == right[0] or left[1] == right[1]:
+                    report['skipped_branches'].append({'anchor_pair': list(pair), 'direction': direction,
+                        'reason': left_error or right_error or 'merged_branches'})
+                    continue
+                names = [left[0], right[0]]
+                first, second = (active[n] for n in names)
+                if (first['cls'], first['type']) != (second['cls'], second['type']):
+                    continue
+                control = _channel(first)[1]
+                ga, gb = (_ports(active[n])[control] for n in names)
+                shared_control = ga == gb
+                if not shared_control and _signature(devices, incidence, ga, [*names, *pair]) != _signature(
+                        devices, incidence, gb, [*names, *pair]):
+                    report['skipped_branches'].append({'anchor_pair': list(pair), 'direction': direction,
+                                                      'reason': 'incomparable_control_roles'})
+                    continue
+                if frozenset(names) in explored:
+                    continue
+                positive = first['type'] in ('PMOS', 'PNP')
+                neighbor_above = (direction == 'out') != positive
+                branches = [[n, a] if neighbor_above else [a, n] for n, a in zip(names, pair)]
+                row = add(_relation('corresponding_branch_pair', names,
+                    {'left': names[0], 'right': names[1], 'anchor_pair': list(pair),
+                     'anchor_pins': [left[2], right[2]], 'member_pins': [left[3], right[3]],
+                     'branches': branches, 'direction': direction}, rigid=True,
+                    layout={'pairs': [names], 'orders': [names], 'branches': branches},
+                    evidence={'kind': 'unique_corresponding_channels',
+                              'anchor_relation': anchor_relation['id'],
+                              'junctions': [left[1], right[1]],
+                              'control_evidence': 'shared_control' if shared_control else 'matching_control_incidence',
+                              'functional_claim': None}))
+                if row:
+                    children.append(row)
+                    members.update(names)
+                    edges.extend(branches)
+                    queue.append(names)
+        if children and not anchor_relation.get('parent'):
+            macro = add(_relation('paired_branches', members,
+                {'anchor_pair': initial, 'corresponding_pairs': [r['members'] for r in children],
+                 'branch_edges': edges}, macro=True,
+                layout={'pairs': [initial, *[r['members'] for r in children]], 'branches': edges},
+                evidence={'kind': 'anchored_corresponding_branches',
+                          'anchor_relation': anchor_relation['id'], 'functional_claim': None}))
+            if macro:
+                for child in [anchor_relation, *children]:
+                    if child.get('parent') is None:
+                        child['parent'] = macro['id']
+                        macro['children'].append(child['id'])
+                macro['children'].sort()
+
+    # Recheck imported R/L bridge evidence against raw visible terminals.
+    for bridge in bridge_alignment:
+        names, path = list(bridge.get('members', ())), list(bridge.get('path', ()))
+        endpoints = [bridge.get('upper'), bridge.get('lower')]
+        valid = bool(names) and len(path) == len(names)+1 and len(set(path)) == len(path) and all(n in devices and
+            devices[n].get('cls') == 'PASSIVE' and devices[n].get('type') in ('R', 'L') for n in names)
+        if valid:
+            for i, name in enumerate(names):
+                pins = bridge.get('member_pins', {}).get(name, {})
+                ports = _ports(devices[name])
+                if (ports.get(pins.get('in')) != path[i] or ports.get(pins.get('out')) != path[i+1]):
+                    valid = False
+            for i, net in enumerate(path):
+                expected = []
+                if i:
+                    expected.append((names[i-1], bridge.get('member_pins', {}).get(names[i-1], {}).get('out')))
+                if i < len(names):
+                    expected.append((names[i], bridge.get('member_pins', {}).get(names[i], {}).get('in')))
+                endpoint = endpoints[0] if i == 0 else endpoints[1] if i == len(names) else None
+                endpoint_pin = bridge.get('upper_pin') if i == 0 else bridge.get('lower_pin')
+                if endpoint is not None:
+                    if endpoint not in active or endpoint_pin not in (_channel(active[endpoint])[0],
+                            _channel(active[endpoint])[2]) or _ports(active[endpoint]).get(endpoint_pin) != net:
+                        valid = False
+                    expected.append((endpoint, endpoint_pin))
+                if not _power(roles, net) and set(incidence[net]) != set(expected):
+                    valid = False
+        for connection in bridge.get('connections', ()):
+            pins = connection.get('pins', ())
+            net = connection.get('net')
+            if (len(pins) != 2 or any(n not in devices or _ports(devices[n]).get(pin) != net for n, pin in pins)
+                    or not _power(roles, net) and set(incidence[net]) != {tuple(p) for p in pins}):
+                valid = False
+        if not valid or not bridge.get('connections'):
+            report['rejected_bridges'].append({'id': bridge.get('id'), 'reason': 'unverified_rl_bridge'})
+            continue
+        branch = [n for n in (endpoints[0], *names, endpoints[1]) if n is not None]
+        add(_relation('rl_branch_bridge', branch, deepcopy(bridge),
+            layout={'branches': [branch], 'attachments': deepcopy(bridge['connections'])},
+            evidence={'kind': 'strict_visible_rl_path', 'source_bridge': bridge.get('id')}))
+
+    # Attachments are soft port relationships, never rigid passive/active unions.
+    for name, device in sorted(devices.items()):
+        if device.get('cls') != 'PASSIVE':
+            continue
+        ports = _ports(device)
+        for pin, net in ports.items():
+            if _power(roles, net):
+                continue
+            anchors = [(n, p) for n, p in incidence[net] if n in active or
+                       devices[n].get('cls') in ('VCVS', 'OPAMP') and p not in ('VDD', 'VSS')]
+            if len(anchors) != 1:
+                continue
+            anchor = anchors[0]
+            other_net = next((value for other, value in ports.items() if other != pin), None)
+            port_role = ('control' if anchor[1] in _CONTROL else
+                         'output' if anchor[1] in ('D', 'C', 'OUT') else 'conduction_source')
+            row = _relation('port_attachment', [name, anchor[0]],
+                {'member': name, 'member_pin': pin, 'anchor': list(anchor), 'net': net,
+                 'other_net': other_net, 'port_role': port_role,
+                 'other_is_power': _power(roles, other_net)},
+                layout={'attachments': [{'net': net, 'pins': [[name, pin], list(anchor)]}]},
+                evidence={'kind': 'unique_visible_port_anchor', 'functional_claim': None})
+            row['id'] += '@'+pin+':'+anchor[1]
+            add(row, repeated_ports=True)
+
+    # Equal two-resistor sensing paths into control pins; no CMFB/sign claim.
+    output_pairs = []
+    for row in records:
+        for pair in row.get('layout', {}).get('pairs', ()):
+            if len(pair) == 2 and all(n in active for n in pair):
+                outputs = [_ports(active[n])[_channel(active[n])[0]] for n in pair]
+                if len(set(outputs)) == 2:
+                    output_pairs.append(set(outputs))
+    for net, users in sorted(incidence.items()):
+        controls = [(n, p) for n, p in users if p in _CONTROL]
+        resistors = sorted({n for n, _ in users if devices[n].get('cls') == 'PASSIVE'
+                            and devices[n].get('type') == 'R'})
+        if (_power(roles, net) or not controls or len(resistors) != 2
+                or any(devices[n].get('cls') == 'VSRC' for n, _ in users)):
+            continue
+        first, second = (devices[n] for n in resistors)
+        if first.get('value') is None or first.get('value') != second.get('value'):
+            continue
+        ends = [next((x for x in (devices[n]['a'], devices[n]['b']) if x != net), net) for n in resistors]
+        if set(ends) not in output_pairs:
+            continue
+        add(_relation('paired_sense_paths', [*resistors, *[n for n, _ in controls]],
+            {'sensing_members': resistors, 'sense_nets': ends, 'control_net': net,
+             'controlled_pins': [list(p) for p in controls]},
+            evidence={'kind': 'equal_resistors_from_corresponding_outputs_to_control',
+                      'functional_claim': None}))
+
+    # Two collector-supplied BJT emitter outputs may merge without being a DP.
+    emitters = defaultdict(list)
+    for name, device in sorted(active.items()):
+        if device['cls'] == 'BJT' and _power(roles, device['c']) and not _power(roles, device['e']):
+            emitters[(device['type'], device['e'])].append(name)
+    for (_, net), names in sorted(emitters.items()):
+        if len(names) == 2 and devices[names[0]]['b'] != devices[names[1]]['b']:
+            add(_relation('common_emitter_merge', names,
+                {'members': names, 'output_net': net, 'output_pins': [[n, 'E'] for n in names]},
+                layout={'same_row': [names]},
+                evidence={'kind': 'two_collector_supplied_emitter_outputs', 'functional_claim': None}))
+
+    # Clock access requires a latch, two rail reset/precharge devices and a
+    # gated tail on the same explicit external control; bias fanout alone fails.
+    latch_outputs = {devices[n]['d'] for row in result['structures'] if row['kind'] == 'latch'
+                     for n in row['devices'] if devices[n].get('cls') == 'MOS'}
+    pair_sources = {row['roles'].get('source_net', row.get('nets', {}).get('source'))
+                    for row in result['structures'] if row['kind'] == 'differential_pair'}
+    external = set(result['external_controls']['formal']) | set(result['external_controls']['voltage_source'])
+    for net in sorted(external):
+        resets, tails = [], []
+        for name, device in sorted(active.items()):
+            if device['cls'] != 'MOS' or device['g'] != net:
+                continue
+            if _power(roles, device['s']) and device['d'] in latch_outputs:
+                resets.append(name)
+            if device['d'] in pair_sources:
+                tails.append(name)
+        if len(resets) >= 2 and tails:
+            add(_relation('clock_access', [*resets, *tails],
+                {'control_net': net, 'reset_members': resets, 'tail_members': tails,
+                 'control_pins': [[n, 'G'] for n in [*resets, *tails]]},
+                evidence={'kind': 'external_latch_reset_and_tail_control', 'functional_claim': None}))
+    result['relations'] = sorted(records, key=lambda row: row['id'])
+    result['branch_evidence'] = report
+    return result
