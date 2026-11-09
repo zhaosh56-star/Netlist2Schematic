@@ -6,13 +6,14 @@
 无需启动网页编辑器，也无需安装 Node.js、pnpm 或仿真器。
 
 日常命令见 [README](../README.md)，全部文件的职责和保留范围见[项目目录说明](project-layout.md)。
+当前651项完整回归通过；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)。下文各历史版本的测试数量与实测数字保留当时口径。
 希望先按执行顺序理解算法，可读[当前flow逐步详解](flow-walkthrough.md)，其中分别解释解析、分层、两类SA估价、最终A*、恢复链、v4简化及JSON记录。
 下面的 PowerShell 命令均从项目根目录执行；日常输出集中在 `output/<网表标签>/`，不依赖历史出图。
 
 ## 一次默认 flow 用到哪些代码
 
-入口是 `run_flow.py`，默认执行 `layered + structured`；包含失败恢复时可能涉及26个Python文件，
-显式开启器件对称规整时再使用 `symmetry_layout.py`，合计下列 **27 个 Python 文件**：
+入口是 `run_flow.py`，默认执行 `layered + structured`，下表列出原主线和恢复链的核心文件。
+预算参数校验另外使用`candidate_budget.py`；显式结构布局、静态端口修复与展示使用的新增模块见[结构布局说明](structure-layout.md)，实验对称规整仍由`symmetry_layout.py`单独控制。
 
 | 环节 | 文件 | 作用 |
 | --- | --- | --- |

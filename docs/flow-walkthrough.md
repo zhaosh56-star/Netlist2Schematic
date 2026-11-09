@@ -1037,10 +1037,27 @@ run_flow.main → run → _normal_result
 
 这是一条逻辑阅读主线，实际代码会为候选、兼容入口或复验多次调用公共解析/几何函数，不是每个函数只执行一次。
 
-当前完整回归362项全部通过，包含此前354项和默认跳过候选0的新增8项；另有48套结构种子等价对照、10份v5保存线路对照及图5/7的新完整flow实测，结果见[运行说明](flow-guide.md)。单次出图不会自动执行整套测试，需要主动运行时：
+当前完整回归651项全部通过；此前362项及其结构种子、v5保存线路对照继续保留，新结构布局和独立开关的验证结果见[分阶段实测](structure-layout-results.md)。单次出图不会自动执行整套测试，需要主动运行时：
 
 ```powershell
 .\.venv\Scripts\python.exe -B -m unittest discover -s .\tests -q
 ```
 
 看一张图时，先确认 `source_netlist/source_cell`，再看 `routing_stage`与 `recovery.stages`，最后查看顶层 `metrics`、`route_simplification`和SVG。这几项能把“用了哪张网表、怎样摆的、怎样救回来的、哪些线又被缩短”串起来。
+
+## 可选结构布局在主线中的位置
+
+默认`--structure-layout off`保留上述算法。显式auto时，候选1保留参照，候选2/3依次增加：拓扑布局关系与安全行计划、SA前附件初排与软评分、SA后并联组／真实引脚微调。收尾共用1秒与128次候选，完成静态预检后才捕获失败快照、调用原A*。候选3反馈必须兼容新行计划，最终原Q与结构指标分别保存。
+
+| 代码 | 负责的事情 |
+| --- | --- |
+| `layout_relations.py` | 布局关系、最低层成员归属和显式父结构，不改原功能识别标签 |
+| `branch_levels.py` | 唯一R/L主支路、兼容同层关系、专属尾源与显示挂位 |
+| `attachment_placement.py` | 附件初排、软距离／并联规整评分、SA后安全收拢 |
+| `branch_alignment.py` | 真实引脚同轴、尾部居中、合法朝向与dx，独立重测残差 |
+| `structure_selection.py` | 本轮实际线长115%与交叉门槛内选结构更好的结果 |
+| `candidate_budget.py` | 可选70%／85%／100%候选截止点，不增加整图路由次数 |
+| `placement_preflight.py` | 可选静态端口／标记冲突修复，最多两只无源、完整事务回滚 |
+| `presentation.py`、`sa_render.py` | 从明确端口准备文字，选择legacy或clean展示，不修改导线 |
+
+旧JSON、固定位置重布、单独简化及独立重绘只恢复保存坐标，不重新执行布局。当前发布门槛尚未全部通过，所以结构开关仍默认关闭；完整规则、输入边界、复现命令和实测见[结构布局说明](structure-layout.md)。

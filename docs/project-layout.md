@@ -103,3 +103,9 @@ Set-Location D:\gongzuo
 ```
 
 对比工具默认读取 `output/1/` 至 `output/4/`，把 `comparison.json`、`comparison.html` 和必要 SVG 放在 `output/` 内。它只复验已保存线路，不会自动运行布局或布线。
+
+## 可选结构布局文件
+
+新增源码按职责独立保存：`layout_relations.py`负责布局关系，`branch_levels.py`负责显示行计划，`attachment_placement.py`负责无源附件，`branch_alignment.py`负责真实引脚与dx，`structure_selection.py`负责候选选择。展示、预算与静态端口预检分别在`presentation.py`、`candidate_budget.py`、`placement_preflight.py`，主流程仍由`run_flow.py`协调。
+
+对照入口为`tools/compare_structure_layouts.py`，生成物集中在`output/structure-layout-comparison/`。其中stage1／stage2保留阶段验证，first-pass保存64次完整对照，parallel-refinement保存后续RLC专项。原网表、GT、符号及已有主图不移动。当前651项回归全部通过，结构策略仍默认off；结果和限制见[实测说明](structure-layout-results.md)。
