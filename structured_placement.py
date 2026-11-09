@@ -160,7 +160,7 @@ class StructuredPlacement(legacy.LayeredPlacement):
         self.comp_at = {cell: i for i, cell in enumerate(self.cell_of)}
 
     def blocks_contiguous(self):
-        for block in self.blocks:
+        for block in self.blocks + getattr(self, 'layout_macro_blocks', []):
             by_row = defaultdict(list)
             for i in block:
                 by_row[self.row_of[i]].append(self.cell_of[i][1])
@@ -177,7 +177,7 @@ class StructuredPlacement(legacy.LayeredPlacement):
         rng = self.rng
         action = rng.random()
         if action < .28:
-            block = rng.choice(self.blocks)
+            block = rng.choice(getattr(self, 'motion_blocks', self.blocks))
             lo = min(self.cell_of[i][1] for i in block)
             hi = max(self.cell_of[i][1] for i in block)
             shift = rng.randint(-lo, self.cols - 1 - hi)
@@ -191,7 +191,7 @@ class StructuredPlacement(legacy.LayeredPlacement):
                 cells[i] = cell
             self.set_state(cells, self.orient)
         elif action < .46:
-            block = rng.choice(self.blocks)
+            block = rng.choice(getattr(self, 'motion_blocks', self.blocks))
             lo = min(self.cell_of[i][1] for i in block)
             hi = max(self.cell_of[i][1] for i in block)
             cells = list(self.cell_of)
@@ -238,6 +238,11 @@ class StructuredPlacement(legacy.LayeredPlacement):
                 if other is not None:
                     self.cell_of[other] = (row, col)
                 self.comp_at = {cell: j for j, cell in enumerate(self.cell_of)}
+        if getattr(self, 'layout_relations', None) and any(
+                self.cell_of[i] != before[0][i] or self.orient[i] != before[1][i]
+                for i in set(getattr(self, 'fixed', ())) | set(getattr(self, 'fixed_cells', {}))):
+            self.set_state(*before)
+            return None
         if not self.blocks_contiguous():
             self.set_state(*before)
             return None
@@ -528,6 +533,12 @@ def _estimate(pl, nets, index, alignment, pairs):
         regularity = score_passives(pl)
         value += regularity['weighted_total']
         metrics.update(passive_regularization=regularity, normalized_energy=value)
+    if getattr(pl, 'layout_relations', None):
+        from layout_relations import measure_layout_relations
+        regularity = measure_layout_relations(pl, pl.comps, index, pl.layout_relations)
+        value += (regularity['interleaving'] + 1.25 * regularity['role_order']
+                  + .15 * regularity['normalized_span'])
+        metrics.update(structure_regularization=regularity, normalized_energy=value)
     return value, metrics
 
 
@@ -755,7 +766,8 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
 
 
 def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
-                      passive_layout='flexible', include_legacy=False):
+                      passive_layout='flexible', include_legacy=False,
+                      structure_layout='off', structure_phase=1):
     """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -769,6 +781,10 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         raise ValueError('passive_layout must be flexible or fixed')
     if type(include_legacy) is not bool:
         raise ValueError('include_legacy must be boolean')
+    if structure_layout not in ('off', 'auto'):
+        raise ValueError('structure_layout must be off or auto')
+    if structure_phase not in (1, 2, 3):
+        raise ValueError('structure_phase must be 1, 2 or 3')
     if deadline is not None and time.perf_counter() >= deadline:
         raise ValueError('Quality budget exhausted before placement initialization')
     devices = parse_netlist(path, cell=cell)
@@ -811,6 +827,11 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         placement, alignment, pairs = _initial_placement(
             devices, comps, nets, index, levels, att, structs, candidate_seed, variant,
             passive_layout=passive_layout)
+        layout_relations = None
+        if structure_layout == 'auto' and variant != 0:
+            from layout_relations import build_layout_relations, prepare_structure_placement
+            layout_relations = build_layout_relations(devices, structs)
+            prepare_structure_placement(placement, comps, index, layout_relations)
         # Leave most of the global budget to final routing, which is authoritative.
         local_deadline = min(deadline, time.perf_counter() + 12) if deadline else None
         energy, metrics, annealing = _anneal(placement, nets, index, alignment, pairs,
@@ -830,6 +851,13 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                     'alignment_relations': [{'devices': [comps[a]['id'], comps[b]['id']],
                                               'weight': weight}
                                              for a, b, weight in alignment]}
+        if layout_relations is not None:
+            from layout_relations import measure_layout_relations, VERSION as STRUCTURE_VERSION
+            metadata['layout_relations'] = copy.deepcopy(layout_relations)
+            metadata['structure_layout'] = {'version': STRUCTURE_VERSION, 'policy': 'auto',
+                                            'phase': 1, 'metrics': measure_layout_relations(
+                                                placement, comps, index, layout_relations),
+                                            'metrics_stage': 'after_sa_and_geometry_floor'}
         metadata['passive_layout_policy'] = getattr(placement, 'passive_policy', 'fixed')
         if metadata['passive_layout_policy'] == 'flexible':
             from passive_placement import passive_diagnostics

@@ -4,6 +4,8 @@
 
 想理解每一步怎么执行、用哪些代码，以及SA估价、A*、失败恢复和最终简化的区别，请先读[从网表到原理图：当前flow逐步详解](docs/flow-walkthrough.md)。
 
+结构布局改进通过 `--structure-layout auto` 试用，开发期间默认关闭。候选1保留参照，候选2/3按有拓扑证据的局部块和支路改善排列，继续使用原A*、完整验收和安全缩线。分阶段规则与对照命令见[结构布局说明](docs/structure-layout.md)。
+
 想看目前识别的子结构是什么样，见[子结构图鉴说明](docs/structure-gallery.md)。运行 `.\.venv\Scripts\python.exe .\tools\generate_structure_gallery.py` 可生成20张带角色、网表及实际识别记录的示意图，入口为 `output/structure-gallery/index.html`。
 
 ## 日常运行

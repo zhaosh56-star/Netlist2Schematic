@@ -61,7 +61,7 @@ def _select_symmetric_result(results):
 
 def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   quality_seconds=300, routing_options=None, candidate_id=None,
-                  passive_layout='flexible', symmetry_layout='off'):
+                  passive_layout='flexible', symmetry_layout='off', structure_layout='off'):
     if type(quality_seconds) not in (int, float) or not isfinite(quality_seconds) or quality_seconds <= 0:
         raise ValueError('quality_seconds must be positive and finite')
     if candidate_id is not None and str(candidate_id) not in ('0', '1', '2', '3'):
@@ -70,6 +70,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         raise ValueError('passive_layout must be flexible or fixed')
     if symmetry_layout not in ('auto', 'off'):
         raise ValueError('symmetry_layout must be auto or off')
+    if structure_layout not in ('auto', 'off'):
+        raise ValueError('structure_layout must be auto or off')
     from structured_placement import create_candidates, feedback_candidate
     from layout_quality import evaluate_quality
     from orthogonal_router import RoutingFailure
@@ -78,6 +80,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     deadline = started + quality_seconds
     par = load_local('place_and_route', 'place-and-route.py')
     records, best = [], None
+    shared_relations = None
     valid_results = []
     retry_context = retry_options = rescue_context = None
     candidate_data_error = False
@@ -89,7 +92,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     try:
         candidates = create_candidates(path, cell=cell, iterations=iterations,
                                        seed=seed, deadline=deadline, passive_layout=passive_layout,
-                                       include_legacy=include_legacy)
+                                       include_legacy=include_legacy, structure_layout=structure_layout)
         for number, item in enumerate(candidates):
             if number >= candidate_limit:
                 stop_reason = 'candidate_limit'
@@ -114,7 +117,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 if severe:
                     proposal = feedback_candidate(best[1], best[2], best[3], best[4],
                                                   best[5], detail)
-                    if proposal is not None:
+                    if proposal is not None and (structure_layout == 'off' or
+                            proposal[4].get('branch_row_plan', {}).get('rows') ==
+                            metadata.get('branch_row_plan', {}).get('rows')):
                         placement, comps, nets, index, metadata = proposal
                         metadata['candidate_id'] = int(identifier)
                         metadata['candidate_seed'] = best[5].get('candidate_seed', seed)
@@ -131,6 +136,19 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     metadata['layout_symmetry'] = report_symmetry(
                         placement, comps, index, metadata, policy=symmetry_layout,
                         reason='reference_candidate', grid_step=effective_options.grid_step)
+            if structure_layout == 'auto' and identifier != '0':
+                from layout_relations import build_layout_relations, measure_layout_relations
+                if shared_relations is None:
+                    from netlist_core import parse_netlist
+                    shared_relations = build_layout_relations(
+                        parse_netlist(path, cell=cell), metadata.get('structs', ()))
+                metadata = deepcopy(metadata)
+                metadata['layout_relations'] = deepcopy(shared_relations)
+                report = metadata.setdefault('structure_layout', {
+                    'policy': 'auto', 'version': 'structure-layout-v1', 'phase': 1})
+                report['reference_candidate'] = identifier == '1'
+                report['metrics'] = measure_layout_relations(
+                    placement, comps, index, shared_relations)
             print(f'Quality candidate {identifier}: final routing, '
                   f'budget remaining={deadline-perf_counter():.1f}s', flush=True)
             record = {'candidate_id': identifier, 'seed': metadata.get('candidate_seed', seed),
@@ -139,6 +157,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                       'passive_layout': deepcopy(metadata.get('passive_layout', {}))}
             if 'layout_symmetry' in metadata:
                 record['layout_symmetry'] = deepcopy(metadata['layout_symmetry'])
+            if 'structure_layout' in metadata:
+                record['structure_layout'] = deepcopy(metadata['structure_layout'])
             # A router or suspended producer may mutate/reuse its own buffers.
             # Keep only the last actually attempted candidate, after any feedback
             # replacement, and never serialize this executable placement object.
@@ -224,8 +244,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     # Feedback above deliberately uses the original-Q incumbent.  Only after
     # all routing attempts do device symmetry and the 125% wire cap choose the
     # delivered candidate. Explicit replay always returns its requested ID.
-    symmetry_selection = None
-    if symmetry_layout == 'auto' and candidate_id is None:
+    symmetry_selection = structure_selection = None
+    if structure_layout == 'auto' and candidate_id is None:
+        from structure_selection import select_structured_result
+        best, structure_selection = select_structured_result(valid_results)
+    elif symmetry_layout == 'auto' and candidate_id is None:
         best, symmetry_selection = _select_symmetric_result(valid_results)
     _, placement, comps, nets, index, metadata, routed_result, quality, identifier = best
     metadata.update(layout_style='structured', quality={
@@ -236,8 +259,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         'selected_candidate': identifier, 'score': quality['score'],
         'details': quality, 'candidates': records})
     metadata['quality']['selection_policy'] = (
+        structure_selection['policy'] if structure_selection else
         symmetry_selection['policy'] if symmetry_selection else
         'explicit_candidate_replay' if candidate_id is not None else 'balanced-v1')
     if symmetry_selection is not None:
         metadata['quality']['symmetry_selection'] = symmetry_selection
+    if structure_selection is not None:
+        metadata['quality']['structure_selection'] = structure_selection
     return placement, comps, nets, index, metadata, routed_result

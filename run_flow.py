@@ -30,7 +30,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         layout_style='structured', quality_seconds=300, candidate_id=None,
         fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
-        passive_layout='flexible', symmetry_layout='off'):
+        passive_layout='flexible', symmetry_layout='off', structure_layout='off'):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -39,6 +39,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         raise ValueError('passive_layout must be flexible or fixed')
     if symmetry_layout not in ('auto', 'off'):
         raise ValueError('symmetry_layout must be auto or off')
+    if structure_layout not in ('auto', 'off'):
+        raise ValueError('structure_layout must be auto or off')
     if mode not in ('baseline', 'layered'):
         raise ValueError(f'Unknown layout mode: {mode}')
     if candidate_id is not None and (mode != 'layered' or layout_style != 'structured'):
@@ -86,7 +88,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
             try:
                 result = _normal_result(source, par, mode, layout_style, cell, iterations,
                                         seed, quality_seconds, candidate_id, options,
-                                        passive_layout=passive_layout, symmetry_layout=symmetry_layout)
+                                        passive_layout=passive_layout, symmetry_layout=symmetry_layout,
+                                        structure_layout=structure_layout)
             except ROUTING_FAILURES as exc:
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
                     raise
@@ -151,6 +154,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         'seed': seed, 'iterations': iterations, **metadata,
         'requested_passive_layout': passive_layout,
         'requested_symmetry_layout': symmetry_layout,
+        'requested_structure_layout': structure_layout,
         'placement': {comp['id']: {'row': placement.cell_of[i][0],
                                   'col': placement.cell_of[i][1],
                                   'orient': placement.orient[i]}
@@ -163,13 +167,13 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
 
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    quality_seconds, candidate_id, options, *, passive_layout='flexible',
-                   symmetry_layout='off'):
+                   symmetry_layout='off', structure_layout='off'):
     if mode == 'layered' and layout_style == 'structured':
         from aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
                              quality_seconds=quality_seconds, routing_options=options,
                              candidate_id=candidate_id, passive_layout=passive_layout,
-                             symmetry_layout=symmetry_layout)
+                             symmetry_layout=symmetry_layout, structure_layout=structure_layout)
     elif mode == 'layered':
         layered = load_local('place_layered', 'place-layered.py')
         placement, comps, nets, comp_index, metadata = layered.create_placement(
@@ -419,6 +423,18 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
             policy=data['layout_symmetry'].get('policy', 'auto'),
             grid_step=validation.get('parameters', {}).get('grid_step', 2.0))
         data['layout_symmetry']['measurement_stage'] = 'final_output'
+    if data.get('requested_structure_layout') == 'auto' or isinstance(data.get('structure_layout'), dict):
+        from layout_relations import build_layout_relations, measure_layout_relations
+        from netlist_core import parse_netlist
+        relations = data.get('layout_relations')
+        if relations is None:
+            relations = build_layout_relations(parse_netlist(source, cell=data.get('source_cell')),
+                                               data.get('structs', ()))
+        data['layout_relations'] = relations
+        report = data.setdefault('structure_layout', {
+            'policy': 'auto', 'version': 'structure-layout-v1', 'phase': 1})
+        report['metrics'] = measure_layout_relations(placement, comps, comp_index, relations)
+        report['measurement_stage'] = 'final_output'
     _check_source(source, expected_hash)
     for path, expected in (input_hashes or {}).items():
         if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
@@ -569,6 +585,8 @@ def main(argv=None, default_mode='layered'):
                         help='Passive mobility for new structured candidates; saved coordinates are preserved')
     parser.add_argument('--symmetry-layout', choices=('auto', 'off'), default='off',
                         help='Device-only symmetry for new structured candidates 2/3 (default: off); saved coordinates are preserved')
+    parser.add_argument('--structure-layout', choices=('auto', 'off'), default='off',
+                        help='Role-aware structure layout for new candidates 2/3 (default: off)')
     parser.add_argument('--quality-seconds', type=float, default=300)
     parser.add_argument('--candidate-id',
                         help='Replay candidate 1, 2 or 3; 0 explicitly runs the legacy reference')
@@ -610,6 +628,7 @@ def main(argv=None, default_mode='layered'):
                 layout_style=args.layout_style, quality_seconds=args.quality_seconds, candidate_id=args.candidate_id,
                 passive_layout=args.passive_layout,
                 symmetry_layout=args.symmetry_layout,
+                structure_layout=args.structure_layout,
                 fallback=args.fallback, spacing_scale=args.spacing_scale,
                 spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
                 local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
