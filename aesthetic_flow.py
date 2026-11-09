@@ -5,6 +5,7 @@ from copy import deepcopy
 from math import isfinite
 from time import perf_counter
 
+from candidate_budget import routing_deadline, validate_policy
 from sa_common import load_local
 from sa_routing import RoutingValidationError, final_route
 
@@ -62,7 +63,10 @@ def _select_symmetric_result(results):
 def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   quality_seconds=300, routing_options=None, candidate_id=None,
                   passive_layout='flexible', symmetry_layout='off', structure_layout='off',
-                  structure_phase=3):
+                  structure_phase=3, candidate_budget='sequential',port_preflight='off'):
+    validate_policy(candidate_budget)
+    if port_preflight not in ('off','repair'):
+        raise ValueError('port_preflight must be off or repair')
     if type(quality_seconds) not in (int, float) or not isfinite(quality_seconds) or quality_seconds <= 0:
         raise ValueError('quality_seconds must be positive and finite')
     if candidate_id is not None and str(candidate_id) not in ('0', '1', '2', '3'):
@@ -89,6 +93,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     candidate_data_error = False
     effective_options = routing_options if routing_options is not None else RoutingOptions()
     include_legacy = str(candidate_id) == '0'
+    budget_policy = candidate_budget if candidate_id is None else 'sequential'
     candidate_limit = 1 if include_legacy else 3
     candidate_policy = 'legacy_reference_replay' if include_legacy else 'structured_only'
     stop_reason = 'candidates_exhausted'
@@ -106,9 +111,22 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             replay_feedback = str(candidate_id) == '3'
             if candidate_id is not None and str(candidate_id) != identifier and not replay_feedback:
                 continue
-            if perf_counter() >= deadline:
+            generated_at = perf_counter()
+            if generated_at >= deadline:
                 stop_reason = 'time_budget'
                 break
+            candidate_deadline = routing_deadline(started, quality_seconds, identifier,
+                                                  policy=budget_policy)
+            budget_record = {'policy': budget_policy,
+                             'cutoff_seconds': candidate_deadline - started}
+            if budget_policy == 'reserved' and generated_at >= candidate_deadline:
+                records.append({'candidate_id': identifier,
+                                'seed': metadata.get('candidate_seed', seed),
+                                'status': 'skipped', 'reason': 'candidate_time_budget',
+                                'candidate_budget': dict(budget_record,
+                                    stop_reason='candidate_time_budget',
+                                    phase='after_generation')})
+                continue
             # Reserve candidate 3 for measured congestion, independently of its
             # position in the generator (the default sequence starts at 1).
             # when a prior route has a substantial, clearly excessive detour.
@@ -134,7 +152,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 if identifier in ('2', '3'):
                     placement, metadata = regularize_symmetry(
                         par, placement, comps, nets, index, metadata,
-                        options=effective_options, deadline=deadline)
+                        options=effective_options, deadline=candidate_deadline)
                 else:
                     metadata = deepcopy(metadata)
                     metadata['layout_symmetry'] = report_symmetry(
@@ -155,7 +173,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                         from branch_alignment import regularize_branch_layout
                         placement, metadata = regularize_branch_layout(
                             par, placement, comps, nets, index, metadata,
-                            options=effective_options, deadline=deadline)
+                            options=effective_options, deadline=candidate_deadline)
                 report = metadata.setdefault('structure_layout', {
                     'policy': 'auto', 'version': 'structure-layout-v1', 'phase': structure_phase,
                     'applied': False})
@@ -163,16 +181,41 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 from structure_selection import measure_structure
                 report['metrics'] = measure_structure(par, placement, comps, nets, index,
                                                      metadata, structure_phase)
+            if port_preflight == 'repair':
+                from placement_preflight import repair_static_ports
+                placement, preflight_report = repair_static_ports(
+                    par,placement,comps,nets,index,effective_options,deadline=candidate_deadline)
+                metadata=deepcopy(metadata)
+                metadata['port_preflight']=preflight_report
+                if structure_layout=='auto' and 'structure_layout' in metadata:
+                    from structure_selection import measure_structure
+                    metadata['structure_layout']['metrics']=measure_structure(
+                        par,placement,comps,nets,index,metadata,structure_phase)
+            routing_at = perf_counter()
             print(f'Quality candidate {identifier}: final routing, '
-                  f'budget remaining={deadline-perf_counter():.1f}s', flush=True)
+                  f'budget remaining={candidate_deadline-routing_at:.1f}s', flush=True)
             record = {'candidate_id': identifier, 'seed': metadata.get('candidate_seed', seed),
                       'annealing': deepcopy(metadata.get('annealing', {})),
                       'passive_layout_policy': metadata.get('passive_layout_policy', 'fixed'),
-                      'passive_layout': deepcopy(metadata.get('passive_layout', {}))}
+                      'passive_layout': deepcopy(metadata.get('passive_layout', {})),
+                      'candidate_budget': dict(budget_record,
+                          remaining_seconds_at_start=candidate_deadline-routing_at)}
             if 'layout_symmetry' in metadata:
                 record['layout_symmetry'] = deepcopy(metadata['layout_symmetry'])
             if 'structure_layout' in metadata:
                 record['structure_layout'] = deepcopy(metadata['structure_layout'])
+            if 'port_preflight' in metadata:
+                record['port_preflight']=deepcopy(metadata['port_preflight'])
+            if budget_policy == 'reserved' and routing_at >= candidate_deadline:
+                global_expired = routing_at >= deadline
+                reason = 'quality_time_budget' if global_expired else 'candidate_time_budget'
+                record.update(status='skipped', reason=reason)
+                record['candidate_budget'].update(stop_reason=reason, phase='before_routing')
+                records.append(record)
+                if global_expired:
+                    stop_reason = 'time_budget'
+                    break
+                continue
             # A router or suspended producer may mutate/reuse its own buffers.
             # Keep only the last actually attempted candidate, after any feedback
             # replacement, and never serialize this executable placement object.
@@ -184,7 +227,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             rescue_context = None
             try:
                 routed, metrics, validation = final_route(
-                    par, nets, placement, index, options=effective_options, deadline=deadline)
+                    par, nets, placement, index, options=effective_options, deadline=candidate_deadline)
                 quality = evaluate_quality(par, placement, comps, nets, index,
                                            routed, metrics, metadata.get('structs', []))
                 record.update(status='valid', metrics=deepcopy(metrics), score=quality['score'],
@@ -207,6 +250,15 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     raise
                 rescue_context = deepcopy(getattr(exc, '_rescue_context', None))
                 diagnostics = getattr(exc, 'diagnostics', {})
+                local_timeout = (diagnostics.get('reason') == 'quality_time_budget'
+                                 and budget_policy == 'reserved'
+                                 and candidate_deadline < deadline
+                                 and perf_counter() < deadline)
+                if local_timeout:
+                    diagnostics = deepcopy(diagnostics)
+                    diagnostics.update(reason='candidate_time_budget',
+                                       original_reason='quality_time_budget')
+                    record['candidate_budget']['stop_reason'] = 'candidate_time_budget'
                 record.update(status='failed', message=str(exc), diagnostics=diagnostics)
                 print(f'Quality candidate {identifier}: {exc}', flush=True)
                 if diagnostics.get('reason') == 'quality_time_budget':
@@ -246,6 +298,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                                   'candidate_policy': candidate_policy,
                                   'candidate_limit': candidate_limit,
                                   'legacy_reference_enabled': include_legacy,
+                                  'candidate_budget_policy': budget_policy,
+                                  'requested_candidate_budget': candidate_budget,
                                   'requested_symmetry_layout': symmetry_layout})
         # A valid incumbent from replay prerequisites must not silently trigger
         # recovery for a failed explicitly requested candidate.
@@ -269,6 +323,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         'policy': 'balanced-v1', 'budget_seconds': quality_seconds,
         'candidate_policy': candidate_policy, 'candidate_limit': candidate_limit,
         'legacy_reference_enabled': include_legacy,
+        'candidate_budget_policy': budget_policy,
+        'requested_candidate_budget': candidate_budget,
         'elapsed_seconds': round(perf_counter()-started, 6), 'stop_reason': stop_reason,
         'selected_candidate': identifier, 'score': quality['score'],
         'details': quality, 'candidates': records})

@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from html import escape
 import json
+from math import isfinite
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +21,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'tools')]
 import compare_symmetry_layouts as common
 from compare_passive_layouts import VERIFY_LOCK, _wire_paths
 from sa_common import read_json, write_json, load_local
+from netlist_core import NetlistError
 
 FORMAT = 'structure-layout-comparison-v1'
 
@@ -126,8 +128,10 @@ def execute(case, policy, output, parameters, code, frozen):
     try:
         signature = common._signature(case, policy, parameters, code)
     except (ValueError, OSError, KeyError) as exc:
-        return {'case': case['case'], 'policy': policy, 'status': 'skipped',
-                'reason': 'input_validation_error', 'error': str(exc)}
+        unsupported=(isinstance(exc,NetlistError) or str(exc).startswith((
+            'No supported devices','Multiple subcircuits require')))
+        return {'case': case['case'], 'policy': policy, 'status': 'skipped' if unsupported else 'failed',
+                'reason': 'input_validation_error' if unsupported else 'input_or_resource_error', 'error': str(exc)}
     signature['format'] = FORMAT
     if any(frozen.get(p) != h for p, h in signature['source_files'].items()):
         raise ValueError('Batch input changed')
@@ -154,6 +158,8 @@ def execute(case, policy, output, parameters, code, frozen):
         '--structure-phase', str(p['structure_phase']),
         '--seed', str(p['seed']), '--iterations', str(p['iterations']),
         '--fallback', 'auto', '--local-rescue', 'auto']
+    command += ['--candidate-budget',p['candidate_budget'],'--port-preflight',p['port_preflight'],
+                '--presentation',p['presentation']]
     for k in ('quality_seconds','rescue_seconds','spacing_seconds','fallback_seconds','simplify_seconds'):
         command += ['--'+k.replace('_','-'), str(p[k])]
     if signature['cell']: command += ['--cell', signature['cell']]
@@ -224,11 +230,12 @@ def publish(output,cases,records,parameters,code,frozen):
                 figures.append(common._figure(output,policy,v['clean_svg'],
                     '<p><a href="'+escape(common._relative(output,v['placement_json']))+'">JSON</a></p>'))
                 table.append([policy,m['wirelength'],m['crossings'],m['bends'],s.get('interleaving'),
-                    s.get('role_order'),s.get('normalized_span'),f"{v['width']}×{v['height']}",v['routing_stage'],r['elapsed_seconds']])
+                    s.get('role_order'),s.get('branch_error'),s.get('normalized_span'),
+                    f"{v['width']}×{v['height']}",v['routing_stage'],r['elapsed_seconds']])
             else:
                 figures.append('<figure>'+escape(policy+': '+r.get('status','pending')+' '+r.get('error',''))+'</figure>')
         html.append('<section><h2>'+escape(case['case']+' '+case.get('title',''))+'</h2><div class="figures">'+''.join(figures)+'</div>'+common._table(
-            ['模式','线长','交叉','折角','穿插','顺序冲突','跨度','宽×高','阶段','秒'],table)+
+            ['模式','线长','交叉','折角','穿插','顺序冲突','引脚/尾源误差','跨度','宽×高','阶段','秒'],table)+
             '<pre>'+escape(json.dumps(row.get('gates',{}),ensure_ascii=False,indent=2))+'</pre></section>')
     complete=len(records)==len(cases)*2
     valid=sum(r['status']=='valid' for r in records.values())
@@ -250,6 +257,9 @@ def publish(output,cases,records,parameters,code,frozen):
             'paired_gates':all(all(row.get('gates',{}).values()) for row in rows),
             'total_crossings_nonincreasing':new_cross<=old_cross,
             'crossings_off':old_cross,'crossings_auto':new_cross}}
+    report['quantitative_gates_passed']=all(value for value in report['release_gates'].values()
+                                           if isinstance(value,bool))
+    report['default_promotion_approved']=False
     write_json(output/'comparison.json',report)
     page='''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>结构布局逐阶段对照</title>
 <style>body{font:14px/1.6 system-ui;background:#f5f6f8;margin:24px}section{background:white;padding:20px;margin:24px 0}.figures{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}figure{margin:0}img{width:100%;height:460px;object-fit:contain}table{border-collapse:collapse}td,th{padding:6px 10px;border-bottom:1px solid #ddd}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>
@@ -266,12 +276,24 @@ def main(argv=None):
     parser.add_argument('--candidate-id',choices=('1','2','3'))
     parser.add_argument('--stage-label',default='stage1')
     parser.add_argument('--structure-phase',type=int,choices=(1,2,3),default=3)
+    parser.add_argument('--candidate-budget',choices=('sequential','reserved'),default='sequential')
+    parser.add_argument('--port-preflight',choices=('off','repair'),default='off')
+    parser.add_argument('--presentation',choices=('legacy','clean'),default='clean')
     for k,v in common.DEFAULT_PARAMETERS.items():
         if k=='jobs':continue
         parser.add_argument('--'+k.replace('_','-'),type=int if k in ('seed','iterations') else float,default=v)
     args=parser.parse_args(argv)
+    if args.iterations<0 or not isfinite(args.quality_seconds) or args.quality_seconds<=0:
+        parser.error('iterations must be non-negative and quality-seconds positive and finite')
+    if not isfinite(args.fallback_seconds) or args.fallback_seconds<=0:
+        parser.error('fallback-seconds must be positive and finite')
+    if any(not isfinite(getattr(args,k)) or getattr(args,k)<0 for k in (
+            'rescue_seconds','spacing_seconds','simplify_seconds')):
+        parser.error('rescue, spacing and simplification seconds must be finite and non-negative')
     parameters={k:getattr(args,k) for k in common.DEFAULT_PARAMETERS}
-    parameters.update(candidate_id=args.candidate_id,stage_label=args.stage_label,structure_phase=args.structure_phase)
+    parameters.update(candidate_id=args.candidate_id,stage_label=args.stage_label,structure_phase=args.structure_phase,
+        candidate_budget=args.candidate_budget,port_preflight=args.port_preflight,presentation=args.presentation,
+        full_discovered_suite=args.cases is None)
     cases=common.discover_cases()
     if args.cases:
         missing=set(args.cases)-{c['case'] for c in cases}

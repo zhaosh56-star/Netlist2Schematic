@@ -26,6 +26,18 @@
 
 `branch_alignment`记录调整前后引脚／尾源误差、朝向问题、动作与拒绝原因；`attachment_placement`的before/after是初排历史，current才是最终坐标下的附件分数。`structure_layout.metrics`记录最终分组和引脚规整指标；恢复阶段不会沿用旧坐标的分数。
 
+量测不会因SA把负载转横而消失：唯一负载始终计实际接点和自身通道误差；并联RLC银行保持软关系，不要求每个成员和MOS都在同一竖线上。R/L移动到上下游之外产生的实际Y折返会单独计分，不把折返当成完全对齐。
+
+## 后续独立开关
+
+- `--candidate-budget sequential|reserved`默认sequential。reserved只对普通候选1～3比较生效，使用正常预算70%/85%/100%的绝对截止点，局部超时继续下一候选；显式候选回放保持原完整预算，不增加A*次数。
+- `--port-preflight off|repair`默认off。repair只在原场景静态非法时尝试修复无源朝向或邻格；最多两只无源共用1秒/64提案，完整静态验收通过才提交。两步失败、超时、穿体或累计估计线长超过原115%时整体撤销，不能把半修好的图送作成功结果。固定位置重布不接受此开关。
+- `--presentation legacy|clean`默认legacy。clean仅改善黑白SVG的文本、端口标注和边界，移除调试框/指标标题；彩色图保留分析信息。线路、器件位置、电源符号和分支圆点保持原样。没有明确端口声明的内部网络不猜成输入输出。
+
+这些开关独立于结构布局，便于定位收益来源。只调整旧图的展示可使用 `render-clean.py old-placement.json new-clean.svg --presentation clean`；要同时保存新展示元数据及两种SVG，使用 `run_flow.py --simplify-placement old-placement.json --simplify-routes off --presentation clean --out-dir 独立目录`，不会调用SA/A*。
+
+同时显式开启实验对称和结构布局时，先执行可选对称规整，再做结构引脚规整；最终使用结构布局的115%和交叉门槛选优，原125%对称选优不再覆盖它。日常推荐保留实验对称关闭，分别做对照。
+
 ## 怎样选择结果
 
 正常路由结束后，以本轮原综合评分最佳的合法候选为参考。结构选优只考虑实际线长不超过参考115%的结果；参考零交叉时新结果也必须零交叉，否则最多多1处交叉。存在结构改善时先比较组内穿插和角色次序，再比较归一化跨度，最后按原综合评分择优；没有改善时交付原评分胜者。
@@ -45,8 +57,12 @@
 .\.venv\Scripts\python.exe .\tools\compare_structure_layouts.py --jobs 4
 
 # 只看代表样例
-.\.venv\Scripts\python.exe .\tools\compare_structure_layouts.py --cases data20 data21 data16 data24 --out-dir .\output\structure-layout-comparison\stage1
+.\.venv\Scripts\python.exe .\tools\compare_structure_layouts.py --cases data20 data21 data16 data24 --structure-phase 1 --stage-label stage1 --out-dir .\output\structure-layout-comparison\stage1
 ```
+
+对照工具默认只比较结构开关：两边均使用sequential预算、关闭端口修复、采用同一clean展示。可显式指定三个独立参数进行其它实验。重放阶段一时需同时加 `--structure-phase 1 --stage-label stage1`，阶段二同理；stage-label仅用于记录，真正控制算法的是structure-phase。
+
+首轮阶段一四例都通过完整验收，但StrongARM交叉5→7、BJT线长4330→5014，未通过默认发布门槛；因此保持关闭。阶段二三例全部通过量化门槛，LNA线长1904→1518、交叉仍1，电流镜同层后折角3→2。完整结果保留在各stage目录，不把阶段性收益当成整个数据集已达标。
 
 对照工具冻结源文件、模型声明、符号资源和代码签名。每个运行使用独立目录；中断后可以复用相同签名的结果。成功图独立复验真实引脚、固定出线、同网连通、异网分离、两种SVG一致性及独立重绘。GT仅作为视觉参考，未将其斜线或坐标当作算法规则或电气正确性的证明。
 

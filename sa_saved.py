@@ -128,4 +128,10 @@ def load_placement(jpath, *, analog_canvas_root=None):
             if value < -left-1e-9 or value > right+1e-9:
                 raise ValueError(f"Horizontal offset crosses a column midpoint for {comps[i]['id']}")
         placement.offset_x = offsets
+    if 'presentation' in data:
+        if not isinstance(data['presentation'],dict):
+            raise ValueError('Saved presentation must be an object')
+        from presentation import configure_presentation
+        configure_presentation(placement,source,data.get('source_cell'),comps,nets,
+                               data['presentation'].get('style','legacy'))
     return data, source, par, placement, comps, nets, index

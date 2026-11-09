@@ -30,7 +30,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         layout_style='structured', quality_seconds=300, candidate_id=None,
         fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
-        passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3):
+        passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
+        candidate_budget='sequential', port_preflight='off', presentation='legacy'):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -43,6 +44,12 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         raise ValueError('structure_layout must be auto or off')
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
+    from candidate_budget import validate_policy
+    validate_policy(candidate_budget)
+    if port_preflight not in ('off','repair'):
+        raise ValueError('port_preflight must be off or repair')
+    if presentation not in ('legacy','clean'):
+        raise ValueError('presentation must be legacy or clean')
     if mode not in ('baseline', 'layered'):
         raise ValueError(f'Unknown layout mode: {mode}')
     if candidate_id is not None and (mode != 'layered' or layout_style != 'structured'):
@@ -91,7 +98,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                 result = _normal_result(source, par, mode, layout_style, cell, iterations,
                                         seed, quality_seconds, candidate_id, options,
                                         passive_layout=passive_layout, symmetry_layout=symmetry_layout,
-                                        structure_layout=structure_layout, structure_phase=structure_phase)
+                                        structure_layout=structure_layout, structure_phase=structure_phase,
+                                        candidate_budget=candidate_budget,port_preflight=port_preflight)
             except ROUTING_FAILURES as exc:
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
                     raise
@@ -158,6 +166,9 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         'requested_symmetry_layout': symmetry_layout,
         'requested_structure_layout': structure_layout,
         'requested_structure_phase': structure_phase,
+        'requested_candidate_budget': candidate_budget,
+        'requested_port_preflight': port_preflight,
+        **({'presentation':{'style':'clean'}} if presentation=='clean' else {}),
         'placement': _saved_positions(placement, comps),
     }
     return _finish(data, par, placement, comps, nets, comp_index, base, destination,
@@ -167,14 +178,16 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
 
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    quality_seconds, candidate_id, options, *, passive_layout='flexible',
-                   symmetry_layout='off', structure_layout='off', structure_phase=3):
+                   symmetry_layout='off', structure_layout='off', structure_phase=3,
+                   candidate_budget='sequential',port_preflight='off'):
     if mode == 'layered' and layout_style == 'structured':
         from aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
                              quality_seconds=quality_seconds, routing_options=options,
                              candidate_id=candidate_id, passive_layout=passive_layout,
                              symmetry_layout=symmetry_layout, structure_layout=structure_layout,
-                             structure_phase=structure_phase)
+                             structure_phase=structure_phase,candidate_budget=candidate_budget,
+                             port_preflight=port_preflight)
     elif mode == 'layered':
         layered = load_local('place_layered', 'place-layered.py')
         placement, comps, nets, comp_index, metadata = layered.create_placement(
@@ -464,6 +477,10 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         measured.attachment_index=dict(comp_index)
         data['attachment_placement']['current']=score_attachments(measured)
         data['attachment_placement']['measurement_stage']='final_output'
+    if 'presentation' in data:
+        from presentation import configure_presentation
+        data['presentation']=configure_presentation(placement,source,data.get('source_cell'),comps,nets,
+                                                     data['presentation'].get('style','legacy'))
     _check_source(source, expected_hash)
     for path, expected in (input_hashes or {}).items():
         if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
@@ -498,7 +515,7 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
 
 def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
                       *, local_rescue=None, rescue_seconds=60,
-                      simplify_routes='safe', simplify_seconds=5):
+                      simplify_routes='safe', simplify_seconds=5,presentation=None):
     rescue_policy = _rescue_policy(local_rescue, False)
     _validate_rescue_seconds(rescue_seconds)
     _validate_simplification(simplify_routes, simplify_seconds)
@@ -512,6 +529,9 @@ def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opti
                 if key not in ('routes', 'metrics', 'validation')}
     metadata.update(source_netlist=str(source), analog_canvas_root=str(resource_root()),
                     rerouted_from=str(source_json))
+    if presentation is not None:
+        if presentation not in ('legacy','clean'):raise ValueError('presentation must be legacy or clean')
+        metadata['presentation']={'style':presentation}
     options = routing_options or saved_routing_options(data)
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     routed_result = None
@@ -560,7 +580,7 @@ def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opti
 
 
 def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
-                       *, simplify_routes='safe', simplify_seconds=5):
+                       *, simplify_routes='safe', simplify_seconds=5,presentation=None):
     """Validate and simplify saved wires without invoking any layout/router."""
     _validate_simplification(simplify_routes, simplify_seconds)
     source_json = Path(jpath).expanduser().resolve()
@@ -596,6 +616,9 @@ def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opt
                 if key not in ('routes', 'metrics', 'validation')}
     metadata.update(source_netlist=str(source), analog_canvas_root=str(resource_root()),
                     simplified_from=str(source_json))
+    if presentation is not None:
+        if presentation not in ('legacy','clean'):raise ValueError('presentation must be legacy or clean')
+        metadata['presentation']={'style':presentation}
     return _finish(metadata, par, placement, comps, nets, comp_index, base, destination,
                    protected_paths={source, source_json}, options=options,
                    routed_result=(routed, metrics, validation),
@@ -619,6 +642,12 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=3,
                         help='Replay a structure rollout phase; ignored when structure-layout is off')
     parser.add_argument('--quality-seconds', type=float, default=300)
+    parser.add_argument('--candidate-budget',choices=('sequential','reserved'),default='sequential',
+                        help='Optional 70/85/100 percent deadlines; default preserves sequential routing')
+    parser.add_argument('--port-preflight',choices=('off','repair'),default='off',
+                        help='Repair static passive port/marker conflicts before routing; default off')
+    parser.add_argument('--presentation',choices=('legacy','clean'),
+                        help='Clean publication labels and bounds; default keeps saved or legacy style')
     parser.add_argument('--candidate-id',
                         help='Replay candidate 1, 2 or 3; 0 explicitly runs the legacy reference')
     parser.add_argument('--fallback', choices=('auto', 'off', 'only'),
@@ -643,16 +672,20 @@ def main(argv=None, default_mode='layered'):
         if args.simplify_placement:
             if args.fallback in ('auto', 'only') or args.local_rescue == 'auto':
                 parser.error('--simplify-placement only uses saved routes; it cannot request recovery')
+            if args.port_preflight!='off':parser.error('saved coordinates cannot request port repair')
             simplify_placement(args.simplify_placement, out_dir=args.out_dir,
                                analog_canvas_root=args.analog_canvas_root,
-                               simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds)
+                               simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
+                               **({'presentation':args.presentation} if args.presentation is not None else {}))
         elif args.reroute_placement:
             if args.fallback in ('auto', 'only'):
                 parser.error('--reroute-placement preserves coordinates; it cannot request fallback relayout')
+            if args.port_preflight!='off':parser.error('saved coordinates cannot request port repair')
             reroute_placement(args.reroute_placement, out_dir=args.out_dir,
                               analog_canvas_root=args.analog_canvas_root,
                               local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
-                              simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds)
+                              simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
+                              **({'presentation':args.presentation} if args.presentation is not None else {}))
         else:
             run(args.netlist, mode=args.mode, iterations=args.iterations, seed=args.seed,
                 out_dir=args.out_dir, cell=args.cell, analog_canvas_root=args.analog_canvas_root,
@@ -661,6 +694,8 @@ def main(argv=None, default_mode='layered'):
                 symmetry_layout=args.symmetry_layout,
                 structure_layout=args.structure_layout,
                 structure_phase=args.structure_phase,
+                candidate_budget=args.candidate_budget,port_preflight=args.port_preflight,
+                presentation=args.presentation or 'legacy',
                 fallback=args.fallback, spacing_scale=args.spacing_scale,
                 spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
                 local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,

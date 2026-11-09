@@ -12,7 +12,7 @@ from sa_saved import (load_placement, saved_routing_options, is_bus_layout,
                       check_source_hash, BUS_ROUTER)
 
 
-def render(jpath, out=None, *, analog_canvas_root=None):
+def render(jpath, out=None, *, analog_canvas_root=None, presentation=None):
     source_json = Path(jpath).resolve()
     data, source_netlist, par, pl, comps, nets, comp_index = load_placement(
         source_json, analog_canvas_root=analog_canvas_root)
@@ -37,6 +37,10 @@ def render(jpath, out=None, *, analog_canvas_root=None):
     if destination.resolve() == Path(source_netlist).resolve():
         raise ValueError('Output SVG must differ from the source netlist')
     check_source_hash(source_netlist, data.get('source_sha256'))
+    if presentation is not None:
+        from presentation import configure_presentation
+        configure_presentation(pl,source_netlist,data.get('source_cell'),comps,nets,presentation)
+        check_source_hash(source_netlist,data.get('source_sha256'))
     render_svg(par, pl, comps, nets, comp_index, routed, metrics, destination,
                clean=True, structs=data.get('structs', []), validation=validation)
     print(f'Wrote {destination.resolve()}  {metrics}', flush=True)
@@ -48,9 +52,12 @@ def main(argv=None):
     parser.add_argument('placement_json')
     parser.add_argument('output_svg', nargs='?')
     parser.add_argument('--analog-canvas-root')
+    parser.add_argument('--presentation',choices=('legacy','clean'),
+                        help='Override drawing style without moving devices or rerouting')
     args = parser.parse_args(argv)
     try:
-        render(args.placement_json, args.output_svg, analog_canvas_root=args.analog_canvas_root)
+        render(args.placement_json, args.output_svg, analog_canvas_root=args.analog_canvas_root,
+               **({'presentation':args.presentation} if args.presentation is not None else {}))
     except (ValueError, OSError, KeyError, TypeError) as exc:
         parser.exit(2, f'Error: {exc}\n')
     return 0
