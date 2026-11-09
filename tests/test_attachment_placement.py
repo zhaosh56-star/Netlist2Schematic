@@ -9,7 +9,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from attachment_placement import prepare_attachments, score_attachments
+from attachment_placement import (prepare_attachments, score_attachments,
+                                  measure_parallel_coherence, refine_parallel_attachments)
 from layout_relations import build_layout_relations, prepare_structure_placement
 from netlist_core import parse_netlist, to_document
 import structured_placement as structured
@@ -154,7 +155,9 @@ class AttachmentAssociationTests(unittest.TestCase):
             a, b = row['endpoints']
             p, q = result.pin_world(index[a[0]], a[1]), result.pin_world(index[b[0]], b[1])
             distances.append((abs(p[0]-q[0])+abs(p[1]-q[1]))/100)
-        self.assertAlmostEqual(score_attachments(result)['weighted_total'], sum(distances)/len(distances))
+        score = score_attachments(result)
+        self.assertAlmostEqual(score['attachment_distance'], sum(distances)/len(distances))
+        self.assertAlmostEqual(score['weighted_total'], score['attachment_distance']+score['parallel_coherence'])
         self.assertEqual(WEIGHTS, frozen)
         self.assertEqual(score_attachments(object())['weighted_total'], 0)
 
@@ -163,6 +166,92 @@ class AttachmentAssociationTests(unittest.TestCase):
         a, am = prepare_attachments(pl, devices, comps, nets, index, relations)
         b, bm = prepare_attachments(pl, devices, comps, nets, index, relations)
         self.assertEqual((a.cell_of, a.orient, am), (b.cell_of, b.orient, bm))
+
+
+class ParallelCoherenceTests(unittest.TestCase):
+    def test_horizontal_and_vertical_cohorts_are_both_supported(self):
+        devices, pl, comps, nets, index, relations = tanks()
+        prepared, report = prepare_attachments(pl, devices, comps, nets, index, relations)
+        group = next(g for g in report['groups'] if g['kind'] == 'parallel_load')
+        first = measure_parallel_coherence(prepared, index, [group])
+        self.assertLess(first['coherence'], .1)
+        cells, orient = list(prepared.cell_of), list(prepared.orient)
+        for row, name in enumerate(group['members']):
+            cells[index[name]] = (row, 0)
+            orient[index[name]] = 1
+        prepared.set_state(cells, orient)
+        vertical = measure_parallel_coherence(prepared, index, [group])
+        self.assertEqual(vertical['groups'][0]['shape'], 'vertical_bank')
+        self.assertLess(vertical['coherence'], .1)
+
+    def test_scattering_and_wrong_orientation_increase_coherence_cost(self):
+        devices, pl, comps, nets, index, relations = tanks()
+        prepared, report = prepare_attachments(pl, devices, comps, nets, index, relations)
+        groups = [g for g in report['groups'] if g['kind'] == 'parallel_load']
+        before = measure_parallel_coherence(prepared, index, groups)['coherence']
+        cells, orient = list(prepared.cell_of), list(prepared.orient)
+        i = index[groups[0]['members'][0]]
+        cells[i], orient[i] = (4, 9), 1
+        prepared.set_state(cells, orient)
+        self.assertGreater(measure_parallel_coherence(prepared, index, groups)['coherence'], before)
+
+    def test_no_parallel_bank_returns_the_exact_original_objects(self):
+        from types import SimpleNamespace
+        pl, metadata = SimpleNamespace(), {'attachment_measurement_groups': []}
+        result, output = refine_parallel_attachments(None, pl, [], {}, {}, metadata)
+        self.assertIs(result, pl)
+        self.assertIs(output, metadata)
+
+    def test_post_transaction_only_commits_statically_safe_improvements(self):
+        from symmetry_layout import _static_safe
+        from routing_rules import RoutingOptions
+        devices, pl, comps, nets, index, relations = tanks()
+        seeded, initial = prepare_attachments(pl, devices, comps, nets, index, relations)
+        # Start from the original dispersed state, retaining verified ownership.
+        seeded.set_state(pl.cell_of, pl.orient)
+        metadata = {'attachment_measurement_groups': initial['groups']}
+        original = deepcopy((seeded.cell_of, seeded.orient, metadata))
+        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* called')):
+            result, output = refine_parallel_attachments(structured.par, seeded, comps, nets, index, metadata)
+        report = output['parallel_attachment_refinement']
+        self.assertGreater(report['accepted'], 0)
+        self.assertLess(report['after']['coherence'], report['before']['coherence'])
+        self.assertTrue(_static_safe(structured.par, result, nets, index, RoutingOptions(), None))
+        self.assertLessEqual(report['estimated_hpwl_after'], report['estimated_hpwl_before']*1.15+1e-8)
+        self.assertEqual((seeded.cell_of, seeded.orient, metadata), original)
+        self.assertEqual(result.column_x, seeded.column_x)
+        self.assertEqual(result.row_y, seeded.row_y)
+
+    def test_failed_static_transactions_restore_original(self):
+        devices, pl, comps, nets, index, relations = tanks()
+        seeded, initial = prepare_attachments(pl, devices, comps, nets, index, relations)
+        seeded.set_state(pl.cell_of, pl.orient)
+        metadata = {'attachment_measurement_groups': initial['groups']}
+        with mock.patch('symmetry_layout._static_safe', return_value=False):
+            result, output = refine_parallel_attachments(structured.par, seeded, comps, nets, index, metadata)
+        self.assertEqual((result.cell_of, result.orient), (seeded.cell_of, seeded.orient))
+        self.assertEqual(output['parallel_attachment_refinement']['accepted'], 0)
+
+    def test_zero_and_invalid_budgets_do_not_enter_static_checks(self):
+        devices, pl, comps, nets, index, relations = tanks()
+        seeded, initial = prepare_attachments(pl, devices, comps, nets, index, relations)
+        metadata = {'attachment_measurement_groups': initial['groups']}
+        for kwargs in ({'seconds': 0}, {'max_candidates': 0}):
+            with mock.patch('symmetry_layout._static_safe', side_effect=AssertionError('no budget')):
+                result, output = refine_parallel_attachments(structured.par, seeded, comps, nets, index, metadata, **kwargs)
+            self.assertEqual((result.cell_of, result.orient), (seeded.cell_of, seeded.orient))
+        with self.assertRaises(ValueError):
+            refine_parallel_attachments(structured.par, seeded, comps, nets, index, metadata, seconds=-1)
+
+    def test_fixed_members_and_active_devices_stay_put(self):
+        devices, pl, comps, nets, index, relations = tanks()
+        seeded, initial = prepare_attachments(pl, devices, comps, nets, index, relations)
+        seeded.fixed.add(index['C1'] if 'C1' in index else index['Cl'])
+        result, output = refine_parallel_attachments(structured.par, seeded, comps, nets, index,
+            {'attachment_measurement_groups': initial['groups']})
+        for i, comp in enumerate(comps):
+            if comp['symbol'] in ('nmos', 'pmos') or i in seeded.fixed:
+                self.assertEqual((result.cell_of[i], result.orient[i]), (seeded.cell_of[i], seeded.orient[i]))
 
 
 if __name__ == '__main__':

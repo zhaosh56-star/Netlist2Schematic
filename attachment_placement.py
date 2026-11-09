@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from copy import deepcopy
+from math import isfinite
 from statistics import median
+from time import perf_counter
 
-VERSION = 'passive-attachments-v1'
+VERSION = 'passive-attachments-v2'
 WEIGHT = 1.0
 _PASSIVE = frozenset(('resistor', 'capacitor', 'inductor', 'diode'))
 _RLC = frozenset(('R', 'L', 'C'))
@@ -175,6 +177,78 @@ def _model(devices, comps, nets, index, relations):
             'links': sorted(links.values(), key=lambda row: (row['net'], row['endpoints']))}
 
 
+def build_attachment_model(devices, comps, nets, index, relations):
+    """Public, source-derived attachment table shared by reference/new seeds."""
+    return _model(devices, comps, nets, index, relations)
+
+
+def measure_parallel_coherence(pl, index, groups):
+    """Compare horizontal/vertical banks without prescribing a rigid template.
+
+    Horizontal banks use vertical symbols, vertical banks horizontal symbols.
+    Both account for visible endpoints, extra spread, and unrelated interlopers.
+    """
+    records = []
+    columns, rows = getattr(pl, 'column_x', ()), getattr(pl, 'row_y', ())
+    pitch_x = median(b-a for a, b in zip(columns, columns[1:])) if len(columns) > 1 else 150
+    pitch_y = median(b-a for a, b in zip(rows, rows[1:])) if len(rows) > 1 else 150
+    for group in groups:
+        if group.get('kind') != 'parallel_load':
+            continue
+        names = group.get('members', ())
+        if len(names) < 2 or any(name not in index for name in names):
+            continue
+        ids = {index[name] for name in names}
+        positions = [pl.pos_of(index[name]) for name in names]
+        xs, ys = zip(*positions)
+        mx, my = median(xs), median(ys)
+        endpoint_x, endpoint_y = [], []
+        vertical, horizontal = [], []
+        valid = True
+        for net in (group.get('rail'), group.get('node')):
+            endpoints = []
+            for name in names:
+                pins = _pins(pl.comps, index, name, net)
+                if len(pins) != 1:
+                    valid = False
+                    break
+                endpoints.append(pl.pin_world(index[name], pins[0]))
+            if not valid:
+                break
+            xx, yy = zip(*endpoints)
+            endpoint_x.extend(abs(x-median(xx)) for x in xx)
+            endpoint_y.extend(abs(y-median(yy)) for y in yy)
+        if not valid:
+            continue
+        for name in names:
+            pins = list(pl.comps[index[name]]['nodes'])
+            a, b = pl.pin_world(index[name], pins[0]), pl.pin_world(index[name], pins[1])
+            vertical.append(abs(a[0]-b[0]) <= 1e-8)
+            horizontal.append(abs(a[1]-b[1]) <= 1e-8)
+        foreign_x = foreign_y = 0
+        for i in range(len(pl.comps)):
+            if i in ids:
+                continue
+            x, y = pl.pos_of(i)
+            foreign_x += min(xs) < x < max(xs) and abs(y-my) <= pitch_y*.45
+            foreign_y += min(ys) < y < max(ys) and abs(x-mx) <= pitch_x*.45
+        horizontal_error = ((sum(abs(y-my) for y in ys)/len(names)
+                             + sum(endpoint_y)/len(endpoint_y)
+                             + max(0, max(xs)-min(xs)-(len(names)-1)*pitch_x))/100
+                            + 1-sum(vertical)/len(names) + foreign_x/len(names))
+        vertical_error = ((sum(abs(x-mx) for x in xs)/len(names)
+                           + sum(endpoint_x)/len(endpoint_x)
+                           + max(0, max(ys)-min(ys)-(len(names)-1)*pitch_y))/100
+                          + 1-sum(horizontal)/len(names) + foreign_y/len(names))
+        records.append({'id': group['id'], 'members': list(names),
+                        'horizontal': horizontal_error, 'vertical': vertical_error,
+                        'coherence': min(horizontal_error, vertical_error),
+                        'shape': 'horizontal_bank' if horizontal_error <= vertical_error else 'vertical_bank'})
+    return {'coherence': sum(row['coherence'] for row in records)/max(1, len(records)),
+            'group_count': len(records), 'groups': records, 'weight': 1.0,
+            'distance_unit': 100.0}
+
+
 def score_attachments(pl):
     """Mean unique endpoint/owner distance in 100px units; old weights stay put."""
     model = getattr(pl, 'attachment_model', {})
@@ -189,10 +263,15 @@ def score_attachments(pl):
         by_kind[row['kind']].append(distance)
     values = [value for rows in by_kind.values() for value in rows]
     distance = sum(values)/max(1, len(values))
-    return {'version': VERSION, 'attachment_distance': distance, 'weighted_total': WEIGHT*distance,
+    result = {'version': VERSION, 'attachment_distance': distance, 'weighted_total': WEIGHT*distance,
             'weight': WEIGHT, 'distance_unit': 100.0, 'link_count': len(values),
             'group_count': len(model.get('groups', ())),
             'by_kind': {kind: sum(rows)/len(rows) for kind, rows in sorted(by_kind.items())}}
+    if any(row.get('kind') == 'parallel_load' for row in model.get('groups', ())):
+        coherence = measure_parallel_coherence(pl, index, model['groups'])
+        result.update(parallel_coherence=coherence['coherence'], parallel_coherence_details=coherence)
+        result['weighted_total'] += coherence['coherence']
+    return result
 
 
 def _restore(pl, cells, orient):
@@ -355,3 +434,142 @@ def prepare_attachments(pl, devices, comps, nets, index, relations):
     report['after'] = score_attachments(result)
     report['status'] = 'prepared' if any(row['changes'] for row in report['actions']) else 'unchanged'
     return result, report
+
+
+def refine_parallel_attachments(par, pl, comps, nets, index, metadata, *, options=None,
+                                deadline=None, seconds=1.0, max_candidates=128):
+    """Try complete parallel banks after SA, before wires exist, transactionally.
+
+    No-bank calls return the original objects. The caller can share the absolute
+    deadline and candidate allowance with physical branch alignment.
+    """
+    groups = metadata.get('attachment_measurement_groups',
+                          getattr(pl, 'attachment_model', {}).get('groups', ()))
+    groups = [row for row in groups if row.get('kind') == 'parallel_load']
+    if not groups:
+        return pl, metadata
+    if type(seconds) not in (int, float) or not isfinite(seconds) or seconds < 0:
+        raise ValueError('parallel refinement seconds must be finite and non-negative')
+    if type(max_candidates) is not int or max_candidates < 0:
+        raise ValueError('parallel refinement candidate budget must be a non-negative integer')
+    from routing_rules import RoutingOptions
+    from symmetry_layout import _static_safe
+    from branch_alignment import _hpwl
+    from orthogonal_router import RoutingFailure
+    options = options or RoutingOptions()
+    if not isinstance(options, RoutingOptions):
+        raise ValueError('parallel refinement options must be RoutingOptions')
+    started = perf_counter()
+    until = min(started+seconds, deadline) if deadline is not None else started+seconds
+    placement, metadata = deepcopy(pl), deepcopy(metadata)
+    original = deepcopy(placement)
+    fixed = {index[item] if isinstance(item, str) and item in index else item
+             for item in set(getattr(pl, 'fixed', ())) | set(getattr(pl, 'fixed_cells', {}))}
+    before = measure_parallel_coherence(placement, index, groups)
+    report = {'version': VERSION, 'stage': 'after_sa_before_final_routing',
+              'status': 'unchanged', 'actions': [], 'candidates': 0, 'accepted': 0,
+              'static_rejections': 0, 'hpwl_rejections': 0,
+              'before': deepcopy(before), 'after': deepcopy(before), 'current': deepcopy(before),
+              'budget_seconds': seconds, 'max_candidates': max_candidates,
+              'estimated_hpwl_ratio_limit': 1.15}
+    metadata['parallel_attachment_refinement'] = report
+    if (getattr(placement, 'passive_policy', None) != 'flexible'
+            or not all(hasattr(placement, name) for name in ('set_state', 'column_x', 'row_y', 'comp_at'))
+            or getattr(placement, 'power_connections', None) is not None):
+        report.update(status='skipped', stop_reason='unsupported_or_fixed_placement',
+                      elapsed_seconds=perf_counter()-started)
+        return placement, metadata
+    baseline_hpwl = _hpwl(par, placement, nets, index)
+    report['estimated_hpwl_before'] = baseline_hpwl
+    current, stop, seen = before, 'no_improvement', set()
+    for group in groups:
+        names = group['members']
+        if any(name not in index for name in names) or len(names) < 2:
+            continue
+        ids = {index[name] for name in names}
+        if ids & fixed:
+            continue
+        anchor = group.get('anchor')
+        if not anchor or anchor[0] not in index:
+            continue
+        # Verify the table still refers to the same real two-node cohort.
+        if any(set(comps[index[name]].get('nodes', {}).values()) != {
+                group.get('node'), group.get('rail')} for name in names):
+            continue
+        ax, ay = placement.pin_world(index[anchor[0]], anchor[1])
+        candidates, length = [], len(names)
+        for horizontal in (False, True):
+            for row in range(len(placement.row_y)-(length-1 if horizontal else 0)):
+                if perf_counter() >= until:
+                    break
+                for col in range(len(placement.column_x)-(0 if horizontal else length-1)):
+                    if perf_counter() >= until:
+                        break
+                    targets = [(row+i, col) if horizontal else (row, col+i) for i in range(length)]
+                    if not _available(placement, names, targets, index):
+                        continue
+                    centers = [(placement.column_x[c], placement.row_y[r]) for r, c in targets]
+                    distance = sum(abs(x-ax)+abs(y-ay) for x, y in centers)/length
+                    candidates.append((distance, tuple(targets), horizontal))
+        best = None
+        for _, targets, horizontal in sorted(candidates):
+            if perf_counter() >= until:
+                stop = 'time_budget'
+                break
+            if report['candidates'] >= max_candidates:
+                stop = 'candidate_limit'
+                break
+            cells, orientations = list(placement.cell_of), _orientations(placement, names, index, horizontal)
+            for name, cell in zip(names, targets):
+                cells[index[name]] = cell
+            identity = tuple(cells), tuple(orientations)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            report['candidates'] += 1
+            trial = deepcopy(placement)
+            _restore(trial, cells, orientations)
+            if not _legal(trial, original, comps, fixed):
+                continue
+            measured = measure_parallel_coherence(trial, index, groups)
+            if measured['coherence'] >= current['coherence']-1e-8:
+                continue
+            hpwl = _hpwl(par, trial, nets, index)
+            if hpwl > baseline_hpwl*1.15+1e-8:
+                report['hpwl_rejections'] += 1
+                continue
+            movement = sum(abs(cells[i][0]-placement.cell_of[i][0])
+                           + abs(cells[i][1]-placement.cell_of[i][1]) for i in ids)
+            key = measured['coherence'], hpwl, movement, identity
+            if best is not None and key >= best[0]:
+                continue
+            try:
+                safe = _static_safe(par, trial, nets, index, options, until)
+            except RoutingFailure:
+                if perf_counter() >= until:
+                    stop = 'time_budget'
+                    break
+                raise
+            if not safe:
+                report['static_rejections'] += 1
+                continue
+            best = key, trial, measured
+        if best is not None:
+            previous = placement
+            placement, current = best[1], best[2]
+            report['accepted'] += 1
+            report['actions'].append({'group': group['id'], 'after': deepcopy(current),
+                'changes': [{'device': comps[i]['id'], 'from': list(previous.cell_of[i]),
+                             'to': list(placement.cell_of[i]),
+                             'orientation_before': previous.orient[i], 'orientation_after': placement.orient[i]}
+                            for i in sorted(ids) if previous.cell_of[i] != placement.cell_of[i]
+                            or previous.orient[i] != placement.orient[i]]})
+        if stop in ('time_budget', 'candidate_limit'):
+            break
+    if report['accepted'] and stop == 'no_improvement':
+        stop = 'all_groups_scanned'
+    report.update(status='improved' if report['accepted'] else 'unchanged', stop_reason=stop,
+                  after=deepcopy(current), current=deepcopy(current),
+                  estimated_hpwl_after=_hpwl(par, placement, nets, index),
+                  elapsed_seconds=perf_counter()-started)
+    return placement, metadata

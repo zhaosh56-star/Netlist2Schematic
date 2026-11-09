@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-VERSION = 'structure-selection-v1'
+VERSION = 'structure-selection-v2'
 LENGTH_RATIO = 1.15
 
 
@@ -11,6 +11,7 @@ def structure_rank(metrics):
     """Use counts first, then normalized geometric dispersion."""
     return (metrics.get('interleaving', 0) + metrics.get('role_order', 0),
             metrics.get('branch_error', 0), metrics.get('input_access_errors', 0),
+            metrics.get('parallel_group_error', 0),
             metrics.get('attachment_score', 0),
             metrics.get('normalized_span', metrics.get('span', 0)))
 
@@ -22,14 +23,18 @@ def prepare_branch_context(source, cell, pl, comps, nets, index, metadata):
     from device_leveling import compute_levels
     from netlist_core import parse_netlist
     metadata=deepcopy(metadata)
+    devices=parse_netlist(source,cell=cell)
     ports=prepare_presentation(source,cell,comps,nets)
     metadata['external_control_ports']=sorted(p['net'] for p in ports['named_ports']
         if p['connected'] and p['role']=='control')
     if not metadata.get('branch_row_plan'):
-        devices=parse_netlist(source,cell=cell)
         _,virtual=plan_branch_rows(devices,compute_levels(devices),
             [r for r,c in pl.cell_of],metadata.get('layout_relations',()),comps,index)
         metadata['branch_measurement_connections']=virtual.get('bridge_alignment',[])
+    from attachment_placement import build_attachment_model
+    attachment_model=build_attachment_model(devices,comps,nets,index,
+                                           metadata.get('layout_relations',()))
+    metadata['attachment_measurement_groups']=attachment_model['groups']
     return metadata
 
 
@@ -39,8 +44,11 @@ def measure_structure(par,pl,comps,nets,index,metadata,phase):
     if phase>=3:
         from branch_alignment import measure_branch_layout
         branch=measure_branch_layout(par,pl,comps,nets,index,metadata)
+        from attachment_placement import measure_parallel_coherence
+        parallel=measure_parallel_coherence(pl,index,metadata.get('attachment_measurement_groups',()))
         metrics.update(branch_error=branch['hard_error'],attachment_score=branch['attachment_score'],
                        input_access_errors=branch['input_access_errors'],
+                       parallel_group_error=parallel['coherence'],parallel_groups=parallel,
                        branch_geometry=branch)
     return metrics
 
@@ -69,6 +77,7 @@ def select_structured_result(results):
         'crossing_limit': crossing_limit, 'selected_candidate': winner[8],
         'eligible_candidates': [item[8] for item in eligible],
         'reason': 'structure_improved_within_wire_budget' if improved else 'original_quality_no_structure_gain',
-        'ranking': ['structure_violations', 'branch_pin_error', 'input_access_errors', 'attachment_score',
+        'ranking': ['structure_violations', 'branch_pin_error', 'input_access_errors',
+                    'parallel_group_error', 'attachment_score',
                     'normalized_structure_span', 'original_quality'],
     }

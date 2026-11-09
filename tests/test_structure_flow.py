@@ -62,6 +62,19 @@ class StructureSelectionTests(unittest.TestCase):
         self.assertIs(b,select_structured_result([old,a,b])[0])
         self.assertIs(b,select_structured_result([b,a,old])[0])
 
+    def test_parallel_coherence_is_not_hidden_by_shorter_owner_distance(self):
+        old=result(1)
+        new=result(2,score=20,length=110)
+        old[5]['structure_layout']['metrics'].update(parallel_group_error=2,attachment_score=.1)
+        new[5]['structure_layout']['metrics'].update(parallel_group_error=0,attachment_score=.3)
+        self.assertIs(new,select_structured_result([old,new])[0])
+
+    def test_parallel_coherence_cannot_bypass_actual_wirelength_cap(self):
+        old=result(1)
+        new=result(2,score=20,length=116)
+        old[5]['structure_layout']['metrics']['parallel_group_error']=2
+        self.assertIs(old,select_structured_result([old,new])[0])
+
     def test_selection_never_mutates_saved_candidates(self):
         rows=[result(1,interleaving=1),result(2,score=20)]
         before=deepcopy(rows)

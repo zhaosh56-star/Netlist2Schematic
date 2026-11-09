@@ -111,6 +111,20 @@ class BranchAlignmentTests(unittest.TestCase):
         for key in ('cell_of', 'row_of', 'comp_at', 'column_x', 'row_y'):
             self.assertEqual(getattr(before, key), getattr(after, key), key)
 
+    def test_shared_hpwl_reference_does_not_multiply_two_fifteen_percent_allowances(self):
+        case=fixture()
+        original=case[0]
+        def estimate(par,pl,nets,index):
+            changed=(pl.orient!=original.orient or pl.offset_x!=original.offset_x)
+            return 121. if changed else 110.
+        with patch('branch_alignment._hpwl',side_effect=estimate):
+            improved,normal=self.regularize(case)
+            retained,shared=self.regularize(case,hpwl_reference=100.)
+        self.assertGreater(normal['branch_alignment']['accepted'],0)
+        self.assertEqual(0,shared['branch_alignment']['accepted'])
+        self.assertEqual(original.offset_x,retained.offset_x)
+        self.assertAlmostEqual(115.,shared['branch_alignment']['estimated_hpwl_limit'])
+
     def test_public_measurement_is_read_only_and_accepts_missing_offsets(self):
         case = fixture()
         del case[0].offset_x

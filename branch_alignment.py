@@ -606,12 +606,15 @@ def _valid_motion(original, trial, comps, index, protected, step, bridge_members
 
 
 def regularize_branch_layout(par, pl, comps, nets, index, metadata, options=None,
-                             deadline=None, seconds=1, max_candidates=128):
+                             deadline=None, seconds=1, max_candidates=128, *, hpwl_reference=None):
     """Return a copied, statically verified incumbent and JSON-safe diagnostics."""
     if type(seconds) not in (int, float) or not isfinite(seconds) or seconds < 0:
         raise ValueError('branch alignment seconds must be finite and non-negative')
     if type(max_candidates) is not int or max_candidates < 0:
         raise ValueError('branch alignment max_candidates must be a non-negative integer')
+    if hpwl_reference is not None and (type(hpwl_reference) not in (int,float)
+            or not isfinite(hpwl_reference) or hpwl_reference<0):
+        raise ValueError('branch alignment hpwl_reference must be finite and non-negative')
     options = options or RoutingOptions()
     if not isinstance(options, RoutingOptions):
         raise ValueError('branch alignment options must be RoutingOptions')
@@ -643,9 +646,11 @@ def regularize_branch_layout(par, pl, comps, nets, index, metadata, options=None
                           for name, roles in bridge['member_pins'].items()}
         current = _measure(placement, comps, index, model)
         baseline_hpwl = _hpwl(par, placement, nets, index)
+        cap_reference = baseline_hpwl if hpwl_reference is None else min(baseline_hpwl,hpwl_reference)
         report.update(before=deepcopy(current), after=deepcopy(current), current=deepcopy(current),
                       estimated_hpwl_before=baseline_hpwl, relations=deepcopy(model),
-                      estimated_hpwl_limit=baseline_hpwl*HPWL_RATIO)
+                      estimated_hpwl_reference=cap_reference,
+                      estimated_hpwl_limit=cap_reference*HPWL_RATIO)
         seen = {(tuple(placement.offset_x), tuple(placement.orient))}
         stop = 'no_improvement'
         while True:
@@ -670,7 +675,7 @@ def regularize_branch_layout(par, pl, comps, nets, index, metadata, options=None
                 measured = _measure(trial, comps, index, model)
                 if _key(measured) >= _key(current):
                     continue
-                if _hpwl(par, trial, nets, index) > baseline_hpwl*HPWL_RATIO+EPS:
+                if _hpwl(par, trial, nets, index) > cap_reference*HPWL_RATIO+EPS:
                     report['hpwl_rejections'] += 1
                     continue
                 try:

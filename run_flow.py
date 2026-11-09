@@ -469,6 +469,9 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         if isinstance(data.get('branch_alignment'),dict) and phase>=3:
             data['branch_alignment']['current']=report['metrics']['branch_geometry']
             data['branch_alignment']['measurement_stage']='final_output'
+        if isinstance(data.get('parallel_attachment_refinement'),dict) and phase>=3:
+            data['parallel_attachment_refinement']['current']=report['metrics']['parallel_groups']
+            data['parallel_attachment_refinement']['measurement_stage']='final_output'
     if isinstance(data.get('attachment_placement'),dict):
         from attachment_placement import score_attachments
         measured=copy(placement)

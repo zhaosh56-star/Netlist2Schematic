@@ -171,9 +171,28 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     metadata = prepare_branch_context(path, cell, placement, comps, nets, index, metadata)
                     if identifier in ('2', '3'):
                         from branch_alignment import regularize_branch_layout
-                        placement, metadata = regularize_branch_layout(
-                            par, placement, comps, nets, index, metadata,
-                            options=effective_options, deadline=candidate_deadline)
+                        parallel_groups = metadata.get('attachment_measurement_groups', ())
+                        if any(row.get('kind') == 'parallel_load' for row in parallel_groups):
+                            from attachment_placement import refine_parallel_attachments, measure_parallel_coherence
+                            from branch_alignment import _hpwl
+                            micro_deadline = min(candidate_deadline, perf_counter()+1)
+                            micro_hpwl = _hpwl(par, placement, nets, index)
+                            placement, metadata = refine_parallel_attachments(
+                                par, placement, comps, nets, index, metadata,
+                                options=effective_options, deadline=micro_deadline,
+                                seconds=1, max_candidates=128)
+                            used = metadata.get('parallel_attachment_refinement', {}).get('candidates', 0)
+                            placement, metadata = regularize_branch_layout(
+                                par, placement, comps, nets, index, metadata,
+                                options=effective_options, deadline=micro_deadline,
+                                seconds=max(0, micro_deadline-perf_counter()), max_candidates=max(0, 128-used),
+                                hpwl_reference=micro_hpwl)
+                            metadata['parallel_attachment_refinement']['current'] = measure_parallel_coherence(
+                                placement, index, parallel_groups)
+                        else:
+                            placement, metadata = regularize_branch_layout(
+                                par, placement, comps, nets, index, metadata,
+                                options=effective_options, deadline=candidate_deadline)
                 report = metadata.setdefault('structure_layout', {
                     'policy': 'auto', 'version': 'structure-layout-v1', 'phase': structure_phase,
                     'applied': False})
@@ -204,6 +223,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 record['layout_symmetry'] = deepcopy(metadata['layout_symmetry'])
             if 'structure_layout' in metadata:
                 record['structure_layout'] = deepcopy(metadata['structure_layout'])
+            if 'parallel_attachment_refinement' in metadata:
+                record['parallel_attachment_refinement'] = deepcopy(metadata['parallel_attachment_refinement'])
             if 'port_preflight' in metadata:
                 record['port_preflight']=deepcopy(metadata['port_preflight'])
             if budget_policy == 'reserved' and routing_at >= candidate_deadline:
