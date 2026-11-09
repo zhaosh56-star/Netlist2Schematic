@@ -212,6 +212,7 @@ def _model(par, pl, comps, nets, index, metadata):
             paired_core_members.update(roles.get('references', [roles.get('reference')]))
             paired_core_members.update(roles.get('outputs', ()))
     axes, tails, inputs, attachments, parallels, skipped = [], [], [], [], [], []
+    ordinary_loads = []
     conductors = defaultdict(list)
     for comp in comps:
         for pin in CHANNEL.get(comp['symbol'], ()):
@@ -227,8 +228,10 @@ def _model(par, pl, comps, nets, index, metadata):
                        (second[1] in ('D', 'C') and first[1] in ('S', 'E')))
         if (output_join or series_join) and all(_vertical(par, pl, index, item) for item in endpoints):
             axes.append({'kind': 'conduction_axis', 'net': net, 'pins': [first, second]})
-    # A rail-connected two-terminal load belongs to its actual drain/collector,
-    # not to every component which happens to share VDD or ground.
+    # Only a unique rail-connected load can share its drain/collector's axis.
+    # A parallel load bank instead needs several distinct positions around a
+    # common node; forcing every member onto one x would reward vertical piles.
+    rail_loads = defaultdict(list)
     for comp in comps:
         if comp['symbol'] not in PASSIVE | {'current-source'}:
             continue
@@ -243,11 +246,22 @@ def _model(par, pl, comps, nets, index, metadata):
         active_ends = conductors.get(net, ())
         if len(active_ends) != 1 or active_ends[0][1] not in ('D', 'C'):
             continue
-        load = (comp['id'], pin)
-        if not all(_vertical(par, pl, index, item) for item in (load, active_ends[0])):
-            skipped.append({'kind': 'load_axis', 'device': comp['id'], 'reason': 'nonvertical_ports'})
+        rail_loads[net].append({'device': comp['id'], 'pin': pin,
+                               'rail': comp['nodes'][rail_pins[0]], 'anchor': active_ends[0]})
+    for net, loads in sorted(rail_loads.items()):
+        if len(loads) != 1:
+            banks = defaultdict(list)
+            for load in loads:
+                banks[load['rail']].append(load['device'])
+                skipped.append({'kind': 'load_axis', 'device': load['device'], 'reason': 'parallel_load_bank'})
+            for rail, names in banks.items():
+                if len(names) > 1 and all(by_id[name]['symbol'] in PASSIVE for name in names):
+                    parallels.append({'devices': sorted(names), 'nets': sorted((net, rail))})
             continue
-        axes.append({'kind': 'load_axis', 'net': net, 'pins': [active_ends[0], load]})
+        item = loads[0]
+        load, anchor = (item['device'], item['pin']), item['anchor']
+        axes.append({'kind': 'load_axis', 'net': net, 'pins': [anchor, load]})
+        ordinary_loads.append({'device': item['device'], 'pins': list(by_id[item['device']]['nodes'])})
 
     pair_records, tail_owners = [], defaultdict(set)
     for record in records:
@@ -348,8 +362,10 @@ def _model(par, pl, comps, nets, index, metadata):
     for row in attachments:
         key = row['kind'], tuple(sorted(row['pins']))
         unique[key] = row
+    parallel_groups = {(tuple(sorted(row['devices'])), tuple(row['nets'])): row for row in parallels}
     bridges, bridge_skipped = _bridge_relations(par, pl, comps, index, metadata)
     skipped.extend(bridge_skipped)
+    bridge_members = {name for bridge in bridges for name in bridge['members']}
     axis_keys = {tuple(sorted(row['pins'])) for row in axes}
     for bridge in bridges:
         for connection in bridge['connections']:
@@ -358,8 +374,10 @@ def _model(par, pl, comps, nets, index, metadata):
                 axes.append(connection)
                 axis_keys.add(identity)
     return {'axes': axes, 'tails': tails, 'inputs': inputs,
-            'attachments': list(unique.values()), 'parallels': parallels,
-            'bridges': bridges, 'skipped': skipped}
+            'attachments': list(unique.values()), 'parallels': list(parallel_groups.values()),
+            'bridges': bridges,
+            'ordinary_loads': [row for row in ordinary_loads if row['device'] not in bridge_members],
+            'skipped': skipped}
 
 
 def _measure(pl, comps, index, model):
@@ -370,6 +388,18 @@ def _measure(pl, comps, index, model):
                          - _point(pl, index, (name, roles['out']))[0])
                      for row in model['bridges'] for name, roles in row['member_pins'].items()]
     axis_errors.extend(bridge_errors)
+    ordinary_errors = [abs(_point(pl, index, (row['device'], row['pins'][0]))[0]
+                           - _point(pl, index, (row['device'], row['pins'][1]))[0])
+                       for row in model['ordinary_loads']]
+    axis_errors.extend(ordinary_errors)
+    reverse_steps = []
+    for row in model['bridges']:
+        ordered = [name for name in (row['upper'], *row['members'], row['lower'])
+                   if name is not None]
+        heights = [pl.pos_of(index[name])[1] for name in ordered]
+        reverse_steps.extend(max(0.0, previous-following)
+                             for previous, following in zip(heights, heights[1:]))
+    bridge_backtracking = sum(reverse_steps)
     tail_errors = [abs(_point(pl, index, row['tail'])[0] - sum(
         _point(pl, index, end)[0] for end in row['pins']) / 2) for row in model['tails']]
     access = 0
@@ -394,11 +424,16 @@ def _measure(pl, comps, index, model):
             alternatives.append(spread+wrong_axis)
         soft.append(min(alternatives))
     return {'axis_error': sum(axis_errors), 'tail_error': sum(tail_errors),
-            'hard_error': sum(axis_errors)+sum(tail_errors), 'input_access_errors': int(access),
+            'hard_error': sum(axis_errors)+sum(tail_errors)+bridge_backtracking,
+            'input_access_errors': int(access),
             'attachment_score': sum(soft)/max(1, len(soft)),
             'axis_relations': len(axis_errors), 'tail_relations': len(tail_errors),
             'input_pairs': len(model['inputs']), 'attachment_relations': len(soft),
-            'bridge_relations': len(model['bridges']), 'bridge_channel_error': sum(bridge_errors)}
+            'bridge_relations': len(model['bridges']), 'bridge_channel_error': sum(bridge_errors),
+            'ordinary_load_channels': len(ordinary_errors),
+            'ordinary_load_channel_error': sum(ordinary_errors),
+            'bridge_backtracking': bridge_backtracking,
+            'bridge_order_violations': sum(distance > EPS for distance in reverse_steps)}
 
 
 def measure_branch_layout(par, pl, comps, nets, index, metadata):

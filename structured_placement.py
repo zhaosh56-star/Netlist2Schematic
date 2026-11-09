@@ -550,6 +550,15 @@ def _estimate(pl, nets, index, alignment, pairs):
         attachments = score_attachments(pl)
         value += attachments['weighted_total']
         metrics.update(attachment_regularization=attachments, normalized_energy=value)
+    if getattr(pl, 'branch_connections', None):
+        costs=[]
+        for bridge in pl.branch_connections:
+            names=[bridge.get('upper'), *bridge.get('members',()), bridge.get('lower')]
+            ys=[pl.pos_of(index[name])[1] for name in names if name in index]
+            costs.append(sum(max(0,a-b) for a,b in zip(ys,ys[1:]))/100.)
+        backtracking=sum(costs)/max(1,len(costs))
+        value+=backtracking
+        metrics.update(branch_backtracking=backtracking,normalized_energy=value)
     return value, metrics
 
 
@@ -853,6 +862,8 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         if layout_relations is not None:
             from layout_relations import prepare_structure_placement
             prepare_structure_placement(placement, comps, index, layout_relations)
+        if row_plan is not None:
+            placement.branch_connections=copy.deepcopy(row_plan.get('bridge_alignment',[]))
         attachment_report = None
         if layout_relations is not None and structure_phase >= 3:
             from attachment_placement import prepare_attachments

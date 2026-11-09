@@ -204,6 +204,67 @@ class BranchAlignmentTests(unittest.TestCase):
         self.assertEqual(case[0].pos_of(i), changed.pos_of(i))
         self.assertGreater(data['branch_alignment']['after']['bridge_channel_error'], 0)
 
+    def test_coil_below_its_lower_device_is_not_a_zero_error_axis(self):
+        case = bridge_fixture()
+        pl, comps, nets, index, metadata = case
+        pl.offset_x[index['coil']] = 10
+        pl.cell_of[index['coil']] = (3, 2)
+        pl.row_of = [row for row, col in pl.cell_of]
+        pl.comp_at = {cell: i for i, cell in enumerate(pl.cell_of)}
+        measured = align.measure_branch_layout(PAR, *case)
+        self.assertEqual(0, measured['axis_error'])
+        self.assertEqual(140, measured['bridge_backtracking'])
+        self.assertEqual(1, measured['bridge_order_violations'])
+        self.assertEqual(140, measured['hard_error'])
+        changed, data = self.regularize(case)
+        self.assert_logical_unchanged(pl, changed)
+        self.assertEqual(140, data['branch_alignment']['after']['bridge_backtracking'])
+
+    def test_ordered_bridge_and_equal_height_steps_do_not_count_as_backtracking(self):
+        case = bridge_fixture()
+        ordered = align.measure_branch_layout(PAR, *case)
+        self.assertEqual(0, ordered['bridge_backtracking'])
+        self.assertEqual(0, ordered['bridge_order_violations'])
+        case[0].cell_of[case[3]['coil']] = (0, 3)
+        case[0].row_of = [row for row, col in case[0].cell_of]
+        case[0].comp_at = {cell: i for i, cell in enumerate(case[0].cell_of)}
+        same_height = align.measure_branch_layout(PAR, *case)
+        self.assertEqual(0, same_height['bridge_backtracking'])
+        self.assertEqual(0, same_height['bridge_order_violations'])
+
+    def test_rail_end_bridges_measure_only_real_devices_in_display_order(self):
+        for rail_above in (True, False):
+            with self.subTest(rail_above=rail_above):
+                active, member = 'active', 'coil'
+                if rail_above:
+                    devices = {active: mos('exit', 'gate', '0'),
+                               member: dict(cls='PASSIVE', type='L', a='vdd', b='exit')}
+                    bridge = {'id': 'rail-bridge', 'members': [member], 'path': ['vdd', 'exit'],
+                              'upper': None, 'upper_pin': None, 'lower': active, 'lower_pin': 'D',
+                              'member_pins': {member: {'in': '1', 'out': '2'}},
+                              'connections': [{'net': 'exit', 'pins': [[member, '2'], [active, 'D']]}]}
+                    cells = {active: (1, 2), member: (0, 2)}
+                    wrong = (2, 2)
+                else:
+                    devices = {active: mos('out', 'gate', 'entry'),
+                               member: dict(cls='PASSIVE', type='L', a='entry', b='0')}
+                    bridge = {'id': 'rail-bridge', 'members': [member], 'path': ['entry', '0'],
+                              'upper': active, 'upper_pin': 'S', 'lower': None, 'lower_pin': None,
+                              'member_pins': {member: {'in': '1', 'out': '2'}},
+                              'connections': [{'net': 'entry', 'pins': [[active, 'S'], [member, '1']]}]}
+                    cells = {active: (1, 2), member: (2, 2)}
+                    wrong = (0, 2)
+                case = fixture(devices, cells, {}, records=[])
+                case[4]['branch_row_plan'] = {'bridge_alignment': [bridge]}
+                self.assertEqual(0, align.measure_branch_layout(PAR, *case)['bridge_backtracking'])
+                case[0].cell_of[case[3][member]] = wrong
+                case[0].row_of = [row for row, col in case[0].cell_of]
+                case[0].comp_at = {cell: i for i, cell in enumerate(case[0].cell_of)}
+                measured = align.measure_branch_layout(PAR, *case)
+                self.assertEqual(1, measured['bridge_relations'])
+                self.assertEqual(140, measured['bridge_backtracking'])
+                self.assertEqual(1, measured['bridge_order_violations'])
+
     def test_real_pin_load_axis_and_exclusive_mos_tail_are_repaired(self):
         case = fixture()
         pl, comps, nets, index, metadata = case
@@ -211,6 +272,8 @@ class BranchAlignmentTests(unittest.TestCase):
         changed, data = self.regularize(case)
         report = data['branch_alignment']
         self.assertEqual('improved', report['status'])
+        # One load-to-drain edge and one intrinsic channel per unique resistor.
+        self.assertEqual(4, report['before']['axis_relations'])
         self.assertGreater(report['before']['axis_error'], report['after']['axis_error'])
         self.assertLessEqual(report['after']['axis_error'], 2)
         self.assertLessEqual(report['after']['tail_error'], 2)
@@ -466,6 +529,69 @@ class BranchAlignmentTests(unittest.TestCase):
         changed, data = self.regularize(case)
         self.assertGreater(data['branch_alignment']['after']['attachment_score'], 0)
         self.assertEqual(case[0].offset_x, changed.offset_x)
+
+    def test_parallel_rlc_load_bank_is_soft_and_not_forced_onto_one_drain_axis(self):
+        devices = {'active': mos('node', 'gate', '0'),
+                   'r': dict(cls='PASSIVE', type='R', a='vdd', b='node'),
+                   'l': dict(cls='PASSIVE', type='L', a='vdd', b='node'),
+                   'c': dict(cls='PASSIVE', type='C', a='vdd', b='node')}
+        case = fixture(devices, {'active': (1, 2), 'r': (0, 1), 'l': (0, 2), 'c': (0, 3)},
+                       {}, records=[])
+        before = align.measure_branch_layout(PAR, *case)
+        self.assertEqual(0, before['axis_relations'])
+        self.assertEqual(0, before['hard_error'])
+        self.assertEqual(1, before['attachment_relations'])
+        # L has 60px pin span versus R/C's 40px: that residual stays soft.
+        self.assertAlmostEqual(.1, before['attachment_score'])
+        changed, data = self.regularize(case)
+        self.assertEqual(case[0].offset_x, changed.offset_x)
+        self.assertEqual(case[0].orient, changed.orient)
+        self.assertEqual('unchanged', data['branch_alignment']['status'])
+        # Adding the same semantic relation must not duplicate the raw bank.
+        case[4]['layout_relations'] = [{'kind': 'parallel_passives', 'roles': {'members': ['r', 'l', 'c']}}]
+        self.assertEqual(before, align.measure_branch_layout(PAR, *case))
+
+    def test_parallel_bank_does_not_hide_an_independent_verified_rl_bridge(self):
+        case = bridge_fixture()
+        pl, comps, nets, index, metadata = case
+        for name, symbol in (('bank_r', 'resistor'), ('bank_c', 'capacitor')):
+            i = len(comps)
+            comp = {'id': name, 'symbol': symbol, 'nodes': {'1': 'vdd', '2': 'upper_out'}}
+            comps.append(comp)
+            index[name] = i
+            pl.cell_of.append((0, 5 if name == 'bank_r' else 6))
+            pl.orient.append(0)
+            pl.offset_x.append(0)
+            pl.row_of.append(0)
+            pl.comp_at[pl.cell_of[-1]] = i
+            for pin, net in comp['nodes'].items():
+                nets.setdefault(net, []).append((name, pin))
+        measured = align.measure_branch_layout(PAR, *case)
+        self.assertEqual(1, measured['bridge_relations'])
+        self.assertEqual(3, measured['axis_relations'])  # Two real edges plus one coil's own axis.
+        changed, data = self.regularize(case)
+        self.assertEqual(1, data['branch_alignment']['after']['bridge_relations'])
+        self.assertLessEqual(data['branch_alignment']['after']['axis_error'], 2)
+
+    def test_unique_load_relation_is_measured_even_when_the_load_is_horizontal(self):
+        devices = {'active': mos('node', 'gate', '0'),
+                   'load': dict(cls='PASSIVE', type='R', a='vdd', b='node')}
+        case = fixture(devices, {'active': (1, 2), 'load': (0, 2)}, {}, records=[])
+        vertical = align.measure_branch_layout(PAR, *case)
+        self.assertEqual(10, vertical['hard_error'])
+        self.assertEqual(0, vertical['ordinary_load_channel_error'])
+        self.assertEqual(1, vertical['ordinary_load_channels'])
+        case[0].orient[case[3]['load']] = 1
+        # Align only its connected endpoint; the sideways load still cannot be
+        # treated as a perfect vertical load merely by dropping its relation.
+        case[0].offset_x[case[3]['load']] = 30
+        horizontal = align.measure_branch_layout(PAR, *case)
+        self.assertEqual(vertical['axis_relations'], horizontal['axis_relations'])
+        self.assertEqual(40, horizontal['ordinary_load_channel_error'])
+        self.assertEqual(40, horizontal['hard_error'])
+        changed, data = self.regularize(case)
+        self.assertEqual(1, changed.orient[case[3]['load']])
+        self.assertEqual(40, data['branch_alignment']['after']['ordinary_load_channel_error'])
 
     def test_translation_and_instance_renaming_preserve_actual_alignment(self):
         original = fixture()
