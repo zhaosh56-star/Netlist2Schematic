@@ -17,6 +17,7 @@ Netlist2Schematic/
 │  ├─ flow-guide.md             # 完整算法、参数及运行说明
 │  ├─ flow-walkthrough.md       # 从输入到出图的逐步讲解、代码与实测
 │  ├─ structure-gallery.md      # 识别结构图鉴的类别、示例及复现说明
+│  ├─ symmetry-layout.md        # 器件对称规整、选优边界与对照命令
 │  └─ project-layout.md         # 本文
 ├─ examples/                    # 用户输入网表；不自动改写
 ├─ output/                      # 唯一的日常输出根目录，不进入 Git
@@ -27,6 +28,7 @@ Netlist2Schematic/
 │  └─ fixtures/                # 冻结网表、布局及基线；不能当作历史出图删除
 ├─ tools/
 │  ├─ compare_layouts.py        # 验收已保存路线并生成新旧对照
+│  ├─ compare_symmetry_layouts.py # 数据集及图1～7的器件对称开关对照
 │  ├─ generate_structure_gallery.py # 生成已识别子结构的教学图鉴
 │  └─ structure_gallery_cases.py    # 图鉴的最小示例及展示坐标
 ├─ analog-canvas-main/          # 上游符号、少量测试网表和许可证
@@ -45,6 +47,7 @@ Netlist2Schematic/
 | 结构识别 | `circuit_structures.py`、`vf2_match.py` | 识别结构及角色；VF2 用于旧布局参考 |
 | 结构化布局 | `structured_placement.py`、`aesthetic_flow.py`、`layout_quality.py` | 初排、SA、候选选择、时间预算和实际布线评分 |
 | 无源灵活布局 | `passive_placement.py` | 新结构候选中的R/C/L/D跨行移动、无源交换、状态回滚及串联/并联/反馈软评分 |
+| 器件对称规整 | `symmetry_layout.py` | SA及反馈后、A*前的局部/组合对称规整与测量；不要求导线镜像 |
 | 基础布局与估价 | `place-layered.py`、`place-and-route.py` | 分层和自由布局参考、快速布线估价及符号位置 |
 | 最终路由与验收 | `sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 正交 A*、拆网重布、统一几何与真实引脚检查 |
 | 失败恢复 | `local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 局部救援、扩距重试、确定性总线后备 |
@@ -53,7 +56,7 @@ Netlist2Schematic/
 | 共同支持 | `sa_common.py`、`sa_geometry.py`、`sa_saved.py` | 路径、动态模块加载、几何缓存、JSON和固定结果恢复 |
 | 独立重绘 | `render-clean.py` | 读取并复验保存的路线，单独生成黑白 SVG |
 
-前十二组共26个 Python 文件，包含默认流程及必要时的恢复路径；`render-clean.py` 是额外的独立工具。一次成功运行不一定执行所有阶段，但这些文件都有用途，不能仅凭当次未调用就删除。
+独立重绘之前的各组共27个 Python 文件，包含默认流程及必要时的恢复路径；`render-clean.py` 是额外的独立工具。一次成功运行不一定执行所有阶段，但这些文件都有用途，不能仅凭当次未调用就删除。
 
 根目录保留带连字符的旧脚本名，是为了保留已有命令和动态加载路径。未来若要改成 Python 包，应一起修改导入、独立入口、资源路径和测试，避免只移动文件导致 flow 失效。
 

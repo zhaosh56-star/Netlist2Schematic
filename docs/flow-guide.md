@@ -11,8 +11,8 @@
 
 ## 一次默认 flow 用到哪些代码
 
-入口是 `run_flow.py`，默认执行 `layered + structured`；包含失败恢复时，运行可能涉及下列
-**26 个 Python 文件**（按当前工作区源码核对）：
+入口是 `run_flow.py`，默认执行 `layered + structured`；包含失败恢复时可能涉及26个Python文件，
+显式开启器件对称规整时再使用 `symmetry_layout.py`，合计下列 **27 个 Python 文件**：
 
 | 环节 | 文件 | 作用 |
 | --- | --- | --- |
@@ -22,6 +22,7 @@
 | 结构识别 | `circuit_structures.py`、`vf2_match.py` | 新布局识别有角色和父子关系的拓扑结构；VF2 保留给旧布局参考 |
 | 结构化优化与比较 | `structured_placement.py`、`aesthetic_flow.py`、`layout_quality.py` | 生成结构种子、低成本 SA、预算管理和真实布线候选评分 |
 | 无源灵活布局 | `passive_placement.py` | R/C/L/D跨行试摆、当前行同步及串联/并联/反馈软评分 |
+| 可选器件对称规整 | `symmetry_layout.py` | 仅显式 `--symmetry-layout auto` 时，候选2/3在A*前规整器件位置与朝向；局部轴、组合核心及独立对称指标 |
 | 布局与基础布线 | `place-layered.py`、`place-and-route.py` | 旧布局参考、分层挂位、符号坐标及快速布线估价 |
 | 最终布线 | `sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 统一几何规则、正交图 A*、拆网重布、原引脚连接检查及最终统计 |
 | 失败恢复 | `local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 保持布局局部救援；扩大物理间距重试一次；必要时构造大画布总线图 |
@@ -135,8 +136,9 @@ foreach ($caseId in 1..4) {
 
 候选记录保留编号、候选种子和停止原因。重放时使用相同网表、源子电路、种子和
 迭代参数；预算过小可能无法完成所请求的候选。严格恢复已选器件坐标时，使用
-下面的 `--reroute-placement`，它不重新运行布局搜索。结构化默认选择在候选1～3中按
-实际布线评分选优，旧参考仅通过显式候选0回放运行。
+下面的 `--reroute-placement`，它不重新运行布局搜索。结构化默认在候选1～3中按实际布线的原Q选优，
+旧参考仅通过显式候选0回放运行。默认 `--symmetry-layout off`，日常不加参数便跳过额外器件对称规整和S对称选优。
+只有显式 `--symmetry-layout auto` 才保持候选1的原摆法、规整2/3，并在本轮原Q参考125%的实际线长范围内，按高置信关系满足情况、网格精度的位置残差、原Q依次选择。详细顺序、限制及显式auto/off实验见[器件对称布局说明](symmetry-layout.md)。
 
 编号 `0` 是显式回放的旧布局参考，`1`、`2` 是默认独立结构种子，最后的 `3` 可以是第三个结构
 种子，也可以是依据前面最佳结果生成的局部布线反馈候选。因此 `--candidate-id 3`
@@ -381,6 +383,8 @@ v4最初只将图7主图更新，其余样例当时仅作只读回归。此后�
 | --- | --- | --- |
 | `--mode` | `layered` 固定层级；`baseline` 自由网格布局 | `layered` |
 | `--layout-style` | `structured` 使用结构化候选选择；`legacy` 保留旧分层算法；用于 `layered` 模式 | `structured` |
+| `--passive-layout` | 新结构候选中R/C/L/D使用 `flexible` 跨行或 `fixed` 固定行；保存模式不重新摆件 | `flexible` |
+| `--symmetry-layout` | `off` 跳过额外器件对称规整和S选优，按原Q选择；显式 `auto` 才规整结构候选2/3并启用对称选优；不要求导线镜像 | `off` |
 | `--quality-seconds` | `structured` 每张图的候选优化及最终布线时间预算，必须为正数 | `300` |
 | `--candidate-id` | 重放一个结构化候选编号，编号以保存的 JSON 为准 | 自动比较候选 |
 | `--fallback` | `auto`：必要时局部救援、扩距及总线恢复；`off`：默认仅正常流程；`only`：直接总线构造 | 网表输入为 `auto`；指定候选为 `off` |
