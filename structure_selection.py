@@ -25,7 +25,9 @@ def select_structured_result(results):
         return item[5].get('structure_layout', {}).get('metrics', {})
 
     original = structure_rank(measured(reference))
-    improved = [item for item in eligible if structure_rank(measured(item)) < original]
+    improved = [item for item in eligible if all(measured(item).get(field, 0) <=
+                measured(reference).get(field, 0) for field in ('interleaving', 'role_order'))
+                and structure_rank(measured(item)) < original]
     winner = min(improved, key=lambda item: (*structure_rank(measured(item)), *item[0])) if improved else reference
     return winner, {
         'policy': VERSION, 'reference_candidate': reference[8],

@@ -61,7 +61,8 @@ def _select_symmetric_result(results):
 
 def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   quality_seconds=300, routing_options=None, candidate_id=None,
-                  passive_layout='flexible', symmetry_layout='off', structure_layout='off'):
+                  passive_layout='flexible', symmetry_layout='off', structure_layout='off',
+                  structure_phase=2):
     if type(quality_seconds) not in (int, float) or not isfinite(quality_seconds) or quality_seconds <= 0:
         raise ValueError('quality_seconds must be positive and finite')
     if candidate_id is not None and str(candidate_id) not in ('0', '1', '2', '3'):
@@ -72,6 +73,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         raise ValueError('symmetry_layout must be auto or off')
     if structure_layout not in ('auto', 'off'):
         raise ValueError('structure_layout must be auto or off')
+    if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
+        raise ValueError('structure_phase must be 1, 2 or 3')
     from structured_placement import create_candidates, feedback_candidate
     from layout_quality import evaluate_quality
     from orthogonal_router import RoutingFailure
@@ -92,7 +95,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     try:
         candidates = create_candidates(path, cell=cell, iterations=iterations,
                                        seed=seed, deadline=deadline, passive_layout=passive_layout,
-                                       include_legacy=include_legacy, structure_layout=structure_layout)
+                                       include_legacy=include_legacy, structure_layout=structure_layout,
+                                       structure_phase=structure_phase)
         for number, item in enumerate(candidates):
             if number >= candidate_limit:
                 stop_reason = 'candidate_limit'
@@ -145,7 +149,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 metadata = deepcopy(metadata)
                 metadata['layout_relations'] = deepcopy(shared_relations)
                 report = metadata.setdefault('structure_layout', {
-                    'policy': 'auto', 'version': 'structure-layout-v1', 'phase': 1})
+                    'policy': 'auto', 'version': 'structure-layout-v1', 'phase': structure_phase,
+                    'applied': False})
                 report['reference_candidate'] = identifier == '1'
                 report['metrics'] = measure_layout_relations(
                     placement, comps, index, shared_relations)

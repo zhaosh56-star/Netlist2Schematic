@@ -50,6 +50,11 @@ class StructureSelectionTests(unittest.TestCase):
         self.assertIs(old,winner)
         self.assertEqual('original_quality_no_structure_gain',report['reason'])
 
+    def test_reducing_interleaving_cannot_introduce_new_role_conflict(self):
+        old=result(1,interleaving=2)
+        new=result(2,interleaving=0,order=1,score=20)
+        self.assertIs(old,select_structured_result([old,new])[0])
+
     def test_same_structure_uses_original_quality_and_is_order_independent(self):
         old=result(1,interleaving=3)
         a=result(2,score=20)

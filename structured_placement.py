@@ -308,12 +308,14 @@ def _passive_profile(pl, devices, nets, index, structs, variant, policy):
 
 
 def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, variant,
-                       *, passive_layout='fixed'):
+                       *, passive_layout='fixed', row_override=None, bridge_alignment=()):
     if passive_layout not in ('flexible', 'fixed'):
         raise ValueError('passive_layout must be flexible or fixed')
     keys = _canonical_keys(devices)
     row_of, _ = legacy._allocate_rows(devices, comps, index, levels['net_levels'],
                                       levels['device_levels'], att)
+    if row_override is not None:
+        row_of = list(row_override)
     opamp = None
     if not levels['device_levels']:
         opamp = _opamp_seed(devices, structs, index, row_of, variant)
@@ -324,6 +326,10 @@ def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, 
             for n, name in enumerate(ordered):
                 row_of[index[name]] = n // max(2, math.ceil(math.sqrt(len(comps))))
     alignment, pairs, blocks = _relations(devices, structs, index, row_of)
+    for bridge in bridge_alignment:
+        names = [bridge.get('upper'), *bridge.get('members', ()), bridge.get('lower')]
+        names = [name for name in names if name in index]
+        alignment.extend((index[a], index[b], 2.5) for a, b in zip(names, names[1:]))
     counts = Counter(row_of)
     cols = max(counts.values()) + (2 if variant != 2 else 3)
     if opamp:
@@ -767,7 +773,7 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
 
 def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
                       passive_layout='flexible', include_legacy=False,
-                      structure_layout='off', structure_phase=1):
+                      structure_layout='off', structure_phase=2):
     """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -824,13 +830,23 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         if deadline is not None and time.perf_counter() >= deadline:
             return
         candidate_seed = seed + (variant + 1) * 104729
+        layout_relations = row_plan = None
+        if structure_layout == 'auto' and variant != 0:
+            from layout_relations import build_layout_relations
+            layout_relations = build_layout_relations(devices, structs)
+            if structure_phase >= 2:
+                from branch_levels import plan_branch_rows
+                original_rows, _ = legacy._allocate_rows(devices, comps, index,
+                    levels['net_levels'], levels['device_levels'], att)
+                _, row_plan = plan_branch_rows(devices, levels, original_rows,
+                                               layout_relations, comps, index)
         placement, alignment, pairs = _initial_placement(
             devices, comps, nets, index, levels, att, structs, candidate_seed, variant,
-            passive_layout=passive_layout)
-        layout_relations = None
-        if structure_layout == 'auto' and variant != 0:
-            from layout_relations import build_layout_relations, prepare_structure_placement
-            layout_relations = build_layout_relations(devices, structs)
+            passive_layout=passive_layout,
+            row_override=[row_plan['rows'][c['id']] for c in comps] if row_plan else None,
+            bridge_alignment=row_plan.get('bridge_alignment', ()) if row_plan else ())
+        if layout_relations is not None:
+            from layout_relations import prepare_structure_placement
             prepare_structure_placement(placement, comps, index, layout_relations)
         # Leave most of the global budget to final routing, which is authoritative.
         local_deadline = min(deadline, time.perf_counter() + 12) if deadline else None
@@ -855,9 +871,11 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
             from layout_relations import measure_layout_relations, VERSION as STRUCTURE_VERSION
             metadata['layout_relations'] = copy.deepcopy(layout_relations)
             metadata['structure_layout'] = {'version': STRUCTURE_VERSION, 'policy': 'auto',
-                                            'phase': 1, 'metrics': measure_layout_relations(
+                                            'phase': structure_phase, 'metrics': measure_layout_relations(
                                                 placement, comps, index, layout_relations),
                                             'metrics_stage': 'after_sa_and_geometry_floor'}
+        if row_plan is not None:
+            metadata['branch_row_plan'] = copy.deepcopy(row_plan)
         metadata['passive_layout_policy'] = getattr(placement, 'passive_policy', 'fixed')
         if metadata['passive_layout_policy'] == 'flexible':
             from passive_placement import passive_diagnostics

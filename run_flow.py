@@ -30,7 +30,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         layout_style='structured', quality_seconds=300, candidate_id=None,
         fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
-        passive_layout='flexible', symmetry_layout='off', structure_layout='off'):
+        passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=2):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -41,6 +41,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         raise ValueError('symmetry_layout must be auto or off')
     if structure_layout not in ('auto', 'off'):
         raise ValueError('structure_layout must be auto or off')
+    if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
+        raise ValueError('structure_phase must be 1, 2 or 3')
     if mode not in ('baseline', 'layered'):
         raise ValueError(f'Unknown layout mode: {mode}')
     if candidate_id is not None and (mode != 'layered' or layout_style != 'structured'):
@@ -89,7 +91,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                 result = _normal_result(source, par, mode, layout_style, cell, iterations,
                                         seed, quality_seconds, candidate_id, options,
                                         passive_layout=passive_layout, symmetry_layout=symmetry_layout,
-                                        structure_layout=structure_layout)
+                                        structure_layout=structure_layout, structure_phase=structure_phase)
             except ROUTING_FAILURES as exc:
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
                     raise
@@ -155,6 +157,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         'requested_passive_layout': passive_layout,
         'requested_symmetry_layout': symmetry_layout,
         'requested_structure_layout': structure_layout,
+        'requested_structure_phase': structure_phase,
         'placement': {comp['id']: {'row': placement.cell_of[i][0],
                                   'col': placement.cell_of[i][1],
                                   'orient': placement.orient[i]}
@@ -167,13 +170,14 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
 
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    quality_seconds, candidate_id, options, *, passive_layout='flexible',
-                   symmetry_layout='off', structure_layout='off'):
+                   symmetry_layout='off', structure_layout='off', structure_phase=2):
     if mode == 'layered' and layout_style == 'structured':
         from aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
                              quality_seconds=quality_seconds, routing_options=options,
                              candidate_id=candidate_id, passive_layout=passive_layout,
-                             symmetry_layout=symmetry_layout, structure_layout=structure_layout)
+                             symmetry_layout=symmetry_layout, structure_layout=structure_layout,
+                             structure_phase=structure_phase)
     elif mode == 'layered':
         layered = load_local('place_layered', 'place-layered.py')
         placement, comps, nets, comp_index, metadata = layered.create_placement(
@@ -587,6 +591,8 @@ def main(argv=None, default_mode='layered'):
                         help='Device-only symmetry for new structured candidates 2/3 (default: off); saved coordinates are preserved')
     parser.add_argument('--structure-layout', choices=('auto', 'off'), default='off',
                         help='Role-aware structure layout for new candidates 2/3 (default: off)')
+    parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=2,
+                        help='Replay a structure rollout phase; ignored when structure-layout is off')
     parser.add_argument('--quality-seconds', type=float, default=300)
     parser.add_argument('--candidate-id',
                         help='Replay candidate 1, 2 or 3; 0 explicitly runs the legacy reference')
@@ -629,6 +635,7 @@ def main(argv=None, default_mode='layered'):
                 passive_layout=args.passive_layout,
                 symmetry_layout=args.symmetry_layout,
                 structure_layout=args.structure_layout,
+                structure_phase=args.structure_phase,
                 fallback=args.fallback, spacing_scale=args.spacing_scale,
                 spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
                 local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,

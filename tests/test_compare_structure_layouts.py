@@ -14,6 +14,16 @@ def verified(length=100,crossings=0,interleaving=0,stage='normal'):
 
 
 class FinalOutputGateTests(unittest.TestCase):
+    def test_row_plan_checks_tail_strict_order_and_same_layer(self):
+        from types import SimpleNamespace
+        pl=SimpleNamespace(cell_of=[(1,0),(1,1),(2,0)])
+        idx={'a':0,'b':1,'tail':2}
+        plan={'rows':{'a':1,'b':1,'tail':2},'tail_orders':[{'lower':'tail'}],
+            'strict_orders':[{'upper':'a','lower':'tail'}],
+            'same_row':[{'members':['a','b']}]}
+        comparison.verify_row_plan({'branch_row_plan':plan},pl,idx,{'a','b'})
+        pl.cell_of[2]=(1,2)
+        with self.assertRaises(ValueError):comparison.verify_row_plan({'branch_row_plan':plan},pl,idx,{'a','b'})
     def test_final_length_and_crossings_are_independently_bounded(self):
         self.assertTrue(all(comparison.gates(verified(crossings=1),verified(115,2)).values()))
         self.assertFalse(comparison.gates(verified(),verified(116))['wirelength_115_percent'])

@@ -24,6 +24,36 @@ from sa_common import read_json, write_json, load_local
 FORMAT = 'structure-layout-comparison-v1'
 
 
+def runtime_snapshot(stage):
+    """Freeze runtime dependencies; later-stage, unimported modules are excluded."""
+    excluded=set()
+    if stage==1:excluded.update(('branch_levels.py','branch_alignment.py','attachment_placement.py','presentation.py','placement_preflight.py','candidate_budget.py'))
+    elif stage==2:excluded.update(('branch_alignment.py','attachment_placement.py','presentation.py','placement_preflight.py','candidate_budget.py'))
+    return {p:h for p,h in common._snapshot().items()
+            if 'tests' not in Path(p).parts and Path(p).name not in excluded}
+
+
+def check_signature(signature):
+    if common._input_changes(signature['source_files']):raise ValueError('Original input changed')
+    if runtime_snapshot(signature['parameters']['structure_phase'])!=signature['code_files']:
+        raise ValueError('Runtime code or symbol resources changed during comparison')
+
+
+def verify_row_plan(data, pl, index, active):
+    plan=data.get('branch_row_plan',{})
+    protected=set(active)
+    protected.update(order['lower'] for order in plan.get('tail_orders',()))
+    if any(pl.cell_of[index[name]][0]!=plan['rows'][name]
+           for name in protected if name in plan.get('rows',{})):
+        raise ValueError('Saved fixed rows differ from the branch plan')
+    for order in plan.get('strict_orders',()):
+        if pl.cell_of[index[order['upper']]][0]>=pl.cell_of[index[order['lower']]][0]:
+            raise ValueError('Saved placement violates a directed branch constraint')
+    for group in plan.get('same_row',()):
+        if len({pl.cell_of[index[name]][0] for name in group['members']})>1:
+            raise ValueError('Saved placement violates a same-row branch relation')
+
+
 def verify(path, signature):
     from circuit_structures import analyze_structures
     from layout_quality import evaluate_quality
@@ -67,9 +97,7 @@ def verify(path, signature):
         # A new row plan is checked against its declared directed constraints,
         # rather than falsely comparing it to the deliberately superseded levels.
         plan = data.get('branch_row_plan', {})
-        if plan.get('rows') and any(pl.cell_of[index[name]][0] != row
-                                   for name, row in plan['rows'].items() if name in active):
-            raise ValueError('Saved active rows differ from the branch plan')
+        verify_row_plan(data,pl,index,active)
         return {'valid': True, 'placement_json': str(path), 'clean_svg': str(clean),
             'color_svg': str(color), 'metrics': metrics,
             'quality': evaluate_quality(par, pl, comps, nets, index, routed, metrics, structs),
@@ -102,9 +130,10 @@ def execute(case, policy, output, parameters, code, frozen):
     base = output/'runs'/case['case']/policy
     base.mkdir(parents=True, exist_ok=True)
     for saved in sorted(base.glob('*/run-record.json'), key=lambda p:p.stat().st_mtime, reverse=True):
-        record = read_json(saved)
+        try: record = read_json(saved)
+        except (ValueError,OSError): continue
         if record.get('fingerprint') == fingerprint and record.get('status') in ('valid', 'failed'):
-            common._check_inputs(signature)
+            check_signature(signature)
             if record['status'] == 'valid':
                 record['verified'] = verify(Path(record['verified']['placement_json']), signature)
             record['reused'] = True
@@ -117,6 +146,7 @@ def execute(case, policy, output, parameters, code, frozen):
     command = [sys.executable, '-X', 'utf8', '-B', '-u', str(ROOT/'run_flow.py'),
         signature['source_netlist'], '--out-dir', str(directory),
         '--structure-layout', policy, '--symmetry-layout', 'off',
+        '--structure-phase', str(p['structure_phase']),
         '--seed', str(p['seed']), '--iterations', str(p['iterations']),
         '--fallback', 'auto', '--local-rescue', 'auto']
     for k in ('quality_seconds','rescue_seconds','spacing_seconds','fallback_seconds','simplify_seconds'):
@@ -138,7 +168,7 @@ def execute(case, policy, output, parameters, code, frozen):
             except subprocess.TimeoutExpired:
                 common._stop(process)
                 raise ValueError('Supervisory timeout')
-        common._check_inputs(signature)
+        check_signature(signature)
         if record['returncode']:
             diagnostic=directory/'routing-diagnostics.json'
             if diagnostic.is_file(): record['diagnostics']=read_json(diagnostic)
@@ -159,7 +189,8 @@ def gates(old, new):
     violation=lambda x:x['measurement'].get('interleaving',0)+x['measurement'].get('role_order',0)
     return {'wirelength_115_percent': b['wirelength'] <= a['wirelength']*1.15+1e-9,
         'crossings_limit': b['crossings'] <= (0 if a['crossings']==0 else a['crossings']+1),
-        'no_new_structure_violations': violation(new)<=violation(old),
+        'no_new_structure_violations': all(new['measurement'].get(k,0)<=old['measurement'].get(k,0)
+                                          for k in ('interleaving','role_order')),
         'no_new_bus_fallback': new['routing_stage']!='bus_fallback' or old['routing_stage']=='bus_fallback'}
 
 
@@ -169,7 +200,10 @@ def publish(output,cases,records,parameters,code,frozen):
     for case in cases:
         result={p:records[(case['case'],p)] for p in ('off','auto') if (case['case'],p) in records}
         row={**case,'results':result}
-        if len(result)==2 and all(r['status']=='valid' for r in result.values()):
+        row['same_input_version']=(len(result)==2 and
+            result['off'].get('signature',{}).get('source_files')==
+            result['auto'].get('signature',{}).get('source_files'))
+        if row['same_input_version'] and all(r['status']=='valid' for r in result.values()):
             old,new=(result[p]['verified'] for p in ('off','auto'))
             row['gates']=gates(old,new)
             old_cross+=old['metrics']['crossings'];new_cross+=new['metrics']['crossings']
@@ -205,6 +239,8 @@ def publish(output,cases,records,parameters,code,frozen):
         'ground_truth_electrically_verified':False,
         'release_gates':{'complete':complete,'inputs_unchanged':not common._input_changes(frozen),
             'paired_status_consistent':paired_status,
+            'paired_sources_identical':all(row['same_input_version'] for row in rows
+                if len(row['results'])==2 and all(r['status']=='valid' for r in row['results'].values())),
             'no_routing_failures':all(r['status']!='failed' for r in records.values()),
             'paired_gates':all(all(row.get('gates',{}).values()) for row in rows),
             'total_crossings_nonincreasing':new_cross<=old_cross,
@@ -224,17 +260,21 @@ def main(argv=None):
     parser.add_argument('--jobs',type=int,choices=range(1,7),default=4)
     parser.add_argument('--candidate-id',choices=('1','2','3'))
     parser.add_argument('--stage-label',default='stage1')
+    parser.add_argument('--structure-phase',type=int,choices=(1,2,3),default=2)
     for k,v in common.DEFAULT_PARAMETERS.items():
         if k=='jobs':continue
         parser.add_argument('--'+k.replace('_','-'),type=int if k in ('seed','iterations') else float,default=v)
     args=parser.parse_args(argv)
     parameters={k:getattr(args,k) for k in common.DEFAULT_PARAMETERS}
-    parameters.update(candidate_id=args.candidate_id,stage_label=args.stage_label)
+    parameters.update(candidate_id=args.candidate_id,stage_label=args.stage_label,structure_phase=args.structure_phase)
     cases=common.discover_cases()
-    if args.cases:cases=[c for c in cases if c['case'] in args.cases]
+    if args.cases:
+        missing=set(args.cases)-{c['case'] for c in cases}
+        if missing:parser.error('Unknown cases: '+', '.join(sorted(missing)))
+        cases=[c for c in cases if c['case'] in args.cases]
     if not cases:parser.error('No selected cases')
     output=args.out_dir.resolve();output.mkdir(parents=True,exist_ok=True)
-    frozen,code=common._freeze_inputs(cases),common._snapshot()
+    frozen,code=common._freeze_inputs(cases),runtime_snapshot(args.structure_phase)
     records={}
     publish(output,cases,records,parameters,code,frozen)
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:

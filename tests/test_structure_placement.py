@@ -67,7 +67,7 @@ class StructurePlacementTests(unittest.TestCase):
     def test_reference_one_matches_off_and_only_two_three_enable_stage_one(self):
         path = ROOT / 'tests/fixtures/aesthetic-baseline/4.cir'
         old = list(structured.create_candidates(path, iterations=120, seed=98, structure_layout='off'))
-        new = list(structured.create_candidates(path, iterations=120, seed=98, structure_layout='auto'))
+        new = list(structured.create_candidates(path, iterations=120, seed=98, structure_layout='auto', structure_phase=1))
         self.assertEqual((old[0][0].cell_of, old[0][0].orient, old[0][4]),
                          (new[0][0].cell_of, new[0][0].orient, new[0][4]))
         for before, after in zip(old[1:], new[1:]):
