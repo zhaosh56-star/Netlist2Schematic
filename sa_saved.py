@@ -115,4 +115,17 @@ def load_placement(jpath, *, analog_canvas_root=None):
             if max(position[axis] for position in placement.cell_of) >= len(values):
                 raise ValueError(f'Physical layout coordinates do not cover the placement: {key}')
             setattr(placement, attribute, list(values))
+    if any('dx' in saved[component['id']] for component in comps):
+        offsets = [saved[component['id']].get('dx', 0) for component in comps]
+        for i, value in enumerate(offsets):
+            if type(value) not in (int, float) or not isfinite(value):
+                raise ValueError(f"Invalid horizontal offset for {comps[i]['id']}")
+            col = placement.cell_of[i][1]
+            axis = getattr(placement, 'column_x', None)
+            left = ((axis[col]-axis[col-1])/2 if axis and col else
+                    (axis[1]-axis[0])/2 if axis and len(axis)>1 else par.CELL/2)
+            right = ((axis[col+1]-axis[col])/2 if axis and col+1<len(axis) else left)
+            if value < -left-1e-9 or value > right+1e-9:
+                raise ValueError(f"Horizontal offset crosses a column midpoint for {comps[i]['id']}")
+        placement.offset_x = offsets
     return data, source, par, placement, comps, nets, index

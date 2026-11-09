@@ -62,7 +62,7 @@ def _select_symmetric_result(results):
 def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   quality_seconds=300, routing_options=None, candidate_id=None,
                   passive_layout='flexible', symmetry_layout='off', structure_layout='off',
-                  structure_phase=2):
+                  structure_phase=3):
     if type(quality_seconds) not in (int, float) or not isfinite(quality_seconds) or quality_seconds <= 0:
         raise ValueError('quality_seconds must be positive and finite')
     if candidate_id is not None and str(candidate_id) not in ('0', '1', '2', '3'):
@@ -148,12 +148,21 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                         parse_netlist(path, cell=cell), metadata.get('structs', ()))
                 metadata = deepcopy(metadata)
                 metadata['layout_relations'] = deepcopy(shared_relations)
+                if structure_phase >= 3:
+                    from structure_selection import prepare_branch_context
+                    metadata = prepare_branch_context(path, cell, placement, comps, nets, index, metadata)
+                    if identifier in ('2', '3'):
+                        from branch_alignment import regularize_branch_layout
+                        placement, metadata = regularize_branch_layout(
+                            par, placement, comps, nets, index, metadata,
+                            options=effective_options, deadline=deadline)
                 report = metadata.setdefault('structure_layout', {
                     'policy': 'auto', 'version': 'structure-layout-v1', 'phase': structure_phase,
                     'applied': False})
                 report['reference_candidate'] = identifier == '1'
-                report['metrics'] = measure_layout_relations(
-                    placement, comps, index, shared_relations)
+                from structure_selection import measure_structure
+                report['metrics'] = measure_structure(par, placement, comps, nets, index,
+                                                     metadata, structure_phase)
             print(f'Quality candidate {identifier}: final routing, '
                   f'budget remaining={deadline-perf_counter():.1f}s', flush=True)
             record = {'candidate_id': identifier, 'seed': metadata.get('candidate_seed', seed),

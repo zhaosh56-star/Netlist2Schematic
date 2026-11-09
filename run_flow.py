@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from copy import deepcopy
+from copy import deepcopy, copy
 from dataclasses import asdict
 import hashlib
 import json
@@ -30,7 +30,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         layout_style='structured', quality_seconds=300, candidate_id=None,
         fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
-        passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=2):
+        passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -158,10 +158,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         'requested_symmetry_layout': symmetry_layout,
         'requested_structure_layout': structure_layout,
         'requested_structure_phase': structure_phase,
-        'placement': {comp['id']: {'row': placement.cell_of[i][0],
-                                  'col': placement.cell_of[i][1],
-                                  'orient': placement.orient[i]}
-                      for i, comp in enumerate(comps)},
+        'placement': _saved_positions(placement, comps),
     }
     return _finish(data, par, placement, comps, nets, comp_index, base, destination,
                    protected_paths={source}, options=options, routed_result=routed_result,
@@ -170,7 +167,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
 
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    quality_seconds, candidate_id, options, *, passive_layout='flexible',
-                   symmetry_layout='off', structure_layout='off', structure_phase=2):
+                   symmetry_layout='off', structure_layout='off', structure_phase=3):
     if mode == 'layered' and layout_style == 'structured':
         from aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
@@ -210,6 +207,17 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
 def _check_source(source, expected_hash):
     if hashlib.sha256(Path(source).read_bytes()).hexdigest() != expected_hash:
         raise ValueError('Source netlist changed while the flow was running; rerun with the current input')
+
+
+def _saved_positions(placement, comps):
+    rows={comp['id']:{'row':placement.cell_of[i][0],'col':placement.cell_of[i][1],
+                      'orient':placement.orient[i]} for i,comp in enumerate(comps)}
+    if hasattr(placement,'offset_x'):
+        if len(placement.offset_x)!=len(comps) or any(type(x) not in (int,float) or not isfinite(x)
+                for x in placement.offset_x):
+            raise ValueError('Invalid placement horizontal offsets')
+        for i,comp in enumerate(comps):rows[comp['id']]['dx']=placement.offset_x[i]
+    return rows
 
 
 def _rescue_policy(value, automatic):
@@ -436,9 +444,26 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
                                                data.get('structs', ()))
         data['layout_relations'] = relations
         report = data.setdefault('structure_layout', {
-            'policy': 'auto', 'version': 'structure-layout-v1', 'phase': 1})
-        report['metrics'] = measure_layout_relations(placement, comps, comp_index, relations)
+            'policy': 'auto', 'version': 'structure-layout-v1',
+            'phase': data.get('requested_structure_phase',1), 'applied': False})
+        phase=data.get('requested_structure_phase',report.get('phase',1))
+        from structure_selection import prepare_branch_context, measure_structure
+        if phase>=3:
+            data=prepare_branch_context(source,data.get('source_cell'),placement,comps,nets,comp_index,data)
+            report=data['structure_layout']
+        report['metrics'] = measure_structure(par,placement,comps,nets,comp_index,data,phase)
         report['measurement_stage'] = 'final_output'
+        if isinstance(data.get('branch_alignment'),dict) and phase>=3:
+            data['branch_alignment']['current']=report['metrics']['branch_geometry']
+            data['branch_alignment']['measurement_stage']='final_output'
+    if isinstance(data.get('attachment_placement'),dict):
+        from attachment_placement import score_attachments
+        measured=copy(placement)
+        measured.attachment_model={key:deepcopy(data['attachment_placement'].get(key,[]))
+                                   for key in ('groups','links')}
+        measured.attachment_index=dict(comp_index)
+        data['attachment_placement']['current']=score_attachments(measured)
+        data['attachment_placement']['measurement_stage']='final_output'
     _check_source(source, expected_hash)
     for path, expected in (input_hashes or {}).items():
         if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
@@ -591,7 +616,7 @@ def main(argv=None, default_mode='layered'):
                         help='Device-only symmetry for new structured candidates 2/3 (default: off); saved coordinates are preserved')
     parser.add_argument('--structure-layout', choices=('auto', 'off'), default='off',
                         help='Role-aware structure layout for new candidates 2/3 (default: off)')
-    parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=2,
+    parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=3,
                         help='Replay a structure rollout phase; ignored when structure-layout is off')
     parser.add_argument('--quality-seconds', type=float, default=300)
     parser.add_argument('--candidate-id',

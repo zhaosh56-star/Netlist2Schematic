@@ -545,6 +545,11 @@ def _estimate(pl, nets, index, alignment, pairs):
         value += (regularity['interleaving'] + 1.25 * regularity['role_order']
                   + .15 * regularity['normalized_span'])
         metrics.update(structure_regularization=regularity, normalized_energy=value)
+    if hasattr(pl, 'attachment_model'):
+        from attachment_placement import score_attachments
+        attachments = score_attachments(pl)
+        value += attachments['weighted_total']
+        metrics.update(attachment_regularization=attachments, normalized_energy=value)
     return value, metrics
 
 
@@ -773,7 +778,7 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
 
 def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
                       passive_layout='flexible', include_legacy=False,
-                      structure_layout='off', structure_phase=2):
+                      structure_layout='off', structure_phase=3):
     """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -789,7 +794,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         raise ValueError('include_legacy must be boolean')
     if structure_layout not in ('off', 'auto'):
         raise ValueError('structure_layout must be off or auto')
-    if structure_phase not in (1, 2, 3):
+    if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     if deadline is not None and time.perf_counter() >= deadline:
         raise ValueError('Quality budget exhausted before placement initialization')
@@ -848,6 +853,11 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         if layout_relations is not None:
             from layout_relations import prepare_structure_placement
             prepare_structure_placement(placement, comps, index, layout_relations)
+        attachment_report = None
+        if layout_relations is not None and structure_phase >= 3:
+            from attachment_placement import prepare_attachments
+            placement, attachment_report = prepare_attachments(
+                placement, devices, comps, nets, index, layout_relations)
         # Leave most of the global budget to final routing, which is authoritative.
         local_deadline = min(deadline, time.perf_counter() + 12) if deadline else None
         energy, metrics, annealing = _anneal(placement, nets, index, alignment, pairs,
@@ -876,6 +886,8 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                                             'metrics_stage': 'after_sa_and_geometry_floor'}
         if row_plan is not None:
             metadata['branch_row_plan'] = copy.deepcopy(row_plan)
+        if attachment_report is not None:
+            metadata['attachment_placement'] = copy.deepcopy(attachment_report)
         metadata['passive_layout_policy'] = getattr(placement, 'passive_policy', 'fixed')
         if metadata['passive_layout_policy'] == 'flexible':
             from passive_placement import passive_diagnostics

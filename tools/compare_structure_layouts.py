@@ -89,7 +89,12 @@ def verify(path, signature):
         devices = parse_netlist(source, cell=signature['cell'])
         structs = analyze_structures(devices)
         relations = build_layout_relations(devices, structs)
-        measurement = measure_layout_relations(pl, comps, index, relations)
+        from structure_selection import prepare_branch_context, measure_structure
+        context=deepcopy(data)
+        context['layout_relations']=relations
+        phase=signature['parameters']['structure_phase']
+        if phase>=3:context=prepare_branch_context(source,signature['cell'],pl,comps,nets,index,context)
+        measurement = measure_structure(par,pl,comps,nets,index,context,phase)
         active = {name: pl.cell_of[index[name]][0] for name, d in devices.items()
                   if d['cls'] in ('MOS', 'BJT')}
         if any(pl.orient[index[name]] not in (0, 1) for name in active):
@@ -260,7 +265,7 @@ def main(argv=None):
     parser.add_argument('--jobs',type=int,choices=range(1,7),default=4)
     parser.add_argument('--candidate-id',choices=('1','2','3'))
     parser.add_argument('--stage-label',default='stage1')
-    parser.add_argument('--structure-phase',type=int,choices=(1,2,3),default=2)
+    parser.add_argument('--structure-phase',type=int,choices=(1,2,3),default=3)
     for k,v in common.DEFAULT_PARAMETERS.items():
         if k=='jobs':continue
         parser.add_argument('--'+k.replace('_','-'),type=int if k in ('seed','iterations') else float,default=v)
