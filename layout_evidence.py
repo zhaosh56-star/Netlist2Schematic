@@ -191,6 +191,25 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
         and 'exclusive_tails' in row.get('roles', {})}
     incidence, formals = _incidence(devices), _formals(formal_ports)
     roles = _roles(devices, incidence, formals, net_roles)
+    voltage_constraints, voltage_graph = defaultdict(list), defaultdict(list)
+    for name, dev in sorted(devices.items()):
+        if dev.get('cls') == 'VSRC':
+            for node, reference in ((dev['p'], dev['n']), (dev['n'], dev['p'])):
+                if node != reference:
+                    voltage_graph[reference].append((node, name))
+    # Only a path of ideal voltage constraints to a verified reference fixes
+    # absolute potential. A floating series offset is not a supply or clamp.
+    frontier = [(net, net, []) for net in sorted(roles) if roles[net]['role'] == 'power']
+    visited = {node for node, _, _ in frontier}
+    for reference_node, root, path in frontier:
+        for node, name in sorted(voltage_graph[reference_node]):
+            if node in visited:
+                continue
+            visited.add(node)
+            route = [*path, name]
+            voltage_constraints[node].append({'device': name, 'reference': root,
+                'path': route, 'kind': 'ideal_voltage_to_verified_reference'})
+            frontier.append((node, root, route))
     formal_controls, driven_controls = _external_controls(devices, incidence, formals, roles)
     diagnostics = {'downgraded_outputs': [], 'rejected_pairs': [], 'added_pairs': [],
                    'invalid_composites': [],
@@ -209,7 +228,8 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
         if not ca or not cb or (a['cls'], a['type']) != (b['cls'], b['type']):
             return None
         pa, pb = _ports(a), _ports(b)
-        if (_power(roles, source) or pa[ca[2]] != source or pb[cb[2]] != source
+        if (_power(roles, source) or source in voltage_constraints
+                or pa[ca[2]] != source or pb[cb[2]] != source
                 or pa[ca[0]] == pb[cb[0]] or pa[ca[1]] == pb[cb[1]]):
             return None
         tails = _tail_sources(devices, source, names)
@@ -238,7 +258,8 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
             chosen, reason = selected_external(users)
             shared = len(all_source_users[source]) > 2
             if data is None or (shared and set(chosen) != set(names)):
-                diagnostics['rejected_pairs'].append({'id': row.get('id'), 'reason': 'unverified_pair_source'})
+                diagnostics['rejected_pairs'].append({'id': row.get('id'),
+                    'reason': 'source_voltage_clamped' if source in voltage_constraints else 'unverified_pair_source'})
                 continue
             row['roles'].update(source_net=source, source_users=list(all_source_users[source]), tail=data[3],
                 exclusive_tails=[] if shared else list(data[3]), shared_tails=list(data[3]) if shared else [],
@@ -281,7 +302,11 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
             continue
         data = pair_data(chosen, source)
         if not data:
-            record['reason'] = 'no_distinct_branches_or_tail'
+            record['reason'] = ('source_voltage_clamped' if source in voltage_constraints
+                                else 'no_distinct_branches_or_tail')
+            if source in voltage_constraints:
+                diagnostics['rejected_pairs'].append({'source': source, 'members': list(chosen),
+                                                       'reason': 'source_voltage_clamped'})
             continue
         pa, pb, channel, tails = data
         if shared and _signature(devices, incidence, pa[channel[0]], chosen) != _signature(
@@ -305,7 +330,7 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
 
     # A rejected child cannot be reintroduced through its old high-confidence
     # parent and the parent's matched-pair expansion in build_layout_relations.
-    invalid = {r['id'] for r in diagnostics['rejected_pairs']}
+    invalid = {r['id'] for r in diagnostics['rejected_pairs'] if r.get('id') is not None}
     while True:
         changed = False
         for row in structures:
@@ -387,7 +412,8 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
                           'nets': row.get('nets', {})}))
     return {'version': VERSION, 'structures': structures,
             'relations': sorted(relations, key=lambda row: row['id']),
-            'net_roles': roles, 'formal_ports': list(formals.values()),
+            'net_roles': roles, 'voltage_constraints': dict(voltage_constraints),
+            'formal_ports': list(formals.values()),
             'external_controls': {'formal': sorted(formal_controls), 'voltage_source': sorted(driven_controls)},
             'diagnostics': diagnostics}
 

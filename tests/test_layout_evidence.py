@@ -150,12 +150,15 @@ class CalibratedEvidenceTests(unittest.TestCase):
         explicit = build_layout_evidence(devices, net_roles={'ip': 'signal', 'im': 'signal'})
         self.assertEqual(set(pairs(explicit)[0]['members']), {'a', 'b'})
 
-    def test_arbitrary_grounded_source_at_internal_tail_is_not_a_supply(self):
+    def test_voltage_clamped_common_source_is_not_a_high_confidence_pair(self):
         devices = {'a': mos('x', 'g1', 'tail'), 'b': mos('y', 'g2', 'tail'),
                    'i': source('tail'), 'probe': source('tail', cls='VSRC')}
         report = build_layout_evidence(devices)
         self.assertEqual(report['net_roles']['tail']['role'], 'unknown')
-        self.assertEqual(set(pairs(report)[0]['members']), {'a', 'b'})
+        self.assertFalse(pairs(report))
+        self.assertEqual(report['voltage_constraints']['tail'][0]['reference'], '0')
+        self.assertTrue(any(row['reason'] == 'source_voltage_clamped'
+                            for row in report['diagnostics']['rejected_pairs']))
 
     def test_explicit_power_blocks_input_pair_but_signal_does_not(self):
         devices = bank()
@@ -163,6 +166,22 @@ class CalibratedEvidenceTests(unittest.TestCase):
                                                    net_roles={'tail': 'power'})))
         self.assertEqual(len(pairs(build_layout_evidence(devices, formal_ports=('ip', 'im'),
                                                         net_roles={'tail': 'signal'}))), 1)
+
+    def test_voltage_source_chain_to_reference_also_clamps_the_common_source(self):
+        devices = {'a': mos('x', 'g1', 'tail'), 'b': mos('y', 'g2', 'tail'),
+                   'i': source('tail'), 'offset': source('tail', 'reference', cls='VSRC'),
+                   'reference_supply': source('reference', cls='VSRC')}
+        report = build_layout_evidence(devices)
+        self.assertFalse(pairs(report))
+        self.assertEqual(len(report['voltage_constraints']['tail'][0]['path']), 2)
+
+    def test_floating_voltage_offset_does_not_prove_absolute_source_clamping(self):
+        devices = {'a': mos('x', 'g1', 'tail'), 'b': mos('y', 'g2', 'tail'),
+                   'i': source('tail'), 'offset': source('tail', 'floating', cls='VSRC'),
+                   'other_tail': source('floating')}
+        report = build_layout_evidence(devices)
+        self.assertNotIn('tail', report['voltage_constraints'])
+        self.assertEqual(set(pairs(report)[0]['members']), {'a', 'b'})
 
     def test_conflicting_supply_evidence_is_reported_conservatively(self):
         report = build_layout_evidence({'a': mos('x', 'g1', 'vdd'),
