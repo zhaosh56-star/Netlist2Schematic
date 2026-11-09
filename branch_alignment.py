@@ -280,13 +280,20 @@ def _model(par, pl, comps, nets, index, metadata):
             continue
         source_members = {name for name, pin in conductors.get(common, ())
                           if pin == source and by_id[name]['symbol'] == symbol}
-        if source_members != {a, b}:
+        validation = record.get('evidence', {}).get('validation', {})
+        verified_shared = (roles.get('validated_shared_source') is True
+                           and (validation.get('shared') is True
+                                or validation.get('kind') in ('formal_control_pair', 'external_control_pair'))
+                           and validation.get('source') == common
+                           and {a, b} <= set(roles.get('source_users', ()))
+                           and source_members <= set(roles.get('source_users', ())))
+        if source_members != {a, b} and not verified_shared:
             continue
         if by_id[a]['nodes'][drain] == by_id[b]['nodes'][drain] or (
                 by_id[a]['nodes'][CONTROL[symbol]] == by_id[b]['nodes'][CONTROL[symbol]]):
             continue
         identity = tuple(sorted((a, b))), common
-        candidates = roles.get('exclusive_tails', roles.get('tail', ()))
+        candidates = [] if verified_shared else roles.get('exclusive_tails', roles.get('tail', ()))
         for name in roles.get('tail', ()):
             tail_owners[name].add(identity)
         pair_records.append((identity, a, b, source, common, candidates))
@@ -329,7 +336,13 @@ def _model(par, pl, comps, nets, index, metadata):
 
     for record in records:
         roles, kind = record.get('roles', {}), record.get('kind')
-        if kind == 'series_chain':
+        if kind == 'port_attachment':
+            member, pin = roles.get('member'), roles.get('member_pin')
+            anchor = roles.get('anchor', ())
+            if member in by_id and pin in by_id[member]['nodes'] and len(anchor) == 2:
+                attach((member, pin), tuple(anchor), .25 if roles.get('port_role') == 'control' else .5,
+                       'port_attachment')
+        elif kind == 'series_chain':
             order = roles.get('ordered', ())
             for a, b in zip(order, order[1:]):
                 if a not in by_id or b not in by_id:

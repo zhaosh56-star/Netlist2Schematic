@@ -42,7 +42,10 @@ def render(jpath, out=None, *, analog_canvas_root=None, presentation=None):
         configure_presentation(pl,source_netlist,data.get('source_cell'),comps,nets,presentation)
         check_source_hash(source_netlist,data.get('source_sha256'))
     render_svg(par, pl, comps, nets, comp_index, routed, metrics, destination,
-               clean=True, structs=data.get('structs', []), validation=validation)
+               clean=True,
+               structs=(data.get('layout_evidence', {}).get('structures', [])
+                        if data.get('structure_display') == 'validated' else data.get('structs', [])),
+               validation=validation)
     print(f'Wrote {destination.resolve()}  {metrics}', flush=True)
     return metrics
 

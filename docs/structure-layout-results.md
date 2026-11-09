@@ -1,5 +1,37 @@
 # 结构布局分阶段实现与实测结果
 
+## 本轮增量：校准识别证据并贯穿布局
+
+本轮按用户最新范围不做网表解析增强，解析器、型号支持、符号几何及既有不支持输入的处理均保持原值。
+新结构策略仍默认关闭，实验对称也默认关闭；原SA与A*权重、候选数量及恢复预算没有改变。
+
+- 校准真实供电与内部公共源节点，恢复有唯一外部控制证据的多管共源输入对；内部共漏关系保留为中性布局连接。
+- 扩展明确核心的对应支路、显式父子结构与端口附件；共享偏置不传递合并，未证明功能的连接保持中性名称。
+- 候选2／3消费新关系，候选1保持原初排、SA及随机流；反馈布局采用后重新应用校准分组，最终测量使用同源清单。
+- 原 `quality.score` 保留含义，布局关系、歧义、消费阶段和整网绕行指标单独记录；旧JSON重绘不重新摆件。
+
+已冻结29个可解析案例的定步数初排／SA基线，关闭路径三个候选及auto参照候选状态、能量、随机状态一致。
+这一检查不调用最终A*，不代表完整出图的线长门槛已经通过。
+最终代码714项完整回归通过；测试覆盖共享源输入对实际进入布局、共享尾源保护、反馈后重新分组顺序、
+非法父结构拒绝及旧结果独立重绘。审计记录保存在新对照目录的 `audits/`。
+
+对照入口：[识别证据图册](../output/structure-incremental-comparison/recognition/index.html)、
+[完整flow对照](../output/structure-incremental-comparison/full/index.html)。识别图册明确区分历史图片与新识别记录，
+不能把它当作新布局出图或准确率。完整flow报告按相同v5简化后的最终结果检查发布门槛。
+
+```powershell
+# 新关系与布局；保持原解析和布线策略，使用独立输出目录
+.\.venv\Scripts\python.exe .\run_flow.py .\examples\5.cir --cell dut --structure-layout auto --out-dir .\output\structure-incremental-comparison\manual\5
+
+# 可复用的只读识别证据图册
+.\.venv\Scripts\python.exe .\tools\export_layout_evidence.py
+
+# 完整off／auto对照；原有解析失败例仍明确跳过
+.\.venv\Scripts\python.exe .\tools\compare_structure_layouts.py --out-dir .\output\structure-incremental-comparison\full --stage-label evidence-v1 --jobs 4
+```
+
+## 前轮结构布局实现与结果
+
 本轮已实现局部功能块、主支路行计划、真实引脚／尾源规整、无源附件、展示、候选预留预算和静态端口修复。新结构策略仍默认关闭：已有美观收益，但没有全部满足发布门槛。
 
 ## 已完成的内容

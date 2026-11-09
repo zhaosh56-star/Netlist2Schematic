@@ -453,8 +453,18 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         from netlist_core import parse_netlist
         relations = data.get('layout_relations')
         if relations is None:
-            relations = build_layout_relations(parse_netlist(source, cell=data.get('source_cell')),
-                                               data.get('structs', ()))
+            devices = parse_netlist(source, cell=data.get('source_cell'))
+            evidence = data.get('layout_evidence')
+            if evidence is None:
+                from layout_intent import build_intent
+                evidence, relations = build_intent(source, data.get('source_cell'), devices,
+                    data.get('structs', ()), comps, nets, comp_index,
+                    data.get('requested_structure_phase', 3))
+                evidence['consumption'] = {'policy': 'report_only',
+                    'reason': 'saved_or_recovery_coordinates', 'stages': []}
+                data['layout_evidence'] = evidence
+            else:
+                relations = build_layout_relations(devices, validated_evidence=evidence)
         data['layout_relations'] = relations
         report = data.setdefault('structure_layout', {
             'policy': 'auto', 'version': 'structure-layout-v1',
@@ -496,7 +506,9 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         staging = Path(directory)
         for clean, name in ((False, names[0]), (True, names[1])):
             render_svg(par, placement, comps, nets, comp_index, routed, metrics,
-                       staging / name, clean=clean, structs=data.get('structs', []),
+                       staging / name, clean=clean,
+                       structs=(data.get('layout_evidence', {}).get('structures', [])
+                                if data.get('structure_display') == 'validated' else data.get('structs', [])),
                        validation=validation)
         write_json(staging / names[2], data)
         _check_source(source, expected_hash)

@@ -124,7 +124,16 @@ def _model(devices, comps, nets, index, relations):
     for relation in relations:
         kind, roles = relation.get('kind'), relation.get('roles') or {}
         names = relation.get('members', relation.get('devices', ()))
-        if kind == 'parallel_passives':
+        if kind == 'port_attachment':
+            member, endpoint = roles.get('member'), roles.get('anchor', ())
+            net = roles.get('net')
+            if len(endpoint) == 2:
+                link(member, net, endpoint, 'port_attachment')
+                # Existing series/parallel groups already organize their
+                # members. A newly attached singleton remains a soft cohort.
+                if member in passive and not any(member in item['members'] for item in groups):
+                    group('port_attachment', [member], anchor=list(endpoint), node=net)
+        elif kind == 'parallel_passives':
             names = sorted(name for name in names if name in passive)
             if len(names) < 2 or set(names) <= load_members:
                 continue
@@ -171,7 +180,8 @@ def _model(devices, comps, nets, index, relations):
                     group('feedback_shunt', [name], anchor=list(last), node=nodes[input_pin])
                     link(name, nodes[input_pin], last, 'feedback')
 
-    priority = {'parallel_load': 0, 'parallel': 1, 'feedback': 2, 'series': 3, 'feedback_shunt': 4}
+    priority = {'parallel_load': 0, 'parallel': 1, 'feedback': 2, 'series': 3, 'feedback_shunt': 4,
+                'port_attachment': 5}
     groups.sort(key=lambda row: (priority[row['kind']], row['id']))
     return {'version': VERSION, 'groups': groups,
             'links': sorted(links.values(), key=lambda row: (row['net'], row['endpoints']))}

@@ -44,8 +44,10 @@ def _members(roles, keys):
     return [roles[key] for key in keys if roles.get(key)]
 
 
-def build_layout_relations(devices, structs=()):
+def build_layout_relations(devices, structs=(), *, validated_evidence=None):
     """Return JSON drawing intent; neither input nor functional records mutate."""
+    if validated_evidence is not None:
+        return _validated_relations(devices, validated_evidence)
     if not structs:
         from circuit_structures import analyze_structures
         structs = analyze_structures(devices)
@@ -270,6 +272,50 @@ def build_layout_relations(devices, structs=()):
     for row in records:
         row['owned_members'].sort()
         row['children'] = sorted(set(row['children']))
+    return sorted(records, key=lambda row: row['id'])
+
+
+def _validated_relations(devices, evidence):
+    """Resolve leaf ownership without reintroducing legacy, rejected matches."""
+    if not isinstance(evidence, dict) or not isinstance(evidence.get('relations'), list):
+        raise ValueError('Validated layout evidence must contain relations')
+    records = deepcopy(evidence['relations'])
+    priorities = {**_PRIORITY, 'corresponding_branch_pair': 75}
+    by_id = {}
+    for row in records:
+        members = row.get('members', ())
+        if (not isinstance(row.get('id'), str) or row['id'] in by_id
+                or len(members) != len(set(members)) or not set(members) <= set(devices)):
+            raise ValueError('Invalid or duplicate validated layout relation')
+        by_id[row['id']] = row
+        row['owned_members'] = []
+        row['children'] = []
+        if row.get('macro') and row.get('kind') == 'paired_branches':
+            row.setdefault('layout', {})['orders'] = deepcopy(row.get('layout', {}).get('pairs', []))
+    for row in records:
+        parent = row.get('parent')
+        if parent is None:
+            continue
+        if (parent not in by_id or not by_id[parent].get('macro')
+                or not set(row['members']) <= set(by_id[parent]['members'])):
+            raise ValueError('Invalid explicit layout parent')
+        chain, ancestor = {row['id']}, parent
+        while ancestor is not None:
+            if ancestor in chain:
+                raise ValueError('Cyclic explicit layout parents')
+            chain.add(ancestor)
+            ancestor = by_id.get(ancestor, {}).get('parent')
+        by_id[parent]['children'].append(row['id'])
+    for name in devices:
+        owners = [row for row in records if row.get('rigid') and not row.get('macro')
+                  and name in row['members']]
+        if owners:
+            chosen = min(owners, key=lambda row: (len(row['members']),
+                         -priorities.get(row['kind'], 0), row['id']))
+            chosen['owned_members'].append(name)
+    for row in records:
+        row['owned_members'].sort()
+        row['children'].sort()
     return sorted(records, key=lambda row: row['id'])
 
 

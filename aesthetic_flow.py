@@ -131,6 +131,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             # position in the generator (the default sequence starts at 1).
             # when a prior route has a substantial, clearly excessive detour.
             # Small unavoidable local loops still get the compact third seed.
+            feedback_replaced = False
             if identifier == '3' and best is not None:
                 detail = best[7]
                 severe = any((row.get('detour_factor') or 0) >= 2.5
@@ -145,6 +146,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                         placement, comps, nets, index, metadata = proposal
                         metadata['candidate_id'] = int(identifier)
                         metadata['candidate_seed'] = best[5].get('candidate_seed', seed)
+                        feedback_replaced = True
             # Apply to the actual layout after feedback replacement, before
             # capturing a checkpoint.  Keep candidate 1 as the original seed.
             if symmetry_layout == 'auto' and identifier in ('1', '2', '3'):
@@ -162,10 +164,30 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 from layout_relations import build_layout_relations, measure_layout_relations
                 if shared_relations is None:
                     from netlist_core import parse_netlist
-                    shared_relations = build_layout_relations(
-                        parse_netlist(path, cell=cell), metadata.get('structs', ()))
+                    devices = parse_netlist(path, cell=cell)
+                    evidence = metadata.get('layout_evidence')
+                    if evidence is None:
+                        from layout_intent import build_intent
+                        evidence, _ = build_intent(path, cell, devices, metadata.get('structs', ()),
+                                                   comps, nets, index, structure_phase)
+                    shared_relations = build_layout_relations(devices, validated_evidence=evidence)
                 metadata = deepcopy(metadata)
                 metadata['layout_relations'] = deepcopy(shared_relations)
+                metadata['structure_display'] = 'validated'
+                if 'layout_evidence' not in metadata:
+                    metadata['layout_evidence'] = deepcopy(evidence)
+                    metadata['layout_evidence']['consumption'] = {
+                        'policy': 'report_only' if identifier == '1' else 'candidate_layout',
+                        'candidate_id': int(identifier), 'stages': []}
+                if feedback_replaced:
+                    from layout_relations import prepare_structure_placement
+                    prepare_structure_placement(placement, comps, index, shared_relations)
+                    metadata['layout_evidence']['consumption'].update(
+                        policy='candidate_layout', candidate_id=int(identifier))
+                    metadata['layout_evidence']['consumption']['stages'].append({
+                        'stage': 'feedback_blocks', 'status': 'applied',
+                        'relation_ids': [row['id'] for row in shared_relations
+                                         if row.get('rigid') or row.get('macro')]})
                 if structure_phase >= 3:
                     from structure_selection import prepare_branch_context
                     metadata = prepare_branch_context(path, cell, placement, comps, nets, index, metadata)
@@ -193,6 +215,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                             placement, metadata = regularize_branch_layout(
                                 par, placement, comps, nets, index, metadata,
                                 options=effective_options, deadline=candidate_deadline)
+                        consumption = metadata['layout_evidence'].setdefault('consumption', {
+                            'policy': 'candidate_layout', 'candidate_id': int(identifier), 'stages': []})
+                        consumption['stages'].append({'stage': 'post_alignment', 'status': 'applied',
+                            'relation_ids': [row['id'] for row in shared_relations],
+                            'position_changes': deepcopy(metadata.get('branch_alignment', {}).get('actions', []))})
                 report = metadata.setdefault('structure_layout', {
                     'policy': 'auto', 'version': 'structure-layout-v1', 'phase': structure_phase,
                     'applied': False})

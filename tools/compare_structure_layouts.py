@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from html import escape
@@ -26,11 +27,89 @@ from netlist_core import NetlistError
 FORMAT = 'structure-layout-comparison-v1'
 
 
+def _comparison_evidence(source, cell, devices, structs, comps, nets, metadata, *, phase=3):
+    """Use saved calibrated evidence, or derive the same read-only off view.
+
+    A measurement-only reconstruction never changes the saved placement or
+    promotes newly described relationships to actions that the run performed.
+    """
+    saved = metadata.get('layout_evidence')
+    if saved is not None:
+        if (not isinstance(saved, dict) or not isinstance(saved.get('structures'), list)
+                or not isinstance(saved.get('relations'), list)):
+            raise ValueError('Saved layout_evidence must contain structures and relations lists')
+        return deepcopy(saved)
+    from layout_intent import build_intent
+    index = {component['id']: number for number, component in enumerate(comps)}
+    evidence, _ = build_intent(source, cell, devices, structs, comps, nets, index, phase=phase)
+    return evidence
+
+
+def _recognition_summary(evidence, measurement, metadata, *, source):
+    """Separate detected intent, independent measurements and recorded use."""
+    diagnostics = evidence.get('diagnostics', {})
+    branches = evidence.get('branch_evidence', {})
+    ambiguities = []
+    for group, rows in (('semantic', diagnostics), ('branch', branches)):
+        for field, values in sorted(rows.items()):
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                reason = str(value.get('reason', '')) if isinstance(value, dict) else ''
+                if field == 'supply_conflicts' or any(word in reason for word in ('ambiguous', 'non_unique', 'conflict')):
+                    ambiguities.append({'stage': group, 'field': field, 'details': deepcopy(value)})
+    consumption = evidence.get('consumption')
+    if consumption is None:
+        consumption = {'policy': 'report_only',
+                       'candidate_id': metadata.get('quality', {}).get('selected_candidate',
+                                                                          metadata.get('candidate_id')),
+                       'stages': []}
+    return {'version': evidence.get('version'), 'source': source,
+            'structure_kinds': dict(sorted(Counter(row['kind'] for row in evidence['structures']).items())),
+            'relation_kinds': dict(sorted(Counter(row['kind'] for row in evidence['relations']).items())),
+            'structure_count': len(evidence['structures']), 'relation_count': len(evidence['relations']),
+            'ambiguity_count': len(ambiguities), 'ambiguities': ambiguities,
+            'diagnostic_counts': {key: len(value) for key, value in diagnostics.items() if isinstance(value, list)},
+            'branch_diagnostic_counts': {key: len(value) for key, value in branches.items() if isinstance(value, list)},
+            'measured_relation_count': measurement.get('relation_count', 0),
+            'measured_block_count': measurement.get('measured_blocks', 0),
+            'consumption': deepcopy(consumption),
+            'consumption_note': 'applied means a recorded layout constraint or soft term; '
+                                'it does not prove that a component moved'}
+
+
+def _detour_summary(quality):
+    """Preserve whole-net HPWL comparisons without calling them branch paths."""
+    per_net = deepcopy(quality.get('per_net', {}))
+    factors = [row['detour_factor'] for row in per_net.values()
+               if isinstance(row.get('detour_factor'), (int, float)) and isfinite(row['detour_factor'])]
+    return {'scope': 'whole_net', 'reference': quality.get('detour_reference'),
+            'excess_detour': quality.get('detour', 0),
+            'outside_length': quality.get('outside_length', 0),
+            'maximum_factor': max(factors, default=None), 'per_net': per_net}
+
+
+def _measure_comparison(source, cell, par, pl, comps, nets, index, devices, structs, metadata, phase):
+    from layout_relations import build_layout_relations
+    from structure_selection import prepare_branch_context, measure_structure
+    evidence = _comparison_evidence(source, cell, devices, structs, comps, nets, metadata, phase=phase)
+    context = deepcopy(metadata)
+    context['layout_evidence'] = evidence
+    context['layout_relations'] = build_layout_relations(devices, structs, validated_evidence=evidence)
+    if phase >= 3:
+        context = prepare_branch_context(source, cell, pl, comps, nets, index, context)
+    measurement = measure_structure(par, pl, comps, nets, index, context, phase)
+    summary = _recognition_summary(context['layout_evidence'], measurement, metadata,
+                                   source='saved' if metadata.get('layout_evidence') is not None else 'source_rebuild')
+    summary['baseline_structure_kinds'] = dict(sorted(Counter(row['kind'] for row in structs).items()))
+    return context, measurement, summary
+
+
 def runtime_snapshot(stage):
     """Freeze runtime dependencies; later-stage, unimported modules are excluded."""
     excluded=set()
-    if stage==1:excluded.update(('branch_levels.py','branch_alignment.py','attachment_placement.py','presentation.py','placement_preflight.py','candidate_budget.py'))
-    elif stage==2:excluded.update(('branch_alignment.py','attachment_placement.py','presentation.py','placement_preflight.py','candidate_budget.py'))
+    if stage==1:excluded.update(('branch_levels.py','branch_alignment.py','attachment_placement.py','placement_preflight.py','candidate_budget.py'))
+    elif stage==2:excluded.update(('branch_alignment.py','attachment_placement.py','placement_preflight.py','candidate_budget.py'))
     return {p:h for p,h in common._snapshot().items()
             if 'tests' not in Path(p).parts and Path(p).name not in excluded}
 
@@ -59,7 +138,6 @@ def verify_row_plan(data, pl, index, active):
 def verify(path, signature):
     from circuit_structures import analyze_structures
     from layout_quality import evaluate_quality
-    from layout_relations import build_layout_relations, measure_layout_relations
     from netlist_core import parse_netlist
     from routing_rules import build_scene
     from sa_routing import validate_final_routes
@@ -90,13 +168,10 @@ def verify(path, signature):
                 raise ValueError('Independent redraw differs from saved clean SVG')
         devices = parse_netlist(source, cell=signature['cell'])
         structs = analyze_structures(devices)
-        relations = build_layout_relations(devices, structs)
-        from structure_selection import prepare_branch_context, measure_structure
-        context=deepcopy(data)
-        context['layout_relations']=relations
         phase=signature['parameters']['structure_phase']
-        if phase>=3:context=prepare_branch_context(source,signature['cell'],pl,comps,nets,index,context)
-        measurement = measure_structure(par,pl,comps,nets,index,context,phase)
+        context, measurement, recognition = _measure_comparison(
+            source, signature['cell'], par, pl, comps, nets, index, devices, structs, data, phase)
+        quality = evaluate_quality(par, pl, comps, nets, index, routed, metrics, structs)
         active = {name: pl.cell_of[index[name]][0] for name, d in devices.items()
                   if d['cls'] in ('MOS', 'BJT')}
         if any(pl.orient[index[name]] not in (0, 1) for name in active):
@@ -107,7 +182,9 @@ def verify(path, signature):
         verify_row_plan(data,pl,index,active)
         return {'valid': True, 'placement_json': str(path), 'clean_svg': str(clean),
             'color_svg': str(color), 'metrics': metrics,
-            'quality': evaluate_quality(par, pl, comps, nets, index, routed, metrics, structs),
+            'quality': quality, 'route_detours': _detour_summary(quality),
+            'recognition_summary': recognition,
+            'layout_evidence': context['layout_evidence'],
             'measurement': measurement, 'structure_layout': data.get('structure_layout'),
             'branch_row_plan': plan, 'component_count': len(comps),
             'width': float(svg.get('width')), 'height': float(svg.get('height')),
@@ -223,6 +300,7 @@ def publish(output,cases,records,parameters,code,frozen):
         truth=case.get('ground_truth')
         figures.append(common._figure(output,'Ground truth（视觉参考）',truth) if truth else '<figure>无GT</figure>')
         table=[]
+        evidence_reports={}
         for policy in ('off','auto'):
             r=result.get(policy,{})
             if r.get('status')=='valid':
@@ -231,12 +309,19 @@ def publish(output,cases,records,parameters,code,frozen):
                     '<p><a href="'+escape(common._relative(output,v['placement_json']))+'">JSON</a></p>'))
                 table.append([policy,m['wirelength'],m['crossings'],m['bends'],s.get('interleaving'),
                     s.get('role_order'),s.get('branch_error'),s.get('normalized_span'),
+                    v.get('route_detours',{}).get('excess_detour'),
+                    v.get('route_detours',{}).get('maximum_factor'),
                     f"{v['width']}×{v['height']}",v['routing_stage'],r['elapsed_seconds']])
+                evidence_reports[policy]={'recognition':v.get('recognition_summary'),
+                    'branch_geometry':s.get('branch_geometry'),
+                    'whole_net_detours':v.get('route_detours')}
             else:
                 figures.append('<figure>'+escape(policy+': '+r.get('status','pending')+' '+r.get('error',''))+'</figure>')
         html.append('<section><h2>'+escape(case['case']+' '+case.get('title',''))+'</h2><div class="figures">'+''.join(figures)+'</div>'+common._table(
-            ['模式','线长','交叉','折角','穿插','顺序冲突','引脚/尾源误差','跨度','宽×高','阶段','秒'],table)+
-            '<pre>'+escape(json.dumps(row.get('gates',{}),ensure_ascii=False,indent=2))+'</pre></section>')
+            ['模式','线长','交叉','折角','穿插','顺序冲突','引脚/尾源误差','跨度','超端点跨度线长','最大整网绕行比','宽×高','阶段','秒'],table)+
+            '<pre>'+escape(json.dumps(row.get('gates',{}),ensure_ascii=False,indent=2))+'</pre>'+
+            '<details><summary>识别证据、布局使用记录和整网绕行</summary><pre>'+
+            escape(json.dumps(evidence_reports,ensure_ascii=False,indent=2))+'</pre></details></section>')
     complete=len(records)==len(cases)*2
     valid=sum(r['status']=='valid' for r in records.values())
     paired_status = all(len(row['results']) == 2 and (
@@ -263,7 +348,8 @@ def publish(output,cases,records,parameters,code,frozen):
     write_json(output/'comparison.json',report)
     page='''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>结构布局逐阶段对照</title>
 <style>body{font:14px/1.6 system-ui;background:#f5f6f8;margin:24px}section{background:white;padding:20px;margin:24px 0}.figures{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}figure{margin:0}img{width:100%;height:460px;object-fit:contain}table{border-collapse:collapse}td,th{padding:6px 10px;border-bottom:1px solid #ddd}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>
-<h1>结构布局：GT / off / auto</h1><p>GT仅作视觉参照。两种策略均独立完整运行，成品复验连接、几何、固定出线、两种SVG和独立重绘。以下门槛针对最终简化后的图，不是SA估计。</p>'''
+<h1>结构布局：GT / off / auto</h1><p>GT仅作视觉参照。两种策略均独立完整运行，成品复验连接、几何、固定出线、两种SVG和独立重绘。以下门槛针对最终简化后的图，不是SA估计。</p>
+<p>off与auto使用同一套源网表证据独立度量；off的重新识别仅用于报告，不改变摆放。识别到关系不代表运行采用了它；applied表示约束或软评分已接入，也不等于器件实际移动。绕行比按整网总线长与端点半周长比较，不是某条支路的最短路径。</p>'''
     (output/'index.html').write_text(page+'<pre>'+escape(json.dumps(report['release_gates'],ensure_ascii=False,indent=2))+'</pre>'+''.join(html)+'</html>',encoding='utf8')
     return report
 

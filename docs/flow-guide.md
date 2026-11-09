@@ -6,7 +6,7 @@
 无需启动网页编辑器，也无需安装 Node.js、pnpm 或仿真器。
 
 日常命令见 [README](../README.md)，全部文件的职责和保留范围见[项目目录说明](project-layout.md)。
-当前651项完整回归通过；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)。下文各历史版本的测试数量与实测数字保留当时口径。
+当前714项完整回归通过；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)。下文各历史版本的测试数量与实测数字保留当时口径。
 希望先按执行顺序理解算法，可读[当前flow逐步详解](flow-walkthrough.md)，其中分别解释解析、分层、两类SA估价、最终A*、恢复链、v4简化及JSON记录。
 下面的 PowerShell 命令均从项目根目录执行；日常输出集中在 `output/<网表标签>/`，不依赖历史出图。
 
@@ -21,6 +21,7 @@
 | 网表解析 | `parse-netlist.py`、`netlist_core.py` | 统一读取器件及连接关系 |
 | 分层 | `device_leveling.py` | 建立导通图，计算网络与器件层级 |
 | 结构识别 | `circuit_structures.py`、`vf2_match.py` | 新布局识别有角色和父子关系的拓扑结构；VF2 保留给旧布局参考 |
+| 可选证据校准 | `layout_evidence.py`、`layout_intent.py` | 仅结构布局auto构造校准的供电／输入对、对应支路和端口附件；独立对照测量使用同一清单 |
 | 结构化优化与比较 | `structured_placement.py`、`aesthetic_flow.py`、`layout_quality.py` | 生成结构种子、低成本 SA、预算管理和真实布线候选评分 |
 | 无源灵活布局 | `passive_placement.py` | R/C/L/D跨行试摆、当前行同步及串联/并联/反馈软评分 |
 | 可选器件对称规整 | `symmetry_layout.py` | 仅显式 `--symmetry-layout auto` 时，候选2/3在A*前规整器件位置与朝向；局部轴、组合核心及独立对称指标 |

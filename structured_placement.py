@@ -840,14 +840,20 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                   for net in (device.get('d'), device.get('s'), device.get('c'), device.get('e'))
                   if net is not None}
     att = legacy.attach_info(devices, levels['net_levels'], conduction)
+    evidence = evidence_relations = None
+    if structure_layout == 'auto':
+        from layout_intent import build_intent
+        evidence, evidence_relations = build_intent(
+            path, cell, devices, structs, comps, nets, index, structure_phase)
     for variant in range(3):
         if deadline is not None and time.perf_counter() >= deadline:
             return
         candidate_seed = seed + (variant + 1) * 104729
         layout_relations = row_plan = None
+        candidate_structs = structs
         if structure_layout == 'auto' and variant != 0:
-            from layout_relations import build_layout_relations
-            layout_relations = build_layout_relations(devices, structs)
+            layout_relations = copy.deepcopy(evidence_relations)
+            candidate_structs = evidence['structures']
             if structure_phase >= 2:
                 from branch_levels import plan_branch_rows
                 original_rows, _ = legacy._allocate_rows(devices, comps, index,
@@ -855,13 +861,31 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                 _, row_plan = plan_branch_rows(devices, levels, original_rows,
                                                layout_relations, comps, index)
         placement, alignment, pairs = _initial_placement(
-            devices, comps, nets, index, levels, att, structs, candidate_seed, variant,
+            devices, comps, nets, index, levels, att, candidate_structs, candidate_seed, variant,
             passive_layout=passive_layout,
             row_override=[row_plan['rows'][c['id']] for c in comps] if row_plan else None,
             bridge_alignment=row_plan.get('bridge_alignment', ()) if row_plan else ())
         if layout_relations is not None:
             from layout_relations import prepare_structure_placement
             prepare_structure_placement(placement, comps, index, layout_relations)
+            # Existing weights/actions consume additional validated hints; the
+            # baseline initializer and its random stream remain untouched.
+            known = {frozenset((a, b)) for a, b, _ in alignment}
+            known_pairs = {frozenset((a, b)) for a, b, _ in pairs}
+            for relation in layout_relations:
+                for branch in relation.get('layout', {}).get('branches', ()):
+                    for a, b in zip(branch, branch[1:]):
+                        if a in index and b in index:
+                            key = frozenset((index[a], index[b]))
+                            if key not in known and placement.row_of[index[a]] != placement.row_of[index[b]]:
+                                alignment.append((index[a], index[b], 3.0))
+                                known.add(key)
+                for pair in relation.get('layout', {}).get('pairs', ()):
+                    if len(pair) == 2 and all(name in index for name in pair):
+                        a, b = (index[name] for name in pair)
+                        if frozenset((a, b)) not in known_pairs:
+                            pairs.append((a, b, relation['kind']))
+                            known_pairs.add(frozenset((a, b)))
         if row_plan is not None:
             placement.branch_connections=copy.deepcopy(row_plan.get('bridge_alignment',[]))
         attachment_report = None
@@ -873,7 +897,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         local_deadline = min(deadline, time.perf_counter() + 12) if deadline else None
         energy, metrics, annealing = _anneal(placement, nets, index, alignment, pairs,
                                              iterations // 3, local_deadline)
-        role_adjustments = _orient_latch_clock_access(placement, devices, structs, index)
+        role_adjustments = _orient_latch_clock_access(placement, devices, candidate_structs, index)
         _enforce_geometry_floor(placement)
         energy, metrics = _estimate(placement, nets, index, alignment, pairs)
         metadata = {'source_note': levels['source_note'], 'levels': levels['device_levels'],
@@ -895,6 +919,27 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                                             'phase': structure_phase, 'metrics': measure_layout_relations(
                                                 placement, comps, index, layout_relations),
                                             'metrics_stage': 'after_sa_and_geometry_floor'}
+        if evidence is not None and variant:
+            metadata['layout_evidence'] = copy.deepcopy(evidence)
+            metadata['layout_evidence']['consumption'] = {
+                'policy': 'candidate_layout' if variant else 'report_only',
+                'candidate_id': variant + 1,
+                'stages': ([{'stage': 'initial_blocks', 'status': 'applied',
+                             'relation_ids': [row['id'] for row in layout_relations
+                                              if row.get('rigid') or row.get('macro')]}]
+                           if variant else [])}
+            if variant and row_plan is not None:
+                metadata['layout_evidence']['consumption']['stages'].append({
+                    'stage': 'row_plan', 'status': 'applied',
+                    'relation_ids': sorted({row['relation'] for row in row_plan.get('same_row', ())
+                                            if row.get('relation')})})
+            if variant and attachment_report is not None:
+                metadata['layout_evidence']['consumption']['stages'].append({
+                    'stage': 'attachments', 'status': 'applied',
+                    'relation_ids': [row['id'] for row in layout_relations
+                                     if row['kind'] in ('port_attachment', 'series_chain',
+                                                        'parallel_passives', 'feedback_network')],
+                    'position_changes': copy.deepcopy(attachment_report.get('actions', []))})
         if row_plan is not None:
             metadata['branch_row_plan'] = copy.deepcopy(row_plan)
         if attachment_report is not None:

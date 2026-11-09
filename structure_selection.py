@@ -24,6 +24,13 @@ def prepare_branch_context(source, cell, pl, comps, nets, index, metadata):
     from netlist_core import parse_netlist
     metadata=deepcopy(metadata)
     devices=parse_netlist(source,cell=cell)
+    if 'layout_evidence' not in metadata:
+        from layout_intent import build_intent
+        from circuit_structures import analyze_structures
+        phase = metadata.get('requested_structure_phase', metadata.get('structure_layout', {}).get('phase', 3))
+        evidence, relations = build_intent(source, cell, devices,
+            metadata.get('structs') or analyze_structures(devices), comps, nets, index, phase)
+        metadata['layout_evidence'], metadata['layout_relations'] = evidence, relations
     ports=prepare_presentation(source,cell,comps,nets)
     metadata['external_control_ports']=sorted(p['net'] for p in ports['named_ports']
         if p['connected'] and p['role']=='control')
