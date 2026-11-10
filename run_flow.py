@@ -247,8 +247,8 @@ def _validate_rescue_seconds(seconds):
 def _validate_simplification(policy, seconds):
     if policy not in ('safe', 'off'):
         raise ValueError('simplify_routes must be safe or off')
-    if type(seconds) not in (int, float) or not isfinite(seconds) or seconds < 0:
-        raise ValueError('simplify_seconds must be finite and >= 0')
+    from simplify_budget import validate_simplify_seconds
+    validate_simplify_seconds(seconds)
 
 
 def _routes_sha256(routed):
@@ -276,11 +276,15 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
     """Postprocess one selected route; candidate selection is already finished."""
     routed, metrics, validation = routed_result
     data = deepcopy(data)
+    automatic = seconds == 'auto'
     reason = ('bus_fallback' if is_bus_layout({**data, 'validation': validation}) else
               'disabled' if policy == 'off' else 'zero_budget' if seconds == 0 else None)
     if reason is not None:
         data['route_simplification'] = {
-            'mode': policy, 'status': 'skipped', 'budget_seconds': seconds,
+            'mode': policy, 'status': 'skipped', 'budget_seconds': 0 if automatic else seconds,
+            'budget_selection': {'mode': 'auto' if automatic else 'fixed',
+                                 'requested_seconds': seconds, 'status': 'skipped',
+                                 'selected_seconds': 0 if automatic else seconds},
             'before_metrics': deepcopy(metrics), 'after_metrics': deepcopy(metrics),
             'changed_nets': [], 'changed_net_count': 0, 'candidate_counts': {},
             'elapsed_seconds': 0.0, 'stop_reason': reason}
@@ -294,17 +298,36 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
     # this replay shortcut; the caller has already revalidated saved geometry.
     previous = data.get('route_simplification')
     context_sha = _simplification_context_sha256(data, par)
+    from simplify_budget import AUTO_CONFIG, ESTIMATOR_VERSION, estimate_simplify_budget
+    previous_selection = previous.get('budget_selection', {}) if isinstance(previous, dict) else {}
+    if not isinstance(previous_selection, dict):
+        previous_selection = {}
+    if automatic:
+        selection_matches = (previous_selection.get('mode') == 'auto'
+            and previous_selection.get('estimator_version') == ESTIMATOR_VERSION
+            and previous_selection.get('config') == AUTO_CONFIG
+            and previous_selection.get('selected_seconds') in AUTO_CONFIG['levels']
+            and previous.get('budget_seconds') == previous_selection.get('selected_seconds'))
+    else:
+        selection_matches = (previous_selection.get('mode', 'fixed') == 'fixed'
+            and isinstance(previous, dict) and previous.get('budget_seconds') == seconds)
     if (allow_verified_replay and isinstance(previous, dict)
             and previous.get('version') == VERSION
-            and previous.get('budget_seconds') == seconds
+            and selection_matches
             and previous.get('routing_parameters') == routing_parameters
             and previous.get('context_sha256') == context_sha
             and previous.get('output_routes_sha256') == _routes_sha256(routed)):
         data['route_simplification'] = deepcopy(previous)
         data['route_simplification']['verified_saved_replay'] = True
         return data, routed_result
+    selection = (estimate_simplify_budget(placement, comps, nets, comp_index, routed)
+                 if automatic else {'mode': 'fixed', 'selected_seconds': seconds})
+    selection = deepcopy(selection)
+    selection.update(requested_seconds=seconds, input_routes_sha256=_routes_sha256(routed))
+    allocated_seconds = selection['selected_seconds']
     simplified, final_metrics, checked, report = simplify(
-        par, nets, placement, comp_index, routed_result, options=effective_options, seconds=seconds)
+        par, nets, placement, comp_index, routed_result,
+        options=effective_options, seconds=allocated_seconds)
     final_validation = deepcopy(validation)
     final_validation.update(checked)
     # Search diagnostics describe the original selected router invocation, not
@@ -319,6 +342,7 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
                                      simplified, final_metrics, data.get('structs', []))
     report = deepcopy(report)
     report.update(mode=policy, routing_parameters=routing_parameters,
+                  budget_selection=selection,
                   context_sha256=context_sha, output_routes_sha256=_routes_sha256(simplified),
                   quality_before=deepcopy(data.get('quality')), quality_after=deepcopy(final_quality))
     quality = deepcopy(data.get('quality')) if isinstance(data.get('quality'), dict) else {}
@@ -671,7 +695,9 @@ def main(argv=None, default_mode='layered'):
                         help='Failure-only local routing; defaults to fallback policy, off for saved rerouting')
     parser.add_argument('--rescue-seconds', type=float, default=60)
     parser.add_argument('--simplify-routes', choices=('safe', 'off'), default='safe')
-    parser.add_argument('--simplify-seconds', type=float, default=5)
+    from simplify_budget import parse_simplify_seconds
+    parser.add_argument('--simplify-seconds', type=parse_simplify_seconds, default=5,
+                        help='Fixed non-negative seconds, or auto (5-30s); default: 5')
     parser.add_argument('--spacing-scale', type=float, default=1.5)
     parser.add_argument('--spacing-seconds', type=float, default=60)
     parser.add_argument('--fallback-seconds', type=float, default=60)

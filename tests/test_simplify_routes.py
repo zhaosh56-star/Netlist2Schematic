@@ -4,6 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 from types import SimpleNamespace
+from time import perf_counter
 import unittest
 from unittest.mock import patch
 
@@ -167,15 +168,17 @@ class ShortcutSafetyTests(unittest.TestCase):
         fixture = case()
 
         def many_rejections(scene, routed, deadline):
-            for _ in range(20):
-                yield {'net': 'a', 'segments': fixture[4][0][0][1]}
+            if shortcuts._wire_metrics(dict(routed)['a'])[0] > 100:
+                for _ in range(20):
+                    yield {'net': 'a', 'segments': fixture[4][0][0][1]}
 
         def improvement(scene, routed, deadline):
-            yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
+            if shortcuts._wire_metrics(dict(routed)['a'])[0] > 100:
+                yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
 
         with patch('simplify_routes._shortcut_candidates', side_effect=many_rejections), \
                 patch('simplify_routes.reattachment_candidates', side_effect=improvement), \
-                patch('simplify_routes.MAX_CANDIDATES', 2):
+                patch('simplify_routes.MAX_CANDIDATES', 4):
             routes, metrics, _, report = run_case(fixture)
         self.assertEqual(100, metrics['wirelength'])
         self.assertEqual(2, report['candidate_counts']['considered'])
@@ -281,15 +284,18 @@ class ShortcutSafetyTests(unittest.TestCase):
     def test_timeout_during_trial_validation_returns_the_prior_verified_incumbent(self):
         fixture = case()
         calls = 0
+        clock = {'now': perf_counter()}
 
         def verify(*args, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 2:
+                clock['now'] += 6
                 raise RoutingFailure('expired', {'reason': 'quality_time_budget'})
             return _verify(*args, **kwargs)
 
-        with patch('simplify_routes._verify', side_effect=verify):
+        with patch('simplify_routes._verify', side_effect=verify), \
+                patch('simplify_routes.perf_counter', side_effect=lambda: clock['now']):
             routed, metrics, validation, report = run_case(fixture)
         self.assertEqual(fixture[4][0], routed)
         self.assertEqual(fixture[4][1], metrics)
@@ -301,15 +307,18 @@ class ShortcutSafetyTests(unittest.TestCase):
         fixture = case()
         extract = shortcuts._chains
         calls = 0
+        clock = {'now': perf_counter()}
 
         def chains(*args, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 2:
+                clock['now'] += 6
                 raise RoutingFailure('expired', {'reason': 'quality_time_budget'})
             return extract(*args, **kwargs)
 
-        with patch('simplify_routes._chains', side_effect=chains):
+        with patch('simplify_routes._chains', side_effect=chains), \
+                patch('simplify_routes.perf_counter', side_effect=lambda: clock['now']):
             routed, metrics, validation, report = run_case(fixture)
         self.assertEqual(100, metrics['wirelength'])
         self.assertEqual(0, metrics['bends'])

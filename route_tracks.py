@@ -6,9 +6,12 @@ here. The caller must independently validate the resulting complete net.
 """
 from __future__ import annotations
 
+from collections import deque
+
 from route_patterns import (_body_clear, _follows_fixed_exits, _foreign_axes,
                             _outside_body_axes)
-from routing_rules import EPS, canonical_topology, check_deadline, intersection
+from routing_rules import (EPS, PreparedOccupancy, canonical_topology, check_deadline,
+                           intersection)
 
 MAX_TRACK_CANDIDATES_PER_CHAIN = 24
 
@@ -83,29 +86,58 @@ def _priority(chain):
             chain['path'], str(chain['net']))
 
 
+def _foreign_clear(scene, net, connector, occupied, deadline=None, cache=None):
+    """Reject definite edge conflicts; a pass never replaces full validation.
+
+    Ordinary corners and artificial escape/cut points must not receive the
+    stronger A* vertex keepout. In particular a legal parallel corner can be
+    ten units from another net even when cross_clearance is twelve units.
+    Cache entries belong only to this immutable occupancy and scene.
+    """
+    cache = cache if cache is not None else {}
+    prepared = scene.prepare_occupied(occupied)
+    for a, b in connector:
+        check_deadline(deadline, 'track_compaction_foreign_screen')
+        key = net, _edge(a, b)
+        if key not in cache:
+            cache[key] = scene.edge_check(net, a, b, prepared)[0]
+        if not cache[key]:
+            return False
+    return True
+
+
 def track_compaction_candidates(scene, routed, chains, deadline=None):
     """Yield full-net proposals while retaining an existing multi-turn shape.
 
     ``chains`` must come from the caller's protected-anchor extraction: no
     interior point may be a real pin, escape, fixed segment or branch. First
     and last segments cannot shift because their chain endpoints stay fixed.
-    Only shortening, non-backtracking shifts are proposed. Cheap body/marker
-    and exit checks do not replace the caller's independent complete checks.
+    Each chain receives one bounded candidate slot per turn. Definite foreign
+    edge conflicts are filtered before yielding; all surviving full-net trials
+    still need the caller's independent connectivity, cycle and metric checks.
     """
     check_deadline(deadline, 'track_compaction_generation')
     by_net = dict(routed)
     static_axes = None
     net_cache = {}
-    for chain in sorted(chains, key=_priority):
+    prepared = None
+    edge_cache = {}
+
+    def candidates(chain):
+        nonlocal static_axes, prepared
         check_deadline(deadline, 'track_compaction_chain')
         net = chain['net']
         if net not in scene.pins or net in scene.power_nets:
-            continue
+            return
         path = tuple(tuple(point) for point in chain['path'])
         if len(path) < 4 or path[0] == path[-1]:
-            continue
+            return
         if static_axes is None:
             static_axes = _outside_body_axes(scene, deadline)
+        if prepared is None:
+            prepared = PreparedOccupancy({owner: canonical_topology(
+                segments, scene.all_pins.get(owner, ()), deadline=deadline)
+                for owner, segments in by_net.items()})
         if net not in net_cache:
             foreign_axes = _foreign_axes(scene, by_net, net, deadline)
             own_points = {point for segment in by_net.get(net, ()) for point in segment}
@@ -113,10 +145,10 @@ def track_compaction_candidates(scene, routed, chains, deadline=None):
                                | {point[axis] for point in own_points}
                                for axis in (0, 1))
             foreign = []
-            for owner in sorted(by_net):
+            for owner in sorted(prepared.topologies):
                 check_deadline(deadline, 'track_compaction_foreign_geometry')
                 if owner != net:
-                    runs = canonical_topology(by_net[owner], deadline=deadline)['runs']
+                    runs = prepared.topologies[owner]['runs']
                     foreign.append((owner, runs))
             net_cache[net] = boundaries, foreign
         boundaries, foreign = net_cache[net]
@@ -164,4 +196,22 @@ def track_compaction_candidates(scene, routed, chains, deadline=None):
                    'track_axis': 'x' if axis == 0 else 'y',
                    'old_track_coordinate': old_track, 'track_coordinate': track,
                    'moved_segment_index': segment,
-                   'old_chain_length': old_length, 'new_chain_length': length}
+                   'old_chain_length': old_length, 'new_chain_length': length,
+                   '_connector': connector}
+
+    # Prepare chains lazily: ranking every chain up front can spend the whole
+    # final-stage budget before even one candidate reaches complete validation.
+    pending = deque(iter(candidates(chain)) for chain in sorted(chains, key=_priority))
+    while pending:
+        check_deadline(deadline, 'track_compaction_chain_turn')
+        iterator = pending.popleft()
+        try:
+            proposal = next(iterator)
+        except StopIteration:
+            continue
+        pending.append(iterator)
+        connector = proposal.pop('_connector')
+        # One raw slot per chain, including rejected ones, prevents a long
+        # list of near-miss tracks from withholding another chain's safe move.
+        if _foreign_clear(scene, proposal['net'], connector, prepared, deadline, edge_cache):
+            yield proposal

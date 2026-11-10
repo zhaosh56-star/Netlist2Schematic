@@ -156,7 +156,8 @@ class SimplifyFlowTests(unittest.TestCase):
         first = self.simplify()
         saved = self.directory / 'previous-placement.json'
         for previous in ('orthogonal-shortcuts-v1', 'orthogonal-shortcuts-v2', 'orthogonal-shortcuts-v3',
-                         'orthogonal-shortcuts-v4'):
+                         'orthogonal-shortcuts-v4', 'orthogonal-shortcuts-v5',
+                         'orthogonal-shortcuts-v6', 'orthogonal-shortcuts-v7'):
             with self.subTest(version=previous):
                 first['route_simplification']['version'] = previous
                 saved.write_text(json.dumps(first), encoding='utf-8')
@@ -175,7 +176,7 @@ class SimplifyFlowTests(unittest.TestCase):
         self.assertEqual(['chain_shortcut', 'leaf_reattachment', 'three_segment_shortcut',
                           'track_compaction'],
                          report['operation_order'])
-        self.assertEqual('preserve_v4_then_track_compaction_refinement', report['scheduling'])
+        self.assertEqual('reserved_stages_v6', report['scheduling'])
         self.assertEqual(['chain_warmup', 'coordinated_refinement', 'three_segment_refinement',
                           'track_compaction_refinement'],
                          report['phase_order'])

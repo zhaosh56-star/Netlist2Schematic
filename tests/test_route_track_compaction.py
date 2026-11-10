@@ -4,6 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+from time import perf_counter
 import sys
 import unittest
 from unittest.mock import patch
@@ -235,8 +236,14 @@ class TrackCompactionTests(unittest.TestCase):
 
     def test_generation_deadline_retains_the_last_verified_incumbent(self):
         fixture = track_case()
-        expired = RoutingFailure('track deadline', {'reason': 'quality_time_budget'})
-        with patch('route_tracks.check_deadline', side_effect=expired):
+        clock = {'now': perf_counter()}
+
+        def expired(*args, **kwargs):
+            clock['now'] += 6
+            raise RoutingFailure('track deadline', {'reason': 'quality_time_budget'})
+
+        with patch('route_tracks.check_deadline', side_effect=expired), \
+                patch('simplify_routes.perf_counter', side_effect=lambda: clock['now']):
             result = simplify(fixture)
         self.assert_safe(fixture, result)
         self.assertEqual(fixture[4][0], result[0])

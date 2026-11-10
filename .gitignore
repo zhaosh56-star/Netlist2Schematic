@@ -5,6 +5,11 @@
 /.vscode/
 /archive/
 /output/
+# Local evaluation inputs and the separate RSI checkout are not release sources.
+/test_data/
+/RSI/
+/agent-rsi-demo-portable.zip
+/agent-rsi-demo/PACKAGE_MANIFEST.json
 __pycache__/
 *.py[cod]
 .pytest_cache/
