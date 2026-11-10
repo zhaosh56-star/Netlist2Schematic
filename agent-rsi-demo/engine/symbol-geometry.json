@@ -1,0 +1,3248 @@
+{
+  "_comment": "Symbol-local placement geometry for netlist-to-schematic work. Default variant applied (as the editor places it). Origin at body center, +x east, +y south, units = canvas units (pin grid = 2, artwork grid = 10). Transform: world = origin + mirror(rotate(local)); mirror=horizontal flips x (left-right), vertical flips y (top-bottom), per packages/model/src/geometry.ts + orientation-reflect.ts. vdd-port and ground are fixed as authored (vdd pin faces down, ground pin faces up); mos/bjt allow mirror; others rotate-only.",
+  "symbols": {
+    "resistor": {
+      "id": "resistor",
+      "name": "Resistor",
+      "viewBox": {
+        "x": -10,
+        "y": -24,
+        "width": 20,
+        "height": 48
+      },
+      "pins": [
+        {
+          "name": "1",
+          "at": {
+            "x": 0,
+            "y": -20
+          },
+          "direction": "north",
+          "leadLength": 10
+        },
+        {
+          "name": "2",
+          "at": {
+            "x": 0,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate-only",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -10,
+            "y": -24,
+            "width": 20,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -10,
+            "width": 48,
+            "height": 20
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -10,
+            "y": -24,
+            "width": 20,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -10,
+            "width": 48,
+            "height": 20
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        }
+      ]
+    },
+    "capacitor": {
+      "id": "capacitor",
+      "name": "Capacitor",
+      "viewBox": {
+        "x": -12,
+        "y": -24,
+        "width": 24,
+        "height": 48
+      },
+      "pins": [
+        {
+          "name": "1",
+          "at": {
+            "x": 0,
+            "y": -20
+          },
+          "direction": "north",
+          "leadLength": 10
+        },
+        {
+          "name": "2",
+          "at": {
+            "x": 0,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate-only",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -12,
+            "y": -24,
+            "width": 24,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -12,
+            "width": 48,
+            "height": 24
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -12,
+            "y": -24,
+            "width": 24,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -12,
+            "width": 48,
+            "height": 24
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        }
+      ]
+    },
+    "inductor": {
+      "id": "inductor",
+      "name": "Large Inductor",
+      "viewBox": {
+        "x": -15,
+        "y": -32,
+        "width": 30,
+        "height": 64
+      },
+      "pins": [
+        {
+          "name": "1",
+          "at": {
+            "x": 0,
+            "y": -30
+          },
+          "direction": "north",
+          "leadLength": 10
+        },
+        {
+          "name": "2",
+          "at": {
+            "x": 0,
+            "y": 30
+          },
+          "direction": "south",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate-only",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 0,
+                "y": -30
+              },
+              "direction": "north"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 0,
+                "y": 30
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -15,
+            "y": -32,
+            "width": 30,
+            "height": 64
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -30,
+            "maxY": 30
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 30,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": -30,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -32,
+            "y": -15,
+            "width": 64,
+            "height": 30
+          },
+          "pinSpread": {
+            "minX": -30,
+            "maxX": 30,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 0,
+                "y": 30
+              },
+              "direction": "south"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 0,
+                "y": -30
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -15,
+            "y": -32,
+            "width": 30,
+            "height": 64
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -30,
+            "maxY": 30
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": -30,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 30,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -32,
+            "y": -15,
+            "width": 64,
+            "height": 30
+          },
+          "pinSpread": {
+            "minX": -30,
+            "maxX": 30,
+            "minY": 0,
+            "maxY": 0
+          }
+        }
+      ]
+    },
+    "diode": {
+      "id": "diode",
+      "name": "Diode",
+      "viewBox": {
+        "x": -24,
+        "y": -10,
+        "width": 48,
+        "height": 20
+      },
+      "pins": [
+        {
+          "name": "A",
+          "at": {
+            "x": -20,
+            "y": 0
+          },
+          "direction": "west",
+          "leadLength": 10
+        },
+        {
+          "name": "K",
+          "at": {
+            "x": 20,
+            "y": 0
+          },
+          "direction": "east",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate-only",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "A",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "K",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -10,
+            "width": 48,
+            "height": 20
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "A",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "K",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -10,
+            "y": -24,
+            "width": 20,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "A",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "K",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -10,
+            "width": 48,
+            "height": 20
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "A",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "K",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -10,
+            "y": -24,
+            "width": 20,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        }
+      ]
+    },
+    "nmos": {
+      "id": "nmos",
+      "name": "NMOS",
+      "viewBox": {
+        "x": -24,
+        "y": -24,
+        "width": 48,
+        "height": 48
+      },
+      "pins": [
+        {
+          "name": "D",
+          "at": {
+            "x": 10,
+            "y": -20
+          },
+          "direction": "north",
+          "leadLength": 10
+        },
+        {
+          "name": "G",
+          "at": {
+            "x": -20,
+            "y": 0
+          },
+          "direction": "west",
+          "leadLength": 10
+        },
+        {
+          "name": "S",
+          "at": {
+            "x": 10,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [
+        {
+          "name": "B",
+          "at": {
+            "x": 20,
+            "y": 0
+          },
+          "direction": "east",
+          "leadLength": 10
+        }
+      ],
+      "defaultVariantId": "textbook-3terminal",
+      "variantIds": [
+        "textbook-3terminal"
+      ],
+      "orientationPolicy": "rotate+mirror",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": 10,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": 10,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 10,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 0,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": -10,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": -10,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -10,
+            "maxX": 20,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": 20,
+                "y": 10
+              },
+              "direction": "east"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": -20,
+                "y": 10
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -20,
+            "maxY": 10
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": -20,
+                "y": 10
+              },
+              "direction": "west"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": 20,
+                "y": 10
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -20,
+            "maxY": 10
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": -10,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": -10,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -10,
+            "maxX": 20,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": 10,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": 10,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 10,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": -20,
+                "y": -10
+              },
+              "direction": "west"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": 20,
+                "y": -10
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -10,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": 20,
+                "y": -10
+              },
+              "direction": "east"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": -20,
+                "y": -10
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -10,
+            "maxY": 20
+          }
+        }
+      ]
+    },
+    "pmos": {
+      "id": "pmos",
+      "name": "PMOS",
+      "viewBox": {
+        "x": -24,
+        "y": -24,
+        "width": 48,
+        "height": 48
+      },
+      "pins": [
+        {
+          "name": "D",
+          "at": {
+            "x": 10,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        },
+        {
+          "name": "G",
+          "at": {
+            "x": -20,
+            "y": 0
+          },
+          "direction": "west",
+          "leadLength": 10
+        },
+        {
+          "name": "S",
+          "at": {
+            "x": 10,
+            "y": -20
+          },
+          "direction": "north",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [
+        {
+          "name": "B",
+          "at": {
+            "x": 20,
+            "y": 0
+          },
+          "direction": "east",
+          "leadLength": 10
+        }
+      ],
+      "defaultVariantId": "textbook-3terminal",
+      "variantIds": [
+        "textbook-3terminal"
+      ],
+      "orientationPolicy": "rotate+mirror",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": 10,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": 10,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 10,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 0,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": -10,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": -10,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -10,
+            "maxX": 20,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": -20,
+                "y": 10
+              },
+              "direction": "west"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": 20,
+                "y": 10
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -20,
+            "maxY": 10
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": 20,
+                "y": 10
+              },
+              "direction": "east"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": -20,
+                "y": 10
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -20,
+            "maxY": 10
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": -10,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": -10,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -10,
+            "maxX": 20,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": 10,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": 10,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 10,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": 20,
+                "y": -10
+              },
+              "direction": "east"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": -20,
+                "y": -10
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -10,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "D",
+              "at": {
+                "x": -20,
+                "y": -10
+              },
+              "direction": "west"
+            },
+            {
+              "name": "G",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "S",
+              "at": {
+                "x": 20,
+                "y": -10
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -10,
+            "maxY": 20
+          }
+        }
+      ]
+    },
+    "npn": {
+      "id": "npn",
+      "name": "NPN Bipolar Transistor",
+      "viewBox": {
+        "x": -34,
+        "y": -24,
+        "width": 42,
+        "height": 48
+      },
+      "pins": [
+        {
+          "name": "C",
+          "at": {
+            "x": 0,
+            "y": -20
+          },
+          "direction": "north",
+          "leadLength": 10
+        },
+        {
+          "name": "B",
+          "at": {
+            "x": -30,
+            "y": 0
+          },
+          "direction": "west",
+          "leadLength": 10
+        },
+        {
+          "name": "E",
+          "at": {
+            "x": 0,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate+mirror",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": -30,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -34,
+            "y": -24,
+            "width": 42,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -30,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 0,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 30,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -8,
+            "y": -24,
+            "width": 42,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 30,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 0,
+                "y": -30
+              },
+              "direction": "north"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -34,
+            "width": 48,
+            "height": 42
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -30,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 0,
+                "y": -30
+              },
+              "direction": "north"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -34,
+            "width": 48,
+            "height": 42
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -30,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 30,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -8,
+            "y": -24,
+            "width": 42,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 30,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": -30,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -34,
+            "y": -24,
+            "width": 42,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -30,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 0,
+                "y": 30
+              },
+              "direction": "south"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -8,
+            "width": 48,
+            "height": 42
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 30
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 0,
+                "y": 30
+              },
+              "direction": "south"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -8,
+            "width": 48,
+            "height": 42
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 30
+          }
+        }
+      ]
+    },
+    "pnp": {
+      "id": "pnp",
+      "name": "PNP Bipolar Transistor",
+      "viewBox": {
+        "x": -34,
+        "y": -24,
+        "width": 42,
+        "height": 48
+      },
+      "pins": [
+        {
+          "name": "C",
+          "at": {
+            "x": 0,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        },
+        {
+          "name": "B",
+          "at": {
+            "x": -30,
+            "y": 0
+          },
+          "direction": "west",
+          "leadLength": 10
+        },
+        {
+          "name": "E",
+          "at": {
+            "x": 0,
+            "y": -20
+          },
+          "direction": "north",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate+mirror",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": -30,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -34,
+            "y": -24,
+            "width": 42,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -30,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 0,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 30,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -8,
+            "y": -24,
+            "width": 42,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 30,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 0,
+                "y": -30
+              },
+              "direction": "north"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -34,
+            "width": 48,
+            "height": 42
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -30,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 0,
+                "y": -30
+              },
+              "direction": "north"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -34,
+            "width": 48,
+            "height": 42
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": -30,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 30,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -8,
+            "y": -24,
+            "width": 42,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 30,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": -30,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -34,
+            "y": -24,
+            "width": 42,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": -30,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 0,
+                "y": 30
+              },
+              "direction": "south"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -8,
+            "width": 48,
+            "height": 42
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 30
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "horizontal",
+          "pins": [
+            {
+              "name": "C",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "B",
+              "at": {
+                "x": 0,
+                "y": 30
+              },
+              "direction": "south"
+            },
+            {
+              "name": "E",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -8,
+            "width": 48,
+            "height": 42
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 30
+          }
+        }
+      ]
+    },
+    "ground": {
+      "id": "ground",
+      "name": "Ground",
+      "viewBox": {
+        "x": -12,
+        "y": -14,
+        "width": 24,
+        "height": 31
+      },
+      "pins": [
+        {
+          "name": "0",
+          "at": {
+            "x": 0,
+            "y": -10
+          },
+          "direction": "north",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "fixed",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "0",
+              "at": {
+                "x": 0,
+                "y": -10
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -12,
+            "y": -14,
+            "width": 24,
+            "height": 31
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -10,
+            "maxY": -10
+          }
+        }
+      ]
+    },
+    "vdd-port": {
+      "id": "vdd-port",
+      "name": "VDD Power Port",
+      "viewBox": {
+        "x": -12,
+        "y": -2,
+        "width": 24,
+        "height": 26
+      },
+      "pins": [
+        {
+          "name": "P",
+          "at": {
+            "x": 0,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "fixed",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "P",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -12,
+            "y": -2,
+            "width": 24,
+            "height": 26
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": 20,
+            "maxY": 20
+          }
+        }
+      ]
+    },
+    "voltage-source": {
+      "id": "voltage-source",
+      "name": "Independent Voltage Source",
+      "viewBox": {
+        "x": -24,
+        "y": -24,
+        "width": 39,
+        "height": 48
+      },
+      "pins": [
+        {
+          "name": "+",
+          "at": {
+            "x": 0,
+            "y": -20
+          },
+          "direction": "north",
+          "leadLength": 10
+        },
+        {
+          "name": "-",
+          "at": {
+            "x": 0,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate-only",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 39,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 39
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -15,
+            "y": -24,
+            "width": 39,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -15,
+            "width": 48,
+            "height": 39
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        }
+      ]
+    },
+    "current-source": {
+      "id": "current-source",
+      "name": "Independent Current Source",
+      "viewBox": {
+        "x": -15,
+        "y": -24,
+        "width": 30,
+        "height": 48
+      },
+      "pins": [
+        {
+          "name": "+",
+          "at": {
+            "x": 0,
+            "y": -20
+          },
+          "direction": "north",
+          "leadLength": 10
+        },
+        {
+          "name": "-",
+          "at": {
+            "x": 0,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate-only",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -15,
+            "y": -24,
+            "width": 30,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -15,
+            "width": 48,
+            "height": 30
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -15,
+            "y": -24,
+            "width": 30,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -15,
+            "width": 48,
+            "height": 30
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        }
+      ]
+    },
+    "ideal-switch": {
+      "id": "ideal-switch",
+      "name": "Open Switch",
+      "viewBox": {
+        "x": -34,
+        "y": -18,
+        "width": 68,
+        "height": 30
+      },
+      "pins": [
+        {
+          "name": "1",
+          "at": {
+            "x": -20,
+            "y": 0
+          },
+          "direction": "west",
+          "leadLength": 10
+        },
+        {
+          "name": "2",
+          "at": {
+            "x": 20,
+            "y": 0
+          },
+          "direction": "east",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate-only",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -34,
+            "y": -18,
+            "width": 68,
+            "height": 30
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -12,
+            "y": -34,
+            "width": 30,
+            "height": 68
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -34,
+            "y": -12,
+            "width": 68,
+            "height": 30
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "1",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "2",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -18,
+            "y": -34,
+            "width": 30,
+            "height": 68
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        }
+      ]
+    },
+    "opamp": {
+      "id": "opamp",
+      "name": "Operational Amplifier",
+      "viewBox": {
+        "x": -44,
+        "y": -34,
+        "width": 88,
+        "height": 68
+      },
+      "pins": [
+        {
+          "name": "IN+",
+          "at": {
+            "x": -40,
+            "y": 10
+          },
+          "direction": "west",
+          "leadLength": 10
+        },
+        {
+          "name": "IN-",
+          "at": {
+            "x": -40,
+            "y": -10
+          },
+          "direction": "west",
+          "leadLength": 10
+        },
+        {
+          "name": "OUT",
+          "at": {
+            "x": 30,
+            "y": 0
+          },
+          "direction": "east",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate-only",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "IN+",
+              "at": {
+                "x": -40,
+                "y": 10
+              },
+              "direction": "west"
+            },
+            {
+              "name": "IN-",
+              "at": {
+                "x": -40,
+                "y": -10
+              },
+              "direction": "west"
+            },
+            {
+              "name": "OUT",
+              "at": {
+                "x": 30,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -44,
+            "y": -34,
+            "width": 88,
+            "height": 68
+          },
+          "pinSpread": {
+            "minX": -40,
+            "maxX": 30,
+            "minY": -10,
+            "maxY": 10
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "IN+",
+              "at": {
+                "x": -10,
+                "y": -40
+              },
+              "direction": "north"
+            },
+            {
+              "name": "IN-",
+              "at": {
+                "x": 10,
+                "y": -40
+              },
+              "direction": "north"
+            },
+            {
+              "name": "OUT",
+              "at": {
+                "x": 0,
+                "y": 30
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -34,
+            "y": -44,
+            "width": 68,
+            "height": 88
+          },
+          "pinSpread": {
+            "minX": -10,
+            "maxX": 10,
+            "minY": -40,
+            "maxY": 30
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "IN+",
+              "at": {
+                "x": 40,
+                "y": -10
+              },
+              "direction": "east"
+            },
+            {
+              "name": "IN-",
+              "at": {
+                "x": 40,
+                "y": 10
+              },
+              "direction": "east"
+            },
+            {
+              "name": "OUT",
+              "at": {
+                "x": -30,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -44,
+            "y": -34,
+            "width": 88,
+            "height": 68
+          },
+          "pinSpread": {
+            "minX": -30,
+            "maxX": 40,
+            "minY": -10,
+            "maxY": 10
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "IN+",
+              "at": {
+                "x": 10,
+                "y": 40
+              },
+              "direction": "south"
+            },
+            {
+              "name": "IN-",
+              "at": {
+                "x": -10,
+                "y": 40
+              },
+              "direction": "south"
+            },
+            {
+              "name": "OUT",
+              "at": {
+                "x": 0,
+                "y": -30
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -34,
+            "y": -44,
+            "width": 68,
+            "height": 88
+          },
+          "pinSpread": {
+            "minX": -10,
+            "maxX": 10,
+            "minY": -30,
+            "maxY": 40
+          }
+        }
+      ]
+    },
+    "vcvs": {
+      "id": "vcvs",
+      "name": "Voltage-Controlled Voltage Source",
+      "viewBox": {
+        "x": -24,
+        "y": -24,
+        "width": 39,
+        "height": 48
+      },
+      "pins": [
+        {
+          "name": "+",
+          "at": {
+            "x": 0,
+            "y": -20
+          },
+          "direction": "north",
+          "leadLength": 10
+        },
+        {
+          "name": "-",
+          "at": {
+            "x": 0,
+            "y": 20
+          },
+          "direction": "south",
+          "leadLength": 10
+        }
+      ],
+      "hiddenPins": [],
+      "defaultVariantId": null,
+      "variantIds": [],
+      "orientationPolicy": "rotate-only",
+      "orientations": [
+        {
+          "rotation": 0,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 39,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 90,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -24,
+            "width": 48,
+            "height": 39
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        },
+        {
+          "rotation": 180,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": 0,
+                "y": 20
+              },
+              "direction": "south"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": 0,
+                "y": -20
+              },
+              "direction": "north"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -15,
+            "y": -24,
+            "width": 39,
+            "height": 48
+          },
+          "pinSpread": {
+            "minX": 0,
+            "maxX": 0,
+            "minY": -20,
+            "maxY": 20
+          }
+        },
+        {
+          "rotation": 270,
+          "mirror": "none",
+          "pins": [
+            {
+              "name": "+",
+              "at": {
+                "x": -20,
+                "y": 0
+              },
+              "direction": "west"
+            },
+            {
+              "name": "-",
+              "at": {
+                "x": 20,
+                "y": 0
+              },
+              "direction": "east"
+            }
+          ],
+          "viewBoxAABB": {
+            "x": -24,
+            "y": -15,
+            "width": 48,
+            "height": 39
+          },
+          "pinSpread": {
+            "minX": -20,
+            "maxX": 20,
+            "minY": 0,
+            "maxY": 0
+          }
+        }
+      ]
+    }
+  }
+}

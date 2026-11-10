@@ -1,0 +1,25 @@
+.subckt dut VDD VSS VB4 VIP VIN VON1
+.model NMOS nmos level=54
+.model PMOS pmos level=54
+M1 net0 VB4 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M10 VON1 VB2 net2 VSS NMOS l=150n m=1 nf=1 w=1u
+M11 VOP1 VB2 net1 VSS NMOS l=150n m=1 nf=1 w=1u
+M12 net2 VB1 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M13 net1 VB1 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M14 net5 VB4 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M15 net6 VB4 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M16 net7 VOP1 net5 VDD PMOS l=150n m=1 nf=1 w=1u
+M17 Vcmfb1 VCM net5 VDD PMOS l=150n m=1 nf=1 w=1u
+M18 Vcmfb1 VCM net6 VDD PMOS l=150n m=1 nf=1 w=1u
+M19 net7 VON1 net6 VDD PMOS l=150n m=1 nf=1 w=1u
+M2 net2 VIP net0 net0 PMOS l=150n m=1 nf=1 w=1u
+M20 Vcmfb1 Vcmfb1 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M21 net7 net7 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M3 net1 VIN net0 net0 PMOS l=150n m=1 nf=1 w=1u
+M4 net2 Vcmfb1 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M5 net1 Vcmfb1 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M6 net3 VB4 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M7 net4 VB4 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M8 VON1 VB3 net3 VDD PMOS l=150n m=1 nf=1 w=1u
+M9 VOP1 VB3 net4 VDD PMOS l=150n m=1 nf=1 w=1u
+.ends dut

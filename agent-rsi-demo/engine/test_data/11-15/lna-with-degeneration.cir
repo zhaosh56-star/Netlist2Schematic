@@ -1,0 +1,15 @@
+.subckt Main VDD VSS Vout Vin
+.model NMOS nmos level=54
+C1 net5 VSS 1p
+C2 net4 Vin 1p
+C3 Vout net7 1p
+L1 net6 net1 1n
+L2 net2 VSS 1n
+L3 VDD net7 1n
+L4 net4 net3 1n
+M1 net1 net3 net2 VSS NMOS l=150n m=1 nf=1 w=1u
+M2 net7 net5 net6 VSS NMOS l=150n m=1 nf=1 w=1u
+R1 net5 VDD 1k
+R2 net0 net3 1k
+V1 net0 VSS DC 1.8
+.ends Main

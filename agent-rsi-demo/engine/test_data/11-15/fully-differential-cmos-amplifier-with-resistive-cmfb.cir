@@ -1,0 +1,15 @@
+I1 net4 VSS DC 100u
+M1 net6 net0 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M10 net7 Vinn net4 VSS NMOS l=150n m=1 nf=1 w=1u
+M2 net7 net0 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M3 Vout2 net8 net6 VDD PMOS l=150n m=1 nf=1 w=1u
+M4 Vout2 net8 net7 VDD PMOS l=150n m=1 nf=1 w=1u
+M5 Vout2 net5 net1 VSS NMOS l=150n m=1 nf=1 w=1u
+M6 Vout2 net5 net2 VSS NMOS l=150n m=1 nf=1 w=1u
+M7 net1 VE VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M8 net2 VE VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M9 net6 Vinp net4 VSS NMOS l=150n m=1 nf=1 w=1u
+R1 net3 Vout2 1k
+R2 Vout2 net3 1k
+X1 VDD VSS net3 VREF VE icm_opamp_vdd_vss
+.ends Main

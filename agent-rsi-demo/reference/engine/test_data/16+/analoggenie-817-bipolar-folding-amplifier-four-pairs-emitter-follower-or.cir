@@ -1,0 +1,19 @@
+.subckt dut VCC VEE VSS Vin Vr1 Vr2 Vr3 Vr4 Vout
+.model NPN NPN(IS=1e-16 BF=100 VAF=100)
+I1 net0 VEE DC 1m
+I2 net3 VEE DC 1m
+I3 net1 VEE DC 1m
+I4 net2 VEE DC 1m
+Q1 VCC Va Vout NPN m=1
+Q10 VCC Vr4 net2 NPN m=1
+Q2 VCC Vb Vout NPN m=1
+Q3 VCC Vin net0 NPN m=1
+Q4 Va Vr1 net0 NPN m=1
+Q5 Va Vin net3 NPN m=1
+Q6 VCC Vr2 net3 NPN m=1
+Q7 VCC Vin net1 NPN m=1
+Q8 Vb Vr3 net1 NPN m=1
+Q9 Vb Vin net2 NPN m=1
+R1 VCC Va 1k
+R2 VCC Vb 1k
+.ends dut

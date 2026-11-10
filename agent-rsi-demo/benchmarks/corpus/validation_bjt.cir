@@ -1,0 +1,6 @@
+.model QMOD NPN
+V1 vcc 0 5
+V2 vin 0 0.7
+R1 vcc out 10k
+Q1 out vin 0 QMOD
+.end

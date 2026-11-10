@@ -1,0 +1,100 @@
+{
+  "schema": "circuit-rsi-suite-v2",
+  "seed": 20261029,
+  "cases": [
+    {
+      "id": "search_rc",
+      "split": "search",
+      "family": "passive",
+      "input": "benchmarks/corpus/search_rc.spi",
+      "cell": null
+    },
+    {
+      "id": "search_mirror",
+      "split": "search",
+      "family": "mos",
+      "input": "benchmarks/corpus/search_mirror.cir",
+      "cell": "dut"
+    },
+    {
+      "id": "validation_rlc",
+      "split": "validation",
+      "family": "passive",
+      "input": "benchmarks/corpus/validation_rlc.spi",
+      "cell": null
+    },
+    {
+      "id": "validation_mos",
+      "split": "validation",
+      "family": "mos",
+      "input": "benchmarks/corpus/validation_mos.spi",
+      "cell": null
+    },
+    {
+      "id": "test_oscillator",
+      "split": "test",
+      "family": "opamp",
+      "input": "benchmarks/corpus/test_oscillator.cir",
+      "cell": null
+    },
+    {
+      "id": "test_ota",
+      "split": "test",
+      "family": "mos",
+      "input": "benchmarks/corpus/test_ota.spi",
+      "cell": "ota_5t"
+    },
+    {
+      "id": "search_feedback",
+      "split": "search",
+      "family": "feedback",
+      "input": "benchmarks/corpus/search_feedback.cir",
+      "cell": null
+    },
+    {
+      "id": "validation_bjt",
+      "split": "validation",
+      "family": "bjt",
+      "input": "benchmarks/corpus/validation_bjt.cir",
+      "cell": null
+    },
+    {
+      "id": "validation_diode",
+      "split": "validation",
+      "family": "diode",
+      "input": "benchmarks/corpus/validation_diode.cir",
+      "cell": null
+    },
+    {
+      "id": "validation_feedback",
+      "split": "validation",
+      "family": "feedback",
+      "input": "benchmarks/corpus/validation_feedback.cir",
+      "cell": null
+    },
+    {
+      "id": "validation_include",
+      "split": "validation",
+      "family": "include",
+      "input": "benchmarks/corpus/validation_include.cir",
+      "cell": "filter"
+    },
+    {
+      "id": "validation_diffpair",
+      "split": "validation",
+      "family": "differential_pair",
+      "input": "benchmarks/corpus/extended_01.cir",
+      "cell": "dut",
+      "original": "ams-net-192-resistively-loaded-nmos-differential-pair-with-mos-tail-m3.cir"
+    },
+    {
+      "id": "validation_cascode",
+      "split": "validation",
+      "family": "cascode_mirror",
+      "input": "benchmarks/corpus/extended_03.cir",
+      "cell": "dut",
+      "original": "ams-net-259-nmos-cascode-current-mirror-fed-by-iref-output-at-p-iout-iref.cir"
+    }
+  ],
+  "note": "new pre-registered representative partitions; previous v1 results are not used as unseen evidence"
+}

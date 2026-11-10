@@ -1,0 +1,8 @@
+
+.subckt dut VDD VSS Vin1 Vin2 Vb
+XM1 X Vin1 net0 VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+XM2 Y Vin2 net0 VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+XM3 net0 Vb VSS VSS sky130_fd_pr__nfet_01v8 l=0.15 w=1 nf=1 m=1
+RD1 VDD X 1k
+RD2 VDD Y 1k
+.ends dut

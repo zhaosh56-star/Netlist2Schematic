@@ -1,0 +1,13 @@
+.subckt dut VDD VSS Vb X Y P Vin1 Vin2
+.model NMOS nmos level=54
+M1 net0 Y P VSS NMOS l=150n m=1 nf=1 w=1u
+M2 net1 X P VSS NMOS l=150n m=1 nf=1 w=1u
+M3 X Vin1 net2 VSS NMOS l=150n m=1 nf=1 w=1u
+M4 Y Vin2 net2 VSS NMOS l=150n m=1 nf=1 w=1u
+M5 net2 Vb VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M6 P Vb VSS VSS NMOS l=150n m=1 nf=1 w=1u
+RP1 VDD X 1k
+RP2 VDD Y 1k
+RP3 VDD net0 1k
+RP4 VDD net1 1k
+.ends dut

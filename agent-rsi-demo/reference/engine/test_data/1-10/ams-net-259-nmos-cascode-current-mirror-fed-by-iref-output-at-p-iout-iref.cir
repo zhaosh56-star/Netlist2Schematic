@@ -1,0 +1,9 @@
+
+.subckt dut VDD VSS P X N Y
+.model NMOS nmos level=54
+IREF VDD N DC 1m
+M0 N N X VSS NMOS l=150n m=1 nf=1 w=1u
+M1 X X VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M2 Y X VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M3 P N Y VSS NMOS l=150n m=1 nf=1 w=1u
+.ends dut

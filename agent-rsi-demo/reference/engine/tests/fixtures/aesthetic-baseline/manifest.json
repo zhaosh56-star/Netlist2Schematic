@@ -1,0 +1,46 @@
+{
+  "1": {
+    "source_sha256": "7604797c7e49b904564472f0d4f8ad6bcfe1f87124d08281915c6eb3fc2dd4b9",
+    "baseline_metrics": {
+      "wirelength": 2524.0,
+      "crossings": 2,
+      "bends": 17,
+      "body_pen": 0,
+      "overlap": 0,
+      "proximity": 0
+    }
+  },
+  "2": {
+    "source_sha256": "5ad69f8d305c8e543d956474aac4468773c34e0456b45d33e3dea6f16a0b020a",
+    "baseline_metrics": {
+      "wirelength": 7420.0,
+      "crossings": 7,
+      "bends": 45,
+      "body_pen": 0,
+      "overlap": 0,
+      "proximity": 0
+    }
+  },
+  "3": {
+    "source_sha256": "feaa9d65b191df8fca04409f776f187c4601e68b5ea8f057d80330e089bad6eb",
+    "baseline_metrics": {
+      "wirelength": 5094.0,
+      "crossings": 3,
+      "bends": 30,
+      "body_pen": 0,
+      "overlap": 0,
+      "proximity": 0
+    }
+  },
+  "4": {
+    "source_sha256": "0b72eb1edee381cbcfd3b3b065d40ae562137310975a29ec4749289f6117fbf3",
+    "baseline_metrics": {
+      "wirelength": 5168.0,
+      "crossings": 8,
+      "bends": 38,
+      "body_pen": 0,
+      "overlap": 0,
+      "proximity": 0
+    }
+  }
+}

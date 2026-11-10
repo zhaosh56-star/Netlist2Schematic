@@ -1,0 +1,17 @@
+* Folded-Cascode Connection to a CMOS Class AB Output Stage
+* authentic netlist from analog-canvas projectText
+
+M0 f5 inp f7 f7 PMOS W=1u L=150n NF=1 M=1
+M1 f6 inn f7 f7 PMOS W=1u L=150n NF=1 M=1
+M2 f5 f2 f8 BODY_M2 NMOS W=1u L=150n NF=1 M=1
+M3 f6 f2 f8 BODY_M3 NMOS W=1u L=150n NF=1 M=1
+M4 f2 f3 f5 BODY_foldL NMOS W=1u L=150n NF=1 M=1
+M5 f4 f3 f6 BODY_foldR NMOS W=1u L=150n NF=1 M=1
+MP out f1 VDD VDD PMOS W=1u L=150n NF=1 M=1
+MN out f4 f8 BODY_MN NMOS W=1u L=150n NF=1 M=1
+I0 VDD f7 DC {P_I0_dc}
+I1 VDD f2 DC {P_I1_dc}
+I2 VDD f1 DC {P_I2_dc}
+V0 f3 f8 DC {P_V0_dc}
+
+.end

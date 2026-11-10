@@ -1,0 +1,15 @@
+.subckt self_adaptive_current_mirror_buffer_fvf_ldo VDD VSS VSET VOUT
+.model NMOS nmos level=54
+.model PMOS pmos level=54
+C1 VDD net1 10p
+CL VOUT VSS 10p
+I1 VG VSS DC 1u
+M1 VG VSET VOUT VDD PMOS l=1u m=1 nf=1 w=10u
+M2 VG net1 VDD VDD PMOS l=1u m=1 nf=1 w=10u
+M3 net0 net1 VDD VDD PMOS l=1u m=1 nf=1 w=10u
+M4 net0 net0 VSS VSS NMOS l=1u m=1 nf=1 w=4u
+M5 VG net0 VSS VSS NMOS l=1u m=1 nf=1 w=4u
+MP VOUT VG VDD VDD PMOS l=1u m=1 nf=1 w=10u
+R1 VG net1 10k
+RL VOUT VSS 10k
+.ends self_adaptive_current_mirror_buffer_fvf_ldo

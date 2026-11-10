@@ -1,0 +1,896 @@
+{
+  "format_version": 1,
+  "source_netlist": "5.cir",
+  "source_sha256": "92a5fb372b7806bf98db4cde787cacaf27912c182be6b257c89b1018e53b2855",
+  "source_cell": "dut",
+  "mode": "layered",
+  "seed": 20261029,
+  "iterations": 20000,
+  "source_note": "alias+branch-root",
+  "levels": {
+    "XM1": 2,
+    "XM10": 1,
+    "XM11": 2,
+    "XM12": 1,
+    "XM13": 1,
+    "XM14": 2,
+    "XM15": 1,
+    "XM16": 2,
+    "XM2": 2,
+    "XM3": 1,
+    "XM4": 1,
+    "XM5": 3,
+    "XM6": 2,
+    "XM7": 2,
+    "XM8": 3,
+    "XM9": 3
+  },
+  "attach": {
+    "CL": {
+      "mode": "gnd",
+      "anchor_net": "vout",
+      "horiz": true
+    },
+    "Cc": {
+      "mode": "mid",
+      "span_lo": 1,
+      "span_hi": 2
+    },
+    "R1": {
+      "mode": "mid",
+      "span_lo": 0,
+      "span_hi": 2
+    }
+  },
+  "structs": [
+    {
+      "id": "common_bias_pair:XM12|XM13",
+      "kind": "common_bias_pair",
+      "display_name": "共偏置关系",
+      "devices": [
+        "XM13",
+        "XM12"
+      ],
+      "confidence": "relation",
+      "roles": {
+        "members": [
+          "XM13",
+          "XM12"
+        ]
+      },
+      "nets": {
+        "source": "vdd",
+        "bias": "net6"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM13": "output_pair:XM13|XM14",
+        "XM12": null
+      },
+      "layout": {}
+    },
+    {
+      "id": "common_source_bank:XM10|XM14|XM16|XM5|XM8|XM9",
+      "kind": "common_source_bank",
+      "display_name": "公共源支路",
+      "devices": [
+        "XM16",
+        "XM10",
+        "XM5",
+        "XM14",
+        "XM9",
+        "XM8"
+      ],
+      "confidence": "relation",
+      "roles": {
+        "members": [
+          "XM16",
+          "XM10",
+          "XM5",
+          "XM14",
+          "XM9",
+          "XM8"
+        ]
+      },
+      "nets": {
+        "source": "vss"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM16": "complementary_branch:XM15|XM16",
+        "XM10": "current_mirror:XM10|XM16|XM5",
+        "XM5": "current_mirror:XM10|XM16|XM5",
+        "XM14": "output_pair:XM13|XM14",
+        "XM9": "current_mirror:XM8|XM9",
+        "XM8": "current_mirror:XM8|XM9"
+      },
+      "layout": {}
+    },
+    {
+      "id": "common_source_bank:XM12|XM13|XM15|XM3|XM4",
+      "kind": "common_source_bank",
+      "display_name": "公共源支路",
+      "devices": [
+        "XM4",
+        "XM3",
+        "XM13",
+        "XM15",
+        "XM12"
+      ],
+      "confidence": "relation",
+      "roles": {
+        "members": [
+          "XM4",
+          "XM3",
+          "XM13",
+          "XM15",
+          "XM12"
+        ]
+      },
+      "nets": {
+        "source": "vdd"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM4": "current_mirror:XM15|XM3|XM4",
+        "XM3": "current_mirror:XM15|XM3|XM4",
+        "XM13": "output_pair:XM13|XM14",
+        "XM15": "complementary_branch:XM15|XM16",
+        "XM12": null
+      },
+      "layout": {}
+    },
+    {
+      "id": "complementary_branch:XM15|XM16",
+      "kind": "complementary_branch",
+      "display_name": "互补支路",
+      "devices": [
+        "XM16",
+        "XM15"
+      ],
+      "confidence": "high",
+      "roles": {
+        "upper": "XM15",
+        "lower": "XM16"
+      },
+      "nets": {
+        "output": "ibias",
+        "upper_gate": "ibias",
+        "lower_gate": "ibias"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM16": "complementary_branch:XM15|XM16",
+        "XM15": "complementary_branch:XM15|XM16"
+      },
+      "layout": {
+        "align_columns": [
+          [
+            "XM15",
+            "XM16"
+          ]
+        ],
+        "aligned": [
+          [
+            "XM15",
+            "XM16"
+          ]
+        ],
+        "branches": [
+          [
+            "XM15",
+            "XM16"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "current_mirror:XM10|XM16|XM5",
+      "kind": "current_mirror",
+      "display_name": "电流镜",
+      "devices": [
+        "XM16",
+        "XM10",
+        "XM5"
+      ],
+      "confidence": "high",
+      "roles": {
+        "reference": "XM16",
+        "references": [
+          "XM16"
+        ],
+        "outputs": [
+          "XM10",
+          "XM5"
+        ]
+      },
+      "nets": {
+        "source": "vss",
+        "bias": "ibias"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM16": "complementary_branch:XM15|XM16",
+        "XM10": "current_mirror:XM10|XM16|XM5",
+        "XM5": "current_mirror:XM10|XM16|XM5"
+      },
+      "layout": {
+        "align_rows": [
+          [
+            "XM16",
+            "XM10",
+            "XM5"
+          ]
+        ],
+        "aligned": [],
+        "branches": []
+      }
+    },
+    {
+      "id": "current_mirror:XM15|XM3|XM4",
+      "kind": "current_mirror",
+      "display_name": "电流镜",
+      "devices": [
+        "XM4",
+        "XM3",
+        "XM15"
+      ],
+      "confidence": "high",
+      "roles": {
+        "reference": "XM15",
+        "references": [
+          "XM15"
+        ],
+        "outputs": [
+          "XM4",
+          "XM3"
+        ]
+      },
+      "nets": {
+        "source": "vdd",
+        "bias": "ibias"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM4": "current_mirror:XM15|XM3|XM4",
+        "XM3": "current_mirror:XM15|XM3|XM4",
+        "XM15": "complementary_branch:XM15|XM16"
+      },
+      "layout": {
+        "align_rows": [
+          [
+            "XM4",
+            "XM3",
+            "XM15"
+          ]
+        ],
+        "aligned": [],
+        "branches": []
+      }
+    },
+    {
+      "id": "current_mirror:XM8|XM9",
+      "kind": "current_mirror",
+      "display_name": "电流镜",
+      "devices": [
+        "XM9",
+        "XM8"
+      ],
+      "confidence": "high",
+      "roles": {
+        "reference": "XM8",
+        "references": [
+          "XM8"
+        ],
+        "outputs": [
+          "XM9"
+        ]
+      },
+      "nets": {
+        "source": "vss",
+        "bias": "net0"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM9": "current_mirror:XM8|XM9",
+        "XM8": "current_mirror:XM8|XM9"
+      },
+      "layout": {
+        "align_rows": [
+          [
+            "XM9",
+            "XM8"
+          ]
+        ],
+        "aligned": [],
+        "branches": []
+      }
+    },
+    {
+      "id": "differential_pair:XM1|XM2",
+      "kind": "differential_pair",
+      "display_name": "差分对",
+      "devices": [
+        "XM1",
+        "XM2"
+      ],
+      "confidence": "high",
+      "roles": {
+        "left": "XM1",
+        "right": "XM2",
+        "tail": [
+          "XM5"
+        ]
+      },
+      "nets": {
+        "source": "net5",
+        "left_drain": "net1",
+        "right_drain": "net2"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM1": "differential_pair:XM1|XM2",
+        "XM2": "differential_pair:XM1|XM2"
+      },
+      "layout": {
+        "align_rows": [
+          [
+            "XM1",
+            "XM2"
+          ]
+        ],
+        "aligned": [],
+        "branches": [
+          [
+            "XM1"
+          ],
+          [
+            "XM2"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "output_pair:XM13|XM14",
+      "kind": "output_pair",
+      "display_name": "互补输出级",
+      "devices": [
+        "XM13",
+        "XM14"
+      ],
+      "confidence": "high",
+      "roles": {
+        "upper": "XM13",
+        "lower": "XM14"
+      },
+      "nets": {
+        "output": "vout",
+        "upper_gate": "net6",
+        "lower_gate": "net3"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM13": "output_pair:XM13|XM14",
+        "XM14": "output_pair:XM13|XM14"
+      },
+      "layout": {
+        "align_columns": [
+          [
+            "XM13",
+            "XM14"
+          ]
+        ],
+        "aligned": [
+          [
+            "XM13",
+            "XM14"
+          ]
+        ],
+        "branches": [
+          [
+            "XM13",
+            "XM14"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "series_branch:XM11|XM12",
+      "kind": "series_branch",
+      "display_name": "串接支路",
+      "devices": [
+        "XM11",
+        "XM12"
+      ],
+      "confidence": "relation",
+      "roles": {
+        "upper": "XM12",
+        "lower": "XM11"
+      },
+      "nets": {
+        "junction": "net4"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM11": null,
+        "XM12": null
+      },
+      "layout": {
+        "aligned": [
+          [
+            "XM12",
+            "XM11"
+          ]
+        ],
+        "align_columns": [
+          [
+            "XM12",
+            "XM11"
+          ]
+        ],
+        "branches": [
+          [
+            "XM12",
+            "XM11"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "series_branch:XM1|XM5",
+      "kind": "series_branch",
+      "display_name": "串接支路",
+      "devices": [
+        "XM1",
+        "XM5"
+      ],
+      "confidence": "relation",
+      "roles": {
+        "upper": "XM1",
+        "lower": "XM5"
+      },
+      "nets": {
+        "junction": "net5"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM1": "differential_pair:XM1|XM2",
+        "XM5": "current_mirror:XM10|XM16|XM5"
+      },
+      "layout": {
+        "aligned": [
+          [
+            "XM5",
+            "XM1"
+          ]
+        ],
+        "align_columns": [
+          [
+            "XM5",
+            "XM1"
+          ]
+        ],
+        "branches": [
+          [
+            "XM1",
+            "XM5"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "series_branch:XM2|XM5",
+      "kind": "series_branch",
+      "display_name": "串接支路",
+      "devices": [
+        "XM5",
+        "XM2"
+      ],
+      "confidence": "relation",
+      "roles": {
+        "upper": "XM2",
+        "lower": "XM5"
+      },
+      "nets": {
+        "junction": "net5"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM5": "current_mirror:XM10|XM16|XM5",
+        "XM2": "differential_pair:XM1|XM2"
+      },
+      "layout": {
+        "aligned": [
+          [
+            "XM5",
+            "XM2"
+          ]
+        ],
+        "align_columns": [
+          [
+            "XM5",
+            "XM2"
+          ]
+        ],
+        "branches": [
+          [
+            "XM2",
+            "XM5"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "series_branch:XM3|XM6",
+      "kind": "series_branch",
+      "display_name": "串接支路",
+      "devices": [
+        "XM3",
+        "XM6"
+      ],
+      "confidence": "relation",
+      "roles": {
+        "upper": "XM3",
+        "lower": "XM6"
+      },
+      "nets": {
+        "junction": "net1"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM3": "current_mirror:XM15|XM3|XM4",
+        "XM6": null
+      },
+      "layout": {
+        "aligned": [
+          [
+            "XM3",
+            "XM6"
+          ]
+        ],
+        "align_columns": [
+          [
+            "XM3",
+            "XM6"
+          ]
+        ],
+        "branches": [
+          [
+            "XM3",
+            "XM6"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "series_branch:XM4|XM7",
+      "kind": "series_branch",
+      "display_name": "串接支路",
+      "devices": [
+        "XM7",
+        "XM4"
+      ],
+      "confidence": "relation",
+      "roles": {
+        "upper": "XM4",
+        "lower": "XM7"
+      },
+      "nets": {
+        "junction": "net2"
+      },
+      "parent": null,
+      "children": [],
+      "owner": {
+        "XM7": null,
+        "XM4": "current_mirror:XM15|XM3|XM4"
+      },
+      "layout": {
+        "aligned": [
+          [
+            "XM4",
+            "XM7"
+          ]
+        ],
+        "align_columns": [
+          [
+            "XM4",
+            "XM7"
+          ]
+        ],
+        "branches": [
+          [
+            "XM4",
+            "XM7"
+          ]
+        ]
+      }
+    }
+  ],
+  "sym_pairs": [
+    [
+      "XM16",
+      "XM10"
+    ],
+    [
+      "XM16",
+      "XM5"
+    ],
+    [
+      "XM15",
+      "XM4"
+    ],
+    [
+      "XM15",
+      "XM3"
+    ],
+    [
+      "XM8",
+      "XM9"
+    ],
+    [
+      "XM1",
+      "XM2"
+    ]
+  ],
+  "energy": 70.12128876190476,
+  "optimization_metrics": {
+    "estimated_wirelength": 5134.0,
+    "estimated_crossings": 2,
+    "estimated_bends": 41,
+    "branch_misalignment": 3.75,
+    "structure_dispersion": 0.0,
+    "pair_spread": 0,
+    "role_order_inversions": 0,
+    "estimated_congestion": 68.05479999999999,
+    "gate_backtracking": 43.69047619047616,
+    "normalized_energy": 70.12128876190476
+  },
+  "layout_grid": {
+    "column_x": [
+      64,
+      188,
+      312,
+      436,
+      560,
+      684,
+      808,
+      932,
+      1056
+    ],
+    "row_y": [
+      64,
+      190,
+      316,
+      442,
+      568
+    ]
+  },
+  "candidate_id": 2,
+  "candidate_seed": 20470487,
+  "layout_style": "structured",
+  "annealing": {
+    "initial_temperature": 19.30644521574785,
+    "target_initial_uphill_acceptance": 0.7,
+    "sampled_positive_deltas": 21,
+    "steps_completed": 6666,
+    "steps_budget": 6666,
+    "proposed": 3204,
+    "accepted": 2006,
+    "acceptance_rate": 0.6260923845193508,
+    "uphill_acceptance_rate": 0.4098522167487685,
+    "reheats": 2,
+    "stop_reason": "iterations"
+  },
+  "role_adjustments": [],
+  "alignment_relations": [
+    {
+      "devices": [
+        "XM15",
+        "XM16"
+      ],
+      "weight": 3.5
+    },
+    {
+      "devices": [
+        "XM13",
+        "XM14"
+      ],
+      "weight": 3.5
+    },
+    {
+      "devices": [
+        "XM3",
+        "XM6"
+      ],
+      "weight": 1.25
+    },
+    {
+      "devices": [
+        "XM1",
+        "XM5"
+      ],
+      "weight": 1.25
+    },
+    {
+      "devices": [
+        "XM2",
+        "XM5"
+      ],
+      "weight": 1.25
+    },
+    {
+      "devices": [
+        "XM11",
+        "XM12"
+      ],
+      "weight": 2.5
+    },
+    {
+      "devices": [
+        "XM13",
+        "XM14"
+      ],
+      "weight": 2.5
+    },
+    {
+      "devices": [
+        "XM15",
+        "XM16"
+      ],
+      "weight": 2.5
+    },
+    {
+      "devices": [
+        "XM4",
+        "XM7"
+      ],
+      "weight": 1.25
+    },
+    {
+      "devices": [
+        "XM6",
+        "XM8"
+      ],
+      "weight": 2.5
+    },
+    {
+      "devices": [
+        "XM7",
+        "XM9"
+      ],
+      "weight": 2.5
+    }
+  ],
+  "placement": {
+    "Cc": {
+      "row": 2,
+      "col": 1,
+      "orient": 1
+    },
+    "CL": {
+      "row": 1,
+      "col": 6,
+      "orient": 1
+    },
+    "XM1": {
+      "row": 3,
+      "col": 6,
+      "orient": 1
+    },
+    "XM10": {
+      "row": 1,
+      "col": 3,
+      "orient": 1
+    },
+    "XM11": {
+      "row": 3,
+      "col": 0,
+      "orient": 1
+    },
+    "XM12": {
+      "row": 1,
+      "col": 0,
+      "orient": 1
+    },
+    "XM13": {
+      "row": 1,
+      "col": 1,
+      "orient": 1
+    },
+    "XM14": {
+      "row": 3,
+      "col": 1,
+      "orient": 1
+    },
+    "XM15": {
+      "row": 1,
+      "col": 4,
+      "orient": 1
+    },
+    "XM16": {
+      "row": 3,
+      "col": 4,
+      "orient": 1
+    },
+    "XM2": {
+      "row": 3,
+      "col": 5,
+      "orient": 0
+    },
+    "XM3": {
+      "row": 1,
+      "col": 2,
+      "orient": 1
+    },
+    "XM4": {
+      "row": 1,
+      "col": 5,
+      "orient": 0
+    },
+    "XM5": {
+      "row": 4,
+      "col": 5,
+      "orient": 0
+    },
+    "XM6": {
+      "row": 3,
+      "col": 2,
+      "orient": 0
+    },
+    "XM7": {
+      "row": 3,
+      "col": 3,
+      "orient": 0
+    },
+    "XM8": {
+      "row": 4,
+      "col": 2,
+      "orient": 1
+    },
+    "XM9": {
+      "row": 4,
+      "col": 3,
+      "orient": 0
+    },
+    "R1": {
+      "row": 0,
+      "col": 1,
+      "orient": 0
+    }
+  },
+  "snapshot_status": "placement_only_unvalidated",
+  "snapshot_note": "仅布局快照，未布线，尚未进行几何验收。",
+  "validation": {
+    "valid": false,
+    "parameters": {
+      "wire_width": 2.5,
+      "edge_clearance": 6.0,
+      "grid_step": 2.0,
+      "halo": 12.0,
+      "cross_clearance": 12.0,
+      "crossing_cost": 150.0,
+      "bend_cost": 15.0,
+      "max_nodes": 100000,
+      "max_expansions": 200000,
+      "max_rounds": 4,
+      "margins": [
+        150.0,
+        300.0,
+        600.0
+      ]
+    }
+  }
+}

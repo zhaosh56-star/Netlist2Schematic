@@ -1,0 +1,19 @@
+* Frozen historical fixed-placement routing regression, independent of examples.
+* Signal connectivity was recovered from fixed-2-placement.json pin anchors.
+* Source amplitudes are geometric test placeholders, not a simulation reference.
+M1 f5 f6 vdd vdd PMOS W=1u L=150n
+M2 f6 f5 vdd vdd PMOS W=1u L=150n
+M3 f6 clk vdd vdd PMOS W=1u L=150n
+M4 f2 clk vdd vdd PMOS W=1u L=150n
+M6 f3 clk vdd vdd PMOS W=1u L=150n
+M7 f5 f6 f3 0 NMOS W=1u L=150n
+M8 f6 f5 f2 0 NMOS W=1u L=150n
+M9 f2 vinp f1 0 NMOS W=1u L=150n
+M10 f3 vinn f1 0 NMOS W=1u L=150n
+M11 f1 clk 0 0 NMOS W=1u L=150n
+M12 f5 clk vdd vdd PMOS W=1u L=150n
+VDD vdd 0 1.8
+VCLK clk 0 0
+VINP vinp 0 0
+VINN vinn 0 0
+.end

@@ -1,0 +1,216 @@
+{
+  "schema": "circuit-rsi-suite-v1",
+  "seed": 20261029,
+  "cases": [
+    {
+      "id": "search_rc",
+      "split": "search",
+      "family": "passive",
+      "input": "benchmarks/corpus/search_rc.spi",
+      "cell": null
+    },
+    {
+      "id": "search_mirror",
+      "split": "search",
+      "family": "mos",
+      "input": "benchmarks/corpus/search_mirror.cir",
+      "cell": "dut"
+    },
+    {
+      "id": "validation_rlc",
+      "split": "validation",
+      "family": "passive",
+      "input": "benchmarks/corpus/validation_rlc.spi",
+      "cell": null
+    },
+    {
+      "id": "validation_mos",
+      "split": "validation",
+      "family": "mos",
+      "input": "benchmarks/corpus/validation_mos.spi",
+      "cell": null
+    },
+    {
+      "id": "test_oscillator",
+      "split": "test",
+      "family": "opamp",
+      "input": "benchmarks/corpus/test_oscillator.cir",
+      "cell": null
+    },
+    {
+      "id": "test_ota",
+      "split": "test",
+      "family": "mos",
+      "input": "benchmarks/corpus/test_ota.spi",
+      "cell": "ota_5t"
+    },
+    {
+      "id": "extended_01",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_01.cir",
+      "cell": "dut",
+      "original": "ams-net-192-resistively-loaded-nmos-differential-pair-with-mos-tail-m3.cir"
+    },
+    {
+      "id": "extended_03",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_03.cir",
+      "cell": "dut",
+      "original": "ams-net-259-nmos-cascode-current-mirror-fed-by-iref-output-at-p-iout-iref.cir"
+    },
+    {
+      "id": "extended_04",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_04.cir",
+      "cell": "dut",
+      "original": "ams-net-822-two-resistively-loaded-nmos-differential-pairs-m3-m4-drives-the-cross-wired-pair-m1-m2-through-nodes-x-a.cir"
+    },
+    {
+      "id": "extended_05",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_05.cir",
+      "cell": "dut",
+      "original": "ams-net-824-nmos-differential-pair-with-pmos-current-source-loads-m3-m4-biased-by-vb-and-tail-current-source-iss.cir"
+    },
+    {
+      "id": "extended_07",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_07.cir",
+      "cell": "Main",
+      "original": "redrawing.cir"
+    },
+    {
+      "id": "extended_08",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_08.cir",
+      "cell": "dut",
+      "original": "simplied-version-of-enhancement-mode-amp.cir"
+    },
+    {
+      "id": "extended_10",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_10.cir",
+      "cell": "dut",
+      "original": "analoggenie-182-telescopic-differential-stage-with-resistive-cm-sensing-and-rc-source-degeneration.cir"
+    },
+    {
+      "id": "extended_11",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_11.cir",
+      "cell": "dut",
+      "original": "analoggenie-700-cascoded-nmos-differential-pair-with-resistive-loads-and-source-resistances-fig-p4-30.cir"
+    },
+    {
+      "id": "extended_12",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_12.cir",
+      "cell": "dut",
+      "original": "cross-coupled.cir"
+    },
+    {
+      "id": "extended_14",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_14.cir",
+      "cell": "Main",
+      "original": "lna-with-degeneration.cir"
+    },
+    {
+      "id": "extended_15",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_15.cir",
+      "cell": "self_adaptive_current_mirror_buffer_fvf_ldo",
+      "original": "self-adaptive-current-mirror-buffer-fvf-ldo.cir"
+    },
+    {
+      "id": "extended_16",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_16.cir",
+      "cell": "dut",
+      "original": "strongarm-comparator.cir"
+    },
+    {
+      "id": "extended_17",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_17.cir",
+      "cell": "dut",
+      "original": "tspc-dff.cir"
+    },
+    {
+      "id": "extended_18",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_18.cir",
+      "cell": "dut",
+      "original": "analoggenie-295-folded-cascode-amplifier-with-nmos-input-pair-and-rc-input-feedback-networks.cir"
+    },
+    {
+      "id": "extended_19",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_19.cir",
+      "cell": "dut",
+      "original": "analoggenie-652-ldo-regulator-with-two-stage-miller-compensated-error-amplifier.cir"
+    },
+    {
+      "id": "extended_20",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_20.cir",
+      "cell": "dut",
+      "original": "analoggenie-817-bipolar-folding-amplifier-four-pairs-emitter-follower-or.cir"
+    },
+    {
+      "id": "extended_21",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_21.cir",
+      "cell": "dut",
+      "original": "analoggenie-984-regulated-cascode-nmos-input-op-amp-with-self-biased-cascode-pmos-load.cir"
+    },
+    {
+      "id": "extended_22",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_22.cir",
+      "cell": "dut",
+      "original": "circuit-implementation-of-the-amplifier-and.cir"
+    },
+    {
+      "id": "extended_23",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_23.cir",
+      "cell": "dut",
+      "original": "operational-amplifier.cir"
+    },
+    {
+      "id": "extended_24",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_24.cir",
+      "cell": "dut",
+      "original": "schematic-of-the-folded-cascode-amplifier-ota1-with-its-cmfb-circuit.cir"
+    },
+    {
+      "id": "extended_25",
+      "split": "test",
+      "family": "extended",
+      "input": "benchmarks/corpus/extended_25.cir",
+      "cell": "SCM_Biased_All_MOS_Temperature_Compensated_Current_Reference",
+      "original": "scm-biased-all-mos-temperature-compensated-current-reference.cir"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+.subckt dut VDD VSS vout- vout+ Vb vin+ vin-
+.model NMOS nmos level=54
+CL1 VSS vout- 1p
+CL2 VSS vout+ 1p
+Ibias net4 VSS DC 1m
+M1 net2 net0 net4 VSS NMOS l=150n m=1 nf=1 w=1u
+M2 net1 net3 net4 VSS NMOS l=150n m=1 nf=1 w=1u
+M3 vout- Vb net2 VSS NMOS l=150n m=1 nf=1 w=1u
+M4 vout+ Vb net1 VSS NMOS l=150n m=1 nf=1 w=1u
+RD1 VDD vout- 1k
+RD2 VDD vout+ 1k
+RS1 vin+ net0 1k
+RS2 vin- net3 1k
+.ends dut

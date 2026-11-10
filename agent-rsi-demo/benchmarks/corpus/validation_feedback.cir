@@ -1,0 +1,6 @@
+V1 vin 0 0.1
+E1 out 0 vin fb 1e6
+R1 out fb 22k
+R2 fb 0 2k
+C1 out 0 1n
+.end

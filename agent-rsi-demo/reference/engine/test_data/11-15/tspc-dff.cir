@@ -1,0 +1,16 @@
+
+.subckt dut VDD VSS D CLK Q_bar Q
+.model NMOS nmos level=54
+.model PMOS pmos level=54
+M1 net4 D VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M10 Q Q_bar VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M11 Q Q_bar VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M2 net0 CLK net4 VDD PMOS l=150n m=1 nf=1 w=1u
+M3 net0 D VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M4 net5 CLK VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M5 net5 net0 net1 VSS NMOS l=150n m=1 nf=1 w=1u
+M6 net1 CLK VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M7 Q_bar net3 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M8 net2 net3 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M9 Q_bar CLK net2 VSS NMOS l=150n m=1 nf=1 w=1u
+.ends dut

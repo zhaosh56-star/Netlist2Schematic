@@ -1,0 +1,48 @@
+{
+  "schema": "circuit-rsi-suite-v1",
+  "seed": 20261029,
+  "cases": [
+    {
+      "id": "search_rc",
+      "split": "search",
+      "family": "passive",
+      "input": "benchmarks/corpus/search_rc.spi",
+      "cell": null
+    },
+    {
+      "id": "search_mirror",
+      "split": "search",
+      "family": "mos",
+      "input": "benchmarks/corpus/search_mirror.cir",
+      "cell": "dut"
+    },
+    {
+      "id": "validation_rlc",
+      "split": "validation",
+      "family": "passive",
+      "input": "benchmarks/corpus/validation_rlc.spi",
+      "cell": null
+    },
+    {
+      "id": "validation_mos",
+      "split": "validation",
+      "family": "mos",
+      "input": "benchmarks/corpus/validation_mos.spi",
+      "cell": null
+    },
+    {
+      "id": "test_oscillator",
+      "split": "test",
+      "family": "opamp",
+      "input": "benchmarks/corpus/test_oscillator.cir",
+      "cell": null
+    },
+    {
+      "id": "test_ota",
+      "split": "test",
+      "family": "mos",
+      "input": "benchmarks/corpus/test_ota.spi",
+      "cell": "ota_5t"
+    }
+  ]
+}

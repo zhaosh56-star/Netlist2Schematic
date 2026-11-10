@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "symbol": {
+    "schemaVersion": 1,
+    "id": "voltage-amplifier",
+    "name": "Voltage Amplifier",
+    "viewBox": {
+      "x": -44,
+      "y": -34,
+      "width": 88,
+      "height": 68
+    },
+    "pins": [
+      {
+        "name": "IN",
+        "role": "input",
+        "at": {
+          "x": -40,
+          "y": 0
+        },
+        "direction": "west",
+        "presentation": {
+          "visibility": "visible",
+          "leadLength": 10
+        }
+      },
+      {
+        "name": "OUT",
+        "role": "output",
+        "at": {
+          "x": 30,
+          "y": 0
+        },
+        "direction": "east",
+        "presentation": {
+          "visibility": "visible",
+          "leadLength": 10
+        }
+      }
+    ],
+    "primitives": [
+      {
+        "kind": "line",
+        "from": {
+          "x": -40,
+          "y": 0
+        },
+        "to": {
+          "x": -30,
+          "y": 0
+        },
+        "style": {
+          "strokeRole": "normal",
+          "lineCap": "butt",
+          "lineJoin": "miter"
+        }
+      },
+      {
+        "kind": "path",
+        "data": "M -30 -30 L -30 30 L 21.961524 0 Z",
+        "style": {
+          "strokeRole": "emphasis",
+          "lineCap": "butt",
+          "lineJoin": "miter",
+          "miterLimit": 4
+        },
+        "bounds": {
+          "x": -30,
+          "y": -30,
+          "width": 51.961524,
+          "height": 60
+        }
+      },
+      {
+        "kind": "line",
+        "from": {
+          "x": 21.961524,
+          "y": 0
+        },
+        "to": {
+          "x": 30,
+          "y": 0
+        },
+        "style": {
+          "strokeRole": "normal",
+          "lineCap": "butt",
+          "lineJoin": "miter"
+        }
+      }
+    ],
+    "variants": []
+  },
+  "electrical": null,
+  "subcircuit": {
+    "id": "voltage-amplifier",
+    "symbolId": "voltage-amplifier",
+    "target": "voltage_amplifier",
+    "ports": [
+      {
+        "name": "VDD",
+        "direction": "inout",
+        "supply": "VDD"
+      },
+      {
+        "name": "VSS",
+        "direction": "inout",
+        "supply": "VSS"
+      },
+      {
+        "name": "VIN",
+        "direction": "input",
+        "pinName": "IN"
+      },
+      {
+        "name": "VOUT",
+        "direction": "output",
+        "pinName": "OUT"
+      }
+    ]
+  },
+  "catalog": {
+    "library": "razavi",
+    "symbolId": "voltage-amplifier",
+    "name": "Voltage Amplifier",
+    "category": "analog-block",
+    "reviewStatus": "reviewed",
+    "pinOrder": ["IN", "OUT"],
+    "palette": true,
+    "automaticMappings": [],
+    "manualOnlyReason": "Textbook gain block has implicit reference nodes and no exact primitive SPICE terminal contract.",
+    "assetPath": "voltage-amplifier.json",
+    "visualAuthority": {
+      "kind": "razavi-reference-v1",
+      "referenceManifestPath": "fixtures/visual-reference/razavi-reference-v1/manifest.json",
+      "referencePaths": [
+        "fixtures/visual-reference/razavi-reference-v1/voltage-amplifier-vector-source.json",
+        "fixtures/visual-reference/razavi-reference-v1/voltage-amplifier-reference.png"
+      ],
+      "calibrationPath": "fixtures/visual-reference/razavi-reference-v1/common-symbol-geometry.json"
+    },
+    "generation": {
+      "kind": "razavi-pdf-vector-reference",
+      "referenceManifestPath": "fixtures/visual-reference/razavi-reference-v1/manifest.json",
+      "referencePath": "fixtures/visual-reference/razavi-reference-v1/voltage-amplifier-vector-source.json",
+      "converterPath": "scripts/generate-razavi-common-assets.mjs",
+      "converterVersion": 6,
+      "bodyNormalization": "equilateral-triangle"
+    }
+  }
+}

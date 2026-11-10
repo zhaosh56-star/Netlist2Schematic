@@ -1,0 +1,30 @@
+
+.subckt dut VDD VSS INN INP OUTP OUTN IREF VCOM
+.model NMOS nmos level=54
+.model PMOS pmos level=54
+C1 net4 OUTP 1p
+C2 net5 OUTP 1p
+M1 OUTP net8 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M10 net3 net10 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M11 net0 net6 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M12 net10 net10 net3 VDD PMOS l=150n m=1 nf=1 w=1u
+M13 net6 net6 net0 VDD PMOS l=150n m=1 nf=1 w=1u
+M14 net10 net11 net1 VSS NMOS l=150n m=1 nf=1 w=1u
+M15 net6 VCOM net2 VSS NMOS l=150n m=1 nf=1 w=1u
+M16 net1 net11 net12 VSS NMOS l=150n m=1 nf=1 w=1u
+M17 net2 VCOM net12 VSS NMOS l=150n m=1 nf=1 w=1u
+M18 net12 IREF VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M19 IREF IREF VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M2 OUTP IREF VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M3 net8 net10 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M4 net9 net10 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M5 net8 INN net7 VSS NMOS l=150n m=1 nf=1 w=1u
+M6 net9 INP net7 VSS NMOS l=150n m=1 nf=1 w=1u
+M7 net7 IREF VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M8 OUTP net9 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M9 OUTP IREF VSS VSS NMOS l=150n m=1 nf=1 w=1u
+R1 net8 net4 1k
+R2 net5 net9 1k
+R3 net11 OUTN 1k
+R4 net11 OUTP 1k
+.ends dut

@@ -1,0 +1,21 @@
+.subckt dut VDD VSS Vin1 Vin2 Vb4 Vb3 Vb2 Vb1
+.model NMOS nmos level=54
+.model PMOS pmos level=54
+C1 net7 Vin1 1p
+C2 net5 Vin2 1p
+I1 net1 VSS DC 1m
+M1 net0 net8 net1 VSS NMOS l=150n m=1 nf=1 w=1u
+M10 net4 Vb4 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+M2 net4 net6 net1 VSS NMOS l=150n m=1 nf=1 w=1u
+M3 X Vb3 net0 VDD PMOS l=150n m=1 nf=1 w=1u
+M4 Y Vb3 net4 VDD PMOS l=150n m=1 nf=1 w=1u
+M5 X Vb2 net3 VSS NMOS l=150n m=1 nf=1 w=1u
+M6 Y Vb2 net2 VSS NMOS l=150n m=1 nf=1 w=1u
+M7 net3 Vb1 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M8 net2 Vb1 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M9 net0 Vb4 VDD VDD PMOS l=150n m=1 nf=1 w=1u
+R1 net8 net7 1k
+R2 net6 net5 1k
+R3 X net8 1k
+R4 net6 Y 1k
+.ends dut

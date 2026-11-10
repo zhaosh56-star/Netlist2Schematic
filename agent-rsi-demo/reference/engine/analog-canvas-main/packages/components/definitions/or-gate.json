@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "symbol": {
+    "schemaVersion": 1,
+    "id": "or-gate",
+    "name": "OR Gate",
+    "viewBox": {
+      "x": -44,
+      "y": -24,
+      "width": 88,
+      "height": 48
+    },
+    "pins": [
+      {
+        "name": "A",
+        "role": "input",
+        "at": {
+          "x": -30,
+          "y": -10
+        },
+        "direction": "west",
+        "presentation": {
+          "visibility": "visible",
+          "leadLength": 15
+        }
+      },
+      {
+        "name": "B",
+        "role": "input",
+        "at": {
+          "x": -30,
+          "y": 10
+        },
+        "direction": "west",
+        "presentation": {
+          "visibility": "visible",
+          "leadLength": 14
+        }
+      },
+      {
+        "name": "Y",
+        "role": "output",
+        "at": {
+          "x": 20,
+          "y": 0
+        },
+        "direction": "east",
+        "presentation": {
+          "visibility": "visible",
+          "leadLength": 4
+        }
+      }
+    ],
+    "primitives": [
+      {
+        "kind": "line",
+        "from": {
+          "x": -30,
+          "y": -10
+        },
+        "to": {
+          "x": -15.436394,
+          "y": -10
+        },
+        "style": {
+          "strokeRole": "normal",
+          "lineCap": "butt",
+          "lineJoin": "miter"
+        }
+      },
+      {
+        "kind": "line",
+        "from": {
+          "x": -30,
+          "y": 10
+        },
+        "to": {
+          "x": -15.748539,
+          "y": 10
+        },
+        "style": {
+          "strokeRole": "normal",
+          "lineCap": "butt",
+          "lineJoin": "miter"
+        }
+      },
+      {
+        "kind": "path",
+        "data": "M 15.757259 0.002616 C 15.757259 0.002616 15.757259 0.002616 13.373442 2.213794 C 10.989624 4.426715 6.22199 8.849071 0.263319 11.829279 C -5.697096 14.809486 -12.850292 16.345802 -16.425146 17.114831 C -20 17.882117 -20 17.882117 -20 17.882117 C -20 17.882117 -20 17.882117 -18.139332 14.786817 C -16.275176 11.689772 -12.550353 5.497428 -12.550353 -0.438574 C -12.550353 -6.374575 -16.275176 -12.055977 -18.139332 -14.896678 C -20 -17.735635 -20 -17.735635 -20 -17.735635 C -20 -17.735635 -20 -17.735635 -16.425146 -16.991019 C -12.850292 -16.246403 -5.697096 -14.757172 0.263319 -11.799634 C 6.22199 -8.84384 10.989624 -4.41974 13.373442 -2.208562 C 15.757259 0.002616 15.757259 0.002616 15.757259 0.002616",
+        "style": {
+          "strokeRole": "emphasis",
+          "lineCap": "butt",
+          "lineJoin": "miter",
+          "miterLimit": 4
+        },
+        "bounds": {
+          "x": -20,
+          "y": -17.735635,
+          "width": 35.757259,
+          "height": 35.617752
+        }
+      },
+      {
+        "kind": "line",
+        "from": {
+          "x": 15.757259,
+          "y": 0
+        },
+        "to": {
+          "x": 20,
+          "y": 0
+        },
+        "style": {
+          "strokeRole": "normal",
+          "lineCap": "butt",
+          "lineJoin": "miter"
+        }
+      }
+    ],
+    "variants": []
+  },
+  "electrical": null,
+  "catalog": {
+    "library": "razavi",
+    "symbolId": "or-gate",
+    "name": "OR Gate",
+    "category": "logic",
+    "reviewStatus": "reviewed",
+    "pinOrder": ["A", "B", "Y"],
+    "palette": true,
+    "automaticMappings": [],
+    "manualOnlyReason": "Behavioral logic gate; structural SPICE realization requires an explicit subcircuit or PDK mapping.",
+    "assetPath": "or-gate.json",
+    "visualAuthority": {
+      "kind": "razavi-reference-v1",
+      "referenceManifestPath": "fixtures/visual-reference/razavi-reference-v1/manifest.json",
+      "referencePaths": [
+        "fixtures/visual-reference/razavi-reference-v1/logic-nor-gate-vector-source.json",
+        "fixtures/visual-reference/razavi-reference-v1/logic-nor-gate-reference.png"
+      ],
+      "calibrationPath": "fixtures/visual-reference/razavi-reference-v1/logic-gate-geometry.json"
+    },
+    "generation": {
+      "kind": "razavi-pdf-vector-reference",
+      "referenceManifestPath": "fixtures/visual-reference/razavi-reference-v1/manifest.json",
+      "referencePath": "fixtures/visual-reference/razavi-reference-v1/logic-nor-gate-vector-source.json",
+      "converterPath": "scripts/generate-razavi-logic-gate-assets.mjs",
+      "converterVersion": 3,
+      "bodyNormalization": "left-grid-anchor"
+    }
+  },
+  "subcircuit": {
+    "id": "or-gate",
+    "symbolId": "or-gate",
+    "target": "or_gate",
+    "ports": [
+      {
+        "name": "VDD",
+        "direction": "inout",
+        "supply": "VDD"
+      },
+      {
+        "name": "VSS",
+        "direction": "inout",
+        "supply": "VSS"
+      },
+      {
+        "name": "A",
+        "direction": "input",
+        "pinName": "A"
+      },
+      {
+        "name": "B",
+        "direction": "input",
+        "pinName": "B"
+      },
+      {
+        "name": "Y",
+        "direction": "output",
+        "pinName": "Y"
+      }
+    ]
+  }
+}

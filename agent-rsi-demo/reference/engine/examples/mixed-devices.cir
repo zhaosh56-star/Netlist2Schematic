@@ -1,0 +1,13 @@
+
+VDD vdd 0 5
+VIN in 0 0.7
+R1 vdd c1 10k
+Q1 c1 in 0 QN
+Q2 c2 in vdd QP
+R2 c2 0 10k
+D1 c1 clamp DM
+R3 clamp 0 100k
+E1 out 0 c1 c2 100
+R4 out 0 1k
+.end
+

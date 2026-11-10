@@ -1,0 +1,6 @@
+.subckt Main Vref Vout Vsignal
+C3 Vsignal Vout 1p
+R4 Vsignal Vout 1k
+R6 net0 Vref 1k
+X1 0 0 net0 Vsignal Vout opamp
+.ends Main

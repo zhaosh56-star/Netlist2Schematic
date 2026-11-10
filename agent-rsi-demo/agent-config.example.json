@@ -1,0 +1,25 @@
+{
+  "timeout_seconds": 180,
+  "max_output_tokens": 16000,
+  "max_source_rounds": 4,
+  "max_context_chars": 400000,
+  "max_edit_files": 8,
+  "max_file_bytes": 220000,
+  "max_total_bytes": 600000,
+  "claude_executable": "claude",
+  "roles": {
+    "analyst": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    "implementer": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    "reviewer": null
+  },
+  "repair_attempts": 2,
+  "execution_repair_attempts": 1
+}

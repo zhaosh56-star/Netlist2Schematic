@@ -1,0 +1,27 @@
+{
+  "source": "https://github.com/Xi0ng-Jun/SN_benchmark.git",
+  "branch": "feat/method-v4.1",
+  "commit": "c01964cccb89e0cbf91717bd46994ff93c189f9b",
+  "files": {
+    "src/rag_eval/__init__.py": "a92db454fb9d20e399ba043a5b3d965a8ee723fed37dd8f28b1ef43716dd2bff",
+    "src/rag_eval/optimizer/__init__.py": "e07a1785cdf73adefee6f7601ccec5e717450c0ff78cc8574a9d2ace53687e85",
+    "src/rag_eval/optimizer/adapter.py": "138477e38908a464a3f7c5554d3eec1c91fd1ef4bca8254155fd32344dce36da",
+    "src/rag_eval/optimizer/ledger.py": "8690727c8650c672bdf61f18de517f0efa807a02553ae36203d4907adf5aeff6",
+    "src/rag_eval/optimizer/ledger_io.py": "98b4e34457c56b81aa05397189e7dbb5d11c50d580d5aff51df1ed3ef2405a41",
+    "src/rag_eval/optimizer/loop.py": "24d8d621e4bf94d0be741ed9d90e872875dc92c71edcff88db801890b7abd7ab",
+    "src/rag_eval/optimizer/stats.py": "00c7ef2b06c499c43cf3e82952f2a66e97b64b933c945d44ef05e9bbadda196c",
+    "src/rag_eval/optimizer/v4/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/rag_eval/optimizer/v4/agent_context.py": "e27bc8d8388f80acc13fc5133cb064853e2ddde5cdcc7918e6bb8e7e4606cfdf",
+    "src/rag_eval/optimizer/v4/calibrate.py": "36cc32c9daf8d4227444b9cb4a203f2c68aad2352c8b31674e4f2625f6ca3036",
+    "src/rag_eval/optimizer/v4/config.py": "8818b9f8c62b09e59ec0f0aaeaccd58b622a29f1ff59f89413faba991db4b0fa",
+    "src/rag_eval/optimizer/v4/decide.py": "0de05c46fe1526c6cf07a8f0c33f4fc91df8fd3f43863582f9b6c46b95dfb1fa",
+    "src/rag_eval/optimizer/v4/loop.py": "8bc254d0377513c9e032c62113d1259ff397b457aa139b5a92881072fec8532f",
+    "src/rag_eval/optimizer/v4/mechanism.py": "bc683130dec9042a70a3684e92a283f1ab86a9ae6343d849a0c14f281acc525f",
+    "src/rag_eval/optimizer/v4/results.py": "f95490049f2949df9c5d9c062398208c8ebe7afd9b8e0c4f625cf1ae6833d5e7",
+    "src/rag_eval/optimizer/v4/stages.py": "c67e6d1fc71c2294d00c3b66df4800a359b0d4471dc0d7de9f1a7fe6b0bc31be",
+    "docs/method-v4.1-runbook.md": "7f3e9ffd78dceb03461b206177ee186f8e6712e62a557304def2dce88895fcec",
+    "docs/method-v4.1-progress.md": "a69cde918039d64f66cf89383c6702bb5d7dbf973653debe2871478384d06f22",
+    "docs/method-v4-runbook.md": "e167f5eb8185b507077fcea8c529444d9fb229468006886dae1799d2631fe79b",
+    "src/rag_eval/reasoning_protocol.py": "cb3ae28076aba500e7c7153eb9e8c1baece7dfc98261cd338d332067c346753a"
+  }
+}

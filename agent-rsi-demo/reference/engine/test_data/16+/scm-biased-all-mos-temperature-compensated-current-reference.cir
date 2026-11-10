@@ -1,0 +1,22 @@
+.subckt SCM_Biased_All_MOS_Temperature_Compensated_Current_Reference VSS
+.model NMOS nmos level=54
+.model PMOS pmos level=54
+CSTART VDD SU 10p
+MN1 X X VSS VSS NMOS l=1u m=1 nf=1 w=40u
+MN10 P SU VSS VSS NMOS l=8u m=1 nf=1 w=.42u
+MN2 S X D VSS NMOS l=1u m=1 nf=1 w=160u
+MN3 A A X VSS NMOS l=1u m=1 nf=1 w=160u
+MN4 P A S VSS NMOS l=1u m=1 nf=1 w=160u
+MN5 D G E VSS NMOS l=8u m=1 nf=1 w=6.3u
+MN6 E G VSS VSS NMOS l=8u m=1 nf=1 w=6.3u
+MN7 F G H VSS NMOS l=8u m=1 nf=1 w=6.3u
+MN8 H G VSS VSS NMOS l=8u m=1 nf=1 w=6.3u
+MN9 G G F VSS NMOS l=8u m=1 nf=1 w=0.42u
+MP1 net0 U VDD VDD PMOS l=1u m=1 nf=1 w=280u
+MP2 A P net0 VDD PMOS l=1u m=1 nf=1 w=28u
+MP3 U U VDD VDD PMOS l=1u m=1 nf=1 w=280u
+MP4 P P U VDD PMOS l=1u m=1 nf=1 w=28u
+MP5 net1 U VDD VDD PMOS l=1u m=1 nf=1 w=280u
+MP6 G P net1 VDD PMOS l=1u m=1 nf=1 w=28u
+RSTART SU VSS 50meg
+.ends SCM_Biased_All_MOS_Temperature_Compensated_Current_Reference

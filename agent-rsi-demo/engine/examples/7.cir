@@ -1,0 +1,20 @@
+
+
+
+Vdd vdd 0 DC 1.8
+Vg3 g3 0 DC 0.573
+MN3 ta g3 0 0 nmos_basic w=52e-6 l=2e-6
+MN1 a inp ta 0 nmos_basic w=24e-6 l=0.6e-6
+MN2 b inn ta 0 nmos_basic w=24e-6 l=0.6e-6
+MP1 b b vdd vdd pmos_basic w=24e-6 l=0.6e-6
+MP2 a b vdd vdd pmos_basic w=24e-6 l=0.6e-6
+MP9ref vbias_p vbias_p vdd vdd pmosm w=24e-6 l=1.5e-6
+Isnk vbias_p 0 DC 26.4u
+MP9 out2 vbias_p vdd vdd pmosm w=240e-6 l=1.5e-6
+MN6 out2 a 0 0 nmosl w=8e-6 l=2e-6
+Rz rz a 1.3k
+Cc rz out2 0.44e-12
+CL out2 0 20e-15
+Vin inp 0 DC 0.900 AC 0.5
+Vinn inn 0 DC 0.900 AC -0.5
+.end

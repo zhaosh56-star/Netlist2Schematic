@@ -1,0 +1,1 @@
+﻿本目录是完整电路 Agent RSI 任务。先读 PROJECT_CONTEXT.md、OPTIMIZATION_SCOPE.md、CLAUDE_START.md 和 README.md。目标是通过每轮实际源码举措改善真实网表到电路图的生成能力；以冻结参考独立验收和 RSI v4.1 配对复测为准。受保护评测、数据和资源不可修改。不要将 smoke 接线示例称为真实自主优化。在当前交互 Claude Code 会话中不要递归启动 --mode claude；由用户独立终端启动或使用 API 模式。

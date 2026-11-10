@@ -1,0 +1,11 @@
+.subckt Main VDD VSS
+.model NMOS nmos level=54
+C1 VDD net1 1p
+CP VDD net0 1p
+L1 VDD net0 1n
+LP VDD net1 1n
+M1 net0 net1 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+M2 net1 net0 VSS VSS NMOS l=150n m=1 nf=1 w=1u
+R2 VDD net1 1k
+RP VDD net0 1k
+.ends Main

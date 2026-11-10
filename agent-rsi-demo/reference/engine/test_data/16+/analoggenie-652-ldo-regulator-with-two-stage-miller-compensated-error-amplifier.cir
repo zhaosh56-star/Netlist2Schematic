@@ -1,0 +1,20 @@
+.subckt dut VDD VSS Vreg
+.model NMOS nmos level=54
+.model PMOS pmos level=54
+C1 net0 net5 0.1pF
+Cext Vreg net1 10uF
+I1 VDD net6 DC 20uA
+M1 net6 net6 VSS VSS NMOS l=1u m=1 nf=1 w=10u
+M2 net3 net4 net7 VSS NMOS l=1u m=1 nf=1 w=1u
+M3 net7 net6 VSS VSS NMOS l=1u m=1 nf=1 w=10u
+M4 net5 net2 net7 VSS NMOS l=1u m=1 nf=1 w=1u
+M5 net3 net3 VDD VDD PMOS l=1u m=1 nf=1 w=20u
+M6 net5 net3 VDD VDD PMOS l=1u m=1 nf=1 w=20u
+M7 net0 net5 VDD VDD PMOS l=1u m=1 nf=1 w=20u
+M8 net0 net6 VSS VSS NMOS l=1u m=1 nf=1 w=10u
+M9 Vreg net0 VDD VDD PMOS l=0.5u m=20 nf=1 w=20u
+R1 Vreg net2 10kΩ
+R2 net2 VSS 20kΩ
+Rext net1 VSS 1Ω
+Vref net4 VSS DC 1.2V
+.ends dut

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "sky130-hvt-pfet-op-v1",
+  "profileId": "sky130-core-continuous-ngspice46-v1",
+  "devices": ["sky130_fd_pr__pfet_01v8_hvt"],
+  "analyses": ["op"],
+  "modelLibrary": { "directive": "lib" },
+  "expectedCorners": {
+    "tt": { "hvtPfetSourceCurrentA": -0.0001340828323798393 },
+    "ff": { "hvtPfetSourceCurrentA": -0.0001390822188942903 },
+    "ss": { "hvtPfetSourceCurrentA": -0.0001098813554037681 },
+    "fs": { "hvtPfetSourceCurrentA": -0.0001605816753243589 },
+    "sf": { "hvtPfetSourceCurrentA": -0.0001116919393008009 }
+  },
+  "tolerances": { "mosCurrentA": 1e-10 },
+  "evidence": {
+    "observedAt": "2026-10-11",
+    "executor": "candidate-image",
+    "environmentFingerprint": "33c245e5df6dc12077b6a2e4ebf308777b0e9014fe9bfdafc3285c614688561d"
+  }
+}
