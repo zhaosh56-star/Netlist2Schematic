@@ -141,6 +141,44 @@ def _clean_text(label, fmt, *, kind, attributes='', local_origin=None):
             f'font-family="monospace" font-size="14" fill="#111">{escape(label["text"])}</text>')
 
 
+def net_label_render_hints(par, placement, comps, nets, index, routed, validation):
+    """Freeze clean text before a display-only wire transformation."""
+    stubs, markers, power_runs, supplies = [], [], {}, []
+    custom = getattr(placement, 'power_connections', None)
+    if custom is None:
+        for net, members in nets.items():
+            symbol = par.power_marker_sym(net)
+            if not symbol:
+                continue
+            for cid, pin in members:
+                endpoint = placement.pin_world(index[cid], pin)
+                tip = (endpoint[0], endpoint[1] + (-par.STUB_LEN if symbol == 'vdd-port' else par.STUB_LEN))
+                stubs.append((symbol, tip, endpoint))
+                box = par.GEO_DOC[symbol]['orientations'][0]['viewBoxAABB']
+                supplies.append((net, (tip[0]+box['x'], tip[1]+box['y'],
+                    tip[0]+box['x']+box['width'], tip[1]+box['y']+box['height']), tip, (cid, pin)))
+    else:
+        from routing_rules import RoutingOptions, build_scene, canonical_topology
+        scene = build_scene(par, nets, placement, index,
+                            options=RoutingOptions(**validation.get('parameters', {})))
+        for connection in scene.power_connections:
+            symbol, anchor = connection['symbol'], connection['anchor']
+            local = par.GEO_DOC[symbol]['orientations'][0]['pins'][0]['at']
+            origin = (anchor[0]-local['x'], anchor[1]-local['y'])
+            box = par.GEO_DOC[symbol]['orientations'][0]['viewBoxAABB']
+            label = (origin[0]+box['x']+box['width']+6, origin[1]+8)
+            markers.append((connection, origin, label))
+            power_runs.setdefault(connection['net'], []).extend(connection['segments'])
+            supplies.append((connection['net'], (origin[0]+box['x'], origin[1]+box['y'],
+                origin[0]+box['x']+box['width'], origin[1]+box['y']+box['height']),
+                anchor, (connection['component_id'], connection['pin'])))
+        power_runs = {net: canonical_topology(runs)['segments'] for net, runs in power_runs.items()}
+    component_text, supply_text, port_text = _presentation_labels(
+        par, placement, comps, nets, index, routed, stubs, markers, power_runs, supplies)
+    return {'component_text': component_text, 'supply_text': supply_text, 'port_text': port_text,
+            'text_obstacles': [row['bounds'] for row in component_text+supply_text+port_text]}
+
+
 def segs_to_paths(segments):
     adjacency = defaultdict(set)
     for a, b in segments:
@@ -171,8 +209,17 @@ def segs_to_paths(segments):
 
 
 def render_svg(par, placement, comps, nets, comp_index, routed, metrics, out,
-               *, clean=False, structs=(), validation=None):
-    clean_presentation = clean and getattr(placement, 'presentation_style', 'legacy') == 'clean'
+               *, clean=False, structs=(), validation=None, net_label_view=None):
+    if net_label_view is not None:
+        from net_label_validation import display_routes
+        from routing_rules import canonical_topology
+        # Include new leader T junctions in path extraction and branch dots;
+        # merged drawing runs alone do not expose an interior branch endpoint.
+        routed = [(net, canonical_topology(lines)['segments'])
+                  for net, lines in display_routes(net_label_view)]
+        metrics = net_label_view['display_metrics']
+    clean_presentation = (net_label_view is not None or
+        clean and getattr(placement, 'presentation_style', 'legacy') == 'clean')
     wire_width = (validation or {}).get('parameters', {}).get('wire_width', 2.5)
     stage = getattr(placement, 'routing_stage', 'normal')
     bus_layout = ((validation or {}).get('router') == 'constructive-bus-v1'
@@ -242,7 +289,7 @@ def render_svg(par, placement, comps, nets, comp_index, routed, metrics, out,
         for a, b in segments:
             xs.extend((a[0], b[0])); ys.extend((a[1], b[1]))
     bus_labels = []
-    if bus_layout:
+    if bus_layout and net_label_view is None:
         label_x = min(xs, default=0) - 16
         for net, segments in routed:
             if len(nets.get(net, ())) < 2 or not segments:
@@ -280,12 +327,22 @@ def render_svg(par, placement, comps, nets, comp_index, routed, metrics, out,
              f"prox={metrics['proximity']:.0f}")
     component_text, supply_text, port_text = [], [], []
     if clean_presentation:
-        component_text, supply_text, port_text = _presentation_labels(
-            par, placement, comps, nets, comp_index, routed, stubs, power_markers,
-            power_runs, supply_markers)
+        if net_label_view is not None:
+            hints = net_label_view['render_hints']
+            component_text, supply_text = hints['component_text'], hints['supply_text']
+            tagged = {label['net'] for label in net_label_view['labels']}
+            port_text = [label for label in hints['port_text'] if label['net'] not in tagged]
+        else:
+            component_text, supply_text, port_text = _presentation_labels(
+                par, placement, comps, nets, comp_index, routed, stubs, power_markers,
+                power_runs, supply_markers)
         for label in component_text + supply_text + port_text:
             xleft, ytop, xright, ybottom = label['bounds']
             xs.extend((xleft, xright)); ys.extend((ytop, ybottom))
+        if net_label_view is not None:
+            for label in net_label_view['labels']:
+                left, top, right, bottom = label['bounds']
+                xs.extend((left, right)); ys.extend((top, bottom))
         x0, y0 = min(xs, default=0)-24, min(ys, default=0)-(48 if bus_layout else 28)
         width = max(132 if bus_layout else 80, max(xs, default=100)+24-x0)
         height = max(80, max(ys, default=100)+24-y0)
@@ -356,13 +413,24 @@ def render_svg(par, placement, comps, nets, comp_index, routed, metrics, out,
                 f' data-anchor-component="{escape(label["component"], quote=True)}"'
                 f' data-anchor-pin="{escape(label["pin"], quote=True)}"'
                 f' data-anchor-x="{fmt(label["point"][0])}" data-anchor-y="{fmt(label["point"][1])}"'))
+        if net_label_view is not None:
+            for label in net_label_view['labels']:
+                text = dict(label, anchor=label['anchor_style'])
+                parts.append(_clean_text(text, fmt, kind='net-label', attributes=
+                    f' data-net-label-net="{escape(label["net"], quote=True)}"'
+                    f' data-net-label-group="{escape(label["group_id"], quote=True)}"'
+                    f' data-net-label-anchor-x="{fmt(label["anchor"][0])}"'
+                    f' data-net-label-anchor-y="{fmt(label["anchor"][1])}"'
+                    f' data-net-label-tip-x="{fmt(label["tip"][0])}"'
+                    f' data-net-label-tip-y="{fmt(label["tip"][1])}"'))
         if bus_layout:
             parts.append(f'<text data-presentation-stage="bus_fallback" x="{fmt(x0+12)}" y="{fmt(y0+18)}" font-family="monospace" font-size="12" fill="#555">Bus fallback</text>')
     else:
         parts.append(f'<text x="{fmt(x0+16)}" y="{fmt(y0+22)}" font-family="monospace" font-size="12" fill="#111">{title}</text>')
     destination = Path(out)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    expression = ' data-wire-expression="net-labels"' if net_label_view is not None else ''
     destination.write_text(
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{fmt(width)}" height="{fmt(height)}" viewBox="{fmt(x0)} {fmt(y0)} {fmt(width)} {fmt(height)}">\n'
+        f'<svg xmlns="http://www.w3.org/2000/svg"{expression} width="{fmt(width)}" height="{fmt(height)}" viewBox="{fmt(x0)} {fmt(y0)} {fmt(width)} {fmt(height)}">\n'
         + '\n'.join(parts) + '\n</svg>\n', encoding='utf-8')
     return destination

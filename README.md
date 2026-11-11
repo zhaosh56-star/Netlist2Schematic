@@ -8,6 +8,8 @@
 
 独立试验开关包括 `--presentation clean`（只清理黑白成品展示）、`--candidate-budget reserved`（给后续候选预留时间）、`--port-preflight repair`（修复静态端口/标记冲突）。三者默认分别为legacy、sequential、off，不自动改变日常结果。已有JSON可用 `render-clean.py 原JSON 新SVG --presentation clean` 只重绘。
 
+可选的 `--net-labels auto` 在完整布线和安全缩线完成后，额外生成“局部连线＋同名网标”视图，用网标省去少量严重长连接。默认off；完整原图、线路及评分保留，局部组与网标另行验收，不接入现有RSI评分。已有JSON可独立处理，见[网标插件说明](docs/net-labels.md)。
+
 结构布局已完成完整对照及并联RLC专项复验；部分样例尚未满足15%线长或交叉门槛，结构策略继续默认关闭。结果与限制见[分阶段实现与实测结果](docs/structure-layout-results.md)。
 
 想看目前识别的子结构是什么样，见[子结构图鉴说明](docs/structure-gallery.md)。运行 `.\.venv\Scripts\python.exe .\tools\generate_structure_gallery.py` 可生成20张带角色、网表及实际识别记录的示意图，入口为 `output/structure-gallery/index.html`。

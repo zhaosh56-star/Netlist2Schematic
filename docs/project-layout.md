@@ -53,10 +53,11 @@ Netlist2Schematic/
 | 失败恢复 | `local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 局部救援、扩距重试、确定性总线后备 |
 | 最终安全简化 | `simplify_routes.py`、`route_reattachment.py`、`route_patterns.py`、`route_tracks.py` | 按阶段调度路径缩短、叶支路重接、三段式和原轨道收紧；不运行SA/A*，线长/折角/交叉均不增加 |
 | 图形输出 | `sa_render.py` | 从同一份已验收线路生成彩色与黑白 SVG |
+| 可选网标展示 | `net_labels.py`、`net_label_core.py`、`net_label_validation.py` | 默认关闭；完整结果保存后独立生成、验收和重绘局部连线加同名网标的额外视图 |
 | 共同支持 | `sa_common.py`、`sa_geometry.py`、`sa_saved.py` | 路径、动态模块加载、几何缓存、JSON和固定结果恢复 |
 | 独立重绘 | `render-clean.py` | 读取并复验保存的路线，单独生成黑白 SVG |
 
-独立重绘之前的各组共27个 Python 文件，包含默认流程及必要时的恢复路径；`render-clean.py` 是额外的独立工具。一次成功运行不一定执行所有阶段，但这些文件都有用途，不能仅凭当次未调用就删除。
+这些模块包含默认流程、必要时的恢复路径及显式开启的可选视图；`render-clean.py` 是额外的独立重绘工具。一次成功运行不一定执行所有阶段，但这些文件都有用途，不能仅凭当次未调用就删除。
 
 根目录保留带连字符的旧脚本名，是为了保留已有命令和动态加载路径。未来若要改成 Python 包，应一起修改导入、独立入口、资源路径和测试，避免只移动文件导致 flow 失效。
 
