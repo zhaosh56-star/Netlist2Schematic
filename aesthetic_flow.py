@@ -64,7 +64,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   quality_seconds=300, routing_options=None, candidate_id=None,
                   passive_layout='flexible', symmetry_layout='off', structure_layout='off',
                   structure_phase=3, candidate_budget='sequential',port_preflight='off',
-                  region_layout='off', readability_layout='off', readability_phase=2,
+                  region_layout='off', readability_layout='off', readability_phase=3,
                   route_tradeoff='strict'):
     validate_policy(candidate_budget)
     if port_preflight not in ('off','repair'):
@@ -115,7 +115,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                                        include_legacy=include_legacy, structure_layout=structure_layout,
                                        structure_phase=structure_phase, region_layout=region_layout,
                                        readability_layout=readability_layout,
-                                       readability_phase=readability_phase)
+                                       readability_phase=readability_phase,
+                                       **({'routing_options': effective_options}
+                                          if readability_layout == 'auto' and readability_phase >= 5 else {}))
         for number, item in enumerate(candidates):
             if number >= candidate_limit:
                 stop_reason = 'candidate_limit'
@@ -149,7 +151,16 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             # position in the generator (the default sequence starts at 1).
             # when a prior route has a substantial, clearly excessive detour.
             # Small unavoidable local loops still get the compact third seed.
+            if (readability_layout == 'auto' and readability_phase >= 3
+                    and identifier in ('2', '3') and shared_readability_plan is not None):
+                from readability_selection import reference_seed
+                reused = reference_seed(par, placement, comps, nets, index, metadata,
+                                        valid_results, shared_readability_plan, phase=readability_phase)
+                if reused is not None:
+                    placement, comps, nets, index, metadata = reused
             feedback_replaced = False
+            readability_feedback_state = None
+            readability_feedback_statistics = {}
             feedback_best = best
             local_refinement_deadline = min(candidate_deadline, perf_counter()+1)
             if readability_layout == 'auto' and identifier == '3':
@@ -170,11 +181,13 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     from readability_routing import feedback_readability
                     proposal = feedback_readability(par, feedback_best[1], feedback_best[2],
                         feedback_best[3], feedback_best[4], feedback_best[5], feedback_best[6],
-                        options=effective_options, deadline=local_refinement_deadline)
+                        options=effective_options, deadline=local_refinement_deadline,
+                        statistics=readability_feedback_statistics)
                     if proposal is not None:
                         placement, comps, nets, index, metadata = proposal
                         metadata['candidate_id'] = int(identifier)
                         feedback_replaced = True
+                        readability_feedback_state = deepcopy((placement, metadata))
                     severe = False
                 if severe:
                     proposal = feedback_candidate(feedback_best[1], feedback_best[2], feedback_best[3], feedback_best[4],
@@ -191,7 +204,12 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 placement, metadata = refine_readability(
                     par, placement, comps, nets, index, metadata, options=effective_options,
                     deadline=local_refinement_deadline, seconds=max(0, local_refinement_deadline-perf_counter()),
-                    max_candidates=128, phase=min(readability_phase, 4))
+                    max_candidates=max(0, 128-readability_feedback_statistics.get('candidates', 0)),
+                    phase=min(readability_phase, 4))
+                if readability_feedback_state is not None:
+                    placement, metadata = _preserve_readability_feedback(
+                        par, placement, comps, nets, index, metadata, readability_feedback_state,
+                        effective_options, local_refinement_deadline)
             # Apply to the actual layout after feedback replacement, before
             # capturing a checkpoint.  Keep candidate 1 as the original seed.
             if symmetry_layout == 'auto' and identifier in ('1', '2', '3'):
@@ -471,6 +489,35 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     if readability_selection is not None:
         metadata['quality']['readability_selection'] = readability_selection
     return placement, comps, nets, index, metadata, routed_result
+
+
+def _preserve_readability_feedback(par, pl, comps, nets, index, metadata, saved, options, deadline):
+    """Later source/spacing refinements cannot silently undo a better escape."""
+    from orthogonal_router import RoutingFailure
+    from readability_routing import escape_risk
+    from routing_rules import build_scene
+    report = saved[1]['layout_readability']['routing_feedback']
+    result = None
+    reason = 'refinement_deadline'
+    if perf_counter() < deadline:
+        try:
+            scene = build_scene(par, nets, pl, index, options=options, deadline=deadline)
+            groups = [[(index[name] if isinstance(name, str) else name, pin)
+                       for name, pin in group] for group in report['branch']['port_groups']]
+            result = escape_risk(scene, report['net'], groups, deadline)
+            reason = 'escape_risk_regression'
+        except RoutingFailure:
+            pass
+    if result is None or tuple(result['key']) > tuple(report['after_risk']['key']):
+        pl, metadata = saved
+        metadata['layout_readability']['feedback_order_check'] = {
+            'action': 'rolled_back_later_refinement', 'reason': reason,
+            'feedback_risk_preserved': True}
+    else:
+        metadata['layout_readability']['feedback_order_check'] = {
+            'action': 'kept_later_refinement', 'actual_risk': result,
+            'feedback_risk_preserved': True}
+    return pl, metadata
 
 
 def _region_feedback_compatible(source, target):

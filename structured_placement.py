@@ -829,7 +829,7 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
 def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
                       passive_layout='flexible', include_legacy=False,
                       structure_layout='off', structure_phase=3, region_layout='off',
-                      readability_layout='off', readability_phase=2):
+                      readability_layout='off', readability_phase=3, routing_options=None):
     """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -969,10 +969,35 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
             placement.branch_connections=copy.deepcopy(row_plan.get('bridge_alignment',[]))
         attachment_report = None
         readability_initialization = None
+        initializer_risk = None
         if readability_layout == 'auto' and variant:
             from readability_layout import prepare_readability_placement
-            placement, readability_initialization = prepare_readability_placement(
-                placement, devices, comps, nets, index, readability_plan, deadline=deadline)
+            if readability_phase >= 5:
+                from readability_routing import make_initializer_cost
+                from orthogonal_router import RoutingFailure
+                seed_before = placement
+                init_deadline = min(deadline, time.perf_counter()+1) if deadline else time.perf_counter()+1
+                estimate, initializer_risk = make_initializer_cost(
+                    par, placement, comps, nets, index, readability_plan,
+                    options=routing_options, deadline=init_deadline)
+                try:
+                    placement, readability_initialization = prepare_readability_placement(
+                        placement, devices, comps, nets, index, readability_plan, deadline=init_deadline,
+                        max_trials=initializer_risk.get('max_trials', 32) if estimate is not None else 128,
+                        estimate=estimate)
+                except RoutingFailure as exc:
+                    if exc.diagnostics.get('reason') not in (
+                            'quality_time_budget', 'initializer_cost_trial_limit',
+                            'missing_port_pair_measurement'):
+                        raise
+                    placement = seed_before
+                    readability_initialization = {'status': 'rolled_back', 'applied': False,
+                        'reason': exc.diagnostics.get('reason'), 'actions': []}
+                if estimate is not None:
+                    initializer_risk['selected_seed_cost'] = estimate.peek(placement)
+            else:
+                placement, readability_initialization = prepare_readability_placement(
+                    placement, devices, comps, nets, index, readability_plan, deadline=deadline)
         if layout_relations is not None and structure_phase >= 3:
             from attachment_placement import prepare_attachments
             placement, attachment_report = prepare_attachments(
@@ -1005,6 +1030,8 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                 'initialization': copy.deepcopy(readability_initialization),
                 'metrics': measure_readability(placement, comps, index, readability_plan),
                 'measurement_stage': 'after_sa_and_geometry_floor'}
+            if initializer_risk is not None:
+                metadata['layout_readability']['initializer_escape_risk'] = copy.deepcopy(initializer_risk)
             if row_plan:
                 metadata['branch_row_plan'] = copy.deepcopy(row_plan)
         if region_layout == 'auto' and variant:
