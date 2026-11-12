@@ -32,7 +32,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
         candidate_budget='sequential', port_preflight='off', presentation='legacy', net_labels='off',
-        region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=4):
+        region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -219,7 +219,7 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    quality_seconds, candidate_id, options, *, passive_layout='flexible',
                    symmetry_layout='off', structure_layout='off', structure_phase=3,
                    candidate_budget='sequential',port_preflight='off', region_layout='off',
-                   readability_layout='off', readability_phase=4, route_tradeoff='strict'):
+                   readability_layout='off', readability_phase=5, route_tradeoff='strict'):
     if mode == 'layered' and layout_style == 'structured':
         from aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
@@ -773,7 +773,7 @@ def main(argv=None, default_mode='layered'):
                         help='Experimental functional-region layout for candidates 2/3 (default: off)')
     parser.add_argument('--readability-layout', choices=('auto', 'off'), default='off',
                         help='Experimental passive/source organization and compaction for candidates 2/3')
-    parser.add_argument('--readability-phase', type=int, choices=(2, 3, 4, 5), default=4,
+    parser.add_argument('--readability-phase', type=int, choices=(2, 3, 4, 5), default=5,
                         help='Replay an independent readability rollout phase')
     parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=3,
                         help='Replay a structure rollout phase; ignored when structure-layout is off')

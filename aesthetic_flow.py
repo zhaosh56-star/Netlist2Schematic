@@ -64,7 +64,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   quality_seconds=300, routing_options=None, candidate_id=None,
                   passive_layout='flexible', symmetry_layout='off', structure_layout='off',
                   structure_phase=3, candidate_budget='sequential',port_preflight='off',
-                  region_layout='off', readability_layout='off', readability_phase=4,
+                  region_layout='off', readability_layout='off', readability_phase=5,
                   route_tradeoff='strict'):
     validate_policy(candidate_budget)
     if port_preflight not in ('off','repair'):
@@ -167,6 +167,15 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 from readability_selection import feedback_compatible
                 compatible = [row for row in valid_results if feedback_compatible(row[5], metadata)]
                 feedback_best = min(compatible, key=lambda row: row[0]) if compatible else None
+                if feedback_best is not None and best is not None:
+                    reference_metrics, proposal_metrics = best[6][1], feedback_best[6][1]
+                    cross_cap = reference_metrics['crossings'] + (2 if route_tradeoff == 'balanced'
+                        else 1 if reference_metrics['crossings'] else 0)
+                    if (proposal_metrics['wirelength'] > reference_metrics['wirelength']*1.15+1e-8
+                            or proposal_metrics['crossings'] > cross_cap):
+                        feedback_best = None
+                        metadata.setdefault('layout_readability', {})['feedback_skipped'] = (
+                            'reference_outside_original_quality_routing_limits')
             if (region_layout == 'auto' and identifier == '3'
                     and shared_region_plan is not None and shared_region_plan.get('supported')):
                 compatible = [row for row in valid_results

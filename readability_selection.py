@@ -21,9 +21,21 @@ def reference_seed(par, placement, comps, nets, index, metadata, results, plan, 
     """
     if not results or plan is None:
         return None
+    # Keep candidate three's independent seed. Repeatedly cloning the same
+    # successful core consumed both experimental slots and erased diversity.
+    if str(metadata.get('candidate_id')) != '2':
+        return None
     from readability_layout import measure_readability
     from readability_refinement import measure_refinements
     target = measure_readability(placement, comps, index, plan)
+    locality = measure_refinements(par, placement, comps, nets, index, plan, phase=min(phase, 4))
+    active_rows = sorted({plan.get('display_rows', {}).get(c['id']) for c in comps
+                          if c['symbol'] in ('nmos', 'pmos', 'npn', 'pnp')
+                          and type(plan.get('display_rows', {}).get(c['id'])) is int})
+    reserved_band = bool(active_rows and len(active_rows) < active_rows[-1]-active_rows[0]+1)
+    if not locality.get('source_count', 0) and not (phase >= 4 and reserved_band
+                                                  and plan.get('patterns')):
+        return None
     if target.get('passive_supported') and target.get('measurable') is False:
         return None
     target_shape = tuple(_number(target.get(k)) for k in ('violations',)) + (
@@ -103,6 +115,8 @@ def measure_candidate(par, pl, comps, nets, index, metadata, plan, *, phase=5, s
     result = deepcopy(metadata)
     report = result.setdefault('layout_readability', {'policy': 'auto', 'applied': False})
     report.update(phase=phase, measurement_stage=stage)
+    if report.get('refinement', {}).get('actions') or report.get('routing_feedback', {}).get('action'):
+        report['applied'] = True
     if report.get('reference_seed', {}).get('source_geometry_sha256'):
         reference = report['reference_seed']
         reference['duplicate_reference_geometry'] = reference['source_geometry_sha256'] == _geometry_key(pl, comps)
@@ -130,9 +144,12 @@ def organization_rank(report):
     metrics = report.get('metrics', {})
     refinement = report.get('refinement_metrics', {})
     coverage = metrics.get('coverage', {})
-    passive = bool(metrics.get('passive_supported', coverage.get('pattern_count', 0)))
+    from readability_layout import has_strong_passive_plan
+    passive = bool(metrics.get('passive_supported', coverage.get('pattern_count', 0))
+                   and has_strong_passive_plan(report.get('plan', {})))
     source = bool(refinement.get('source_count', 0))
-    compact = report.get('phase', 2) >= 4 and refinement.get('measurable', False)
+    compact = (report.get('phase', 2) >= 4 and refinement.get('measurable', False)
+               and refinement.get('compaction_applicable', True))
     if compact and refinement.get('bank_outlet_planned', 0) and (
             refinement.get('bank_outlet_measurable') is False
             or type(refinement.get('bank_outlet_error')) not in (int, float)

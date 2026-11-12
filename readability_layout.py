@@ -514,6 +514,22 @@ def measure_readability(pl, comps, index, plan):
     return metrics
 
 
+def has_strong_passive_plan(plan):
+    """Whether topology warrants changing initialization and the SA objective.
+
+    A lone attachment only identifies an endpoint to measure. Sources likewise
+    stay available to local refinement without changing the global search.
+    """
+    if not isinstance(plan, dict):
+        return False
+    if plan.get('series_axes'):
+        return True
+    strong_kinds = {'parallel_bank', 'series_chain', 'multi_path_bridge', 'two_arm_join'}
+    return any(pattern.get('kind') in strong_kinds
+               and len(set(pattern.get('members', ()))) >= 2
+               for pattern in plan.get('patterns', ()))
+
+
 def readability_rank(metrics):
     if not metrics.get('supported') or not metrics.get('measurable'):
         return (inf, inf, inf, inf)
@@ -626,20 +642,27 @@ def prepare_readability_placement(pl, devices, comps, nets, index, plan, *, dead
         raise ValueError('readability initializer requires 0..1 seconds')
     started = perf_counter()
     until = min(started+seconds, deadline) if deadline is not None else started+seconds
+    strong = has_strong_passive_plan(plan)
     report = dict(version=VERSION, status='skipped', applied=False, actions=[], trials=0,
         max_trials=max_trials, seconds_limit=seconds, common_estimator='provided' if estimate else 'hpwl_plus_readability',
-        hpwl_ratio_limit=1.15, plan_signature=plan.get('signature'))
+        hpwl_ratio_limit=1.15, plan_signature=plan.get('signature'), sa_enabled=strong)
     if not plan.get('supported'):
         report['reason'] = 'no_supported_readability_relations'
         return pl, report
-    if perf_counter() >= until or max_trials == 0:
+    if strong and (perf_counter() >= until or max_trials == 0):
         report['reason'] = 'initialization_budget'
         return pl, report
     clone = deepcopy(pl)
     clone.readability_plan, clone.readability_index = deepcopy(plan), dict(index)
     clone.readability_phase = 2
+    clone.readability_sa_enabled = strong
     before = measure_readability(clone, comps, index, plan)
     report['before'] = deepcopy(before)
+    if not strong:
+        report.update(status='report_only', reason='weak_relations_report_only',
+            after=deepcopy(before), elapsed_seconds=perf_counter()-started)
+        clone.readability_initialization = deepcopy(report)
+        return clone, report
     if not before.get('measurable'):
         report['reason'] = 'unknown_measurement'
         return pl, report

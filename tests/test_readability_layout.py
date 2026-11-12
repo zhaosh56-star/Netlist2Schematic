@@ -14,7 +14,8 @@ from circuit_structures import analyze_structures
 from device_leveling import compute_levels
 from netlist_core import to_document
 from readability_layout import (build_readability_plan, junction_point,
-    measure_readability, prepare_readability_placement, readability_rank, score_readability)
+    has_strong_passive_plan, measure_readability, prepare_readability_placement,
+    readability_rank, score_readability)
 from tests.test_passive_placement import convert, mos, resistor, source
 
 
@@ -58,6 +59,26 @@ def snapshot(pl):
 
 
 class ReadabilityPlanTests(unittest.TestCase):
+    def test_strong_plan_requires_multiple_related_passives_or_a_series_axis(self):
+        bank = bank_fixture()[-1]
+        bridge, _, _, _ = plan_for(network())
+        chain_devices = network()
+        del chain_devices['bypass']
+        chain, _, _, _ = plan_for(chain_devices)
+        arms, _, _, _ = plan_for(dict(a=mos('left', 'ga'), b=mos('right', 'gb'),
+            host=mos('out', 'sense'), r=resistor('left', 'sense'), s=resistor('right', 'sense')))
+        self.assertTrue(any(row['kind'] == 'two_arm_join' for row in arms['patterns']))
+        for plan in (bank, bridge, chain, arms):
+            self.assertTrue(has_strong_passive_plan(plan))
+        single, _, _, _ = plan_for(dict(a=mos('out', 'in'), c=resistor('out', '0', 'C')))
+        self.assertFalse(has_strong_passive_plan(single))
+        only_source, _, _, _ = plan_for(dict(a=mos('out', 'in'), v=source('VSRC', 'in')))
+        self.assertFalse(has_strong_passive_plan(only_source))
+        self.assertFalse(has_strong_passive_plan({'patterns': [
+            {'kind': 'parallel_bank', 'members': ['c']},
+            {'kind': 'series_chain', 'members': ['c', 'c']}]}))
+        self.assertTrue(has_strong_passive_plan({'series_axes': [{'a': 'r', 'b': 'l'}]}))
+
     def test_parallel_bank_keeps_multiple_real_junction_anchors(self):
         devices = dict(a=mos('signal', 'ga'), b=mos('signal', 'gb'),
             r=resistor('vdd', 'signal'), c=resistor('vdd', 'signal', 'C'), l=resistor('vdd', 'signal', 'L'))
@@ -288,6 +309,7 @@ class ReadabilityPreparationTests(unittest.TestCase):
         self.assertTrue(result.valid_state())
         self.assertEqual(result.cell_of[index['a']], pl.cell_of[index['a']])
         self.assertEqual(result.readability_plan, plan)
+        self.assertTrue(result.readability_sa_enabled)
         self.assertFalse(hasattr(result, 'attachment_model'))
         # No new rigid block prevents a passive from changing rows later.
         passive = index['r']
@@ -308,6 +330,27 @@ class ReadabilityPreparationTests(unittest.TestCase):
             result, report = prepare_readability_placement(pl, devices, comps, nets, index, plan, **options)
             self.assertEqual((result.cell_of, result.orient), original)
             self.assertFalse(report['applied'])
+
+    def test_weak_source_plan_is_measured_without_trials_even_with_no_initialization_budget(self):
+        devices = dict(a=mos('left', 'ip', 'tail'), b=mos('right', 'im', 'tail'),
+                       i=source('ISRC', 'tail'))
+        pl, comps, nets, index, structs = convert(devices, dict(a=(1, 1), b=(1, 3), i=(3, 6)))
+        plan = build_readability_plan(devices, comps, nets, index, structs, compute_levels(devices), pl.row_of)
+        original = snapshot(pl)
+        with mock.patch('readability_layout._targets', side_effect=AssertionError('weak initializer moved')):
+            result, report = prepare_readability_placement(pl, devices, comps, nets, index, plan,
+                seconds=0, max_trials=0, estimate=lambda _: self.fail('weak initializer estimated'))
+        self.assertEqual(snapshot(pl), original)
+        self.assertEqual((result.cell_of, result.orient, result.rng.getstate()),
+                         (pl.cell_of, pl.orient, pl.rng.getstate()))
+        self.assertFalse(result.readability_sa_enabled)
+        self.assertEqual(result.readability_plan, plan)
+        self.assertEqual(report['status'], 'report_only')
+        self.assertEqual(report['reason'], 'weak_relations_report_only')
+        self.assertEqual(report['trials'], 0)
+        self.assertFalse(report['applied'])
+        self.assertGreater(report['after']['source_locality'], 0)
+        self.assertIsNone(report['after']['violations'])
 
     def test_timeout_and_unsupported_are_exact_old_object_and_rng(self):
         devices, pl, comps, nets, index, plan = bank_fixture()
@@ -347,6 +390,64 @@ class ReadabilityPreparationTests(unittest.TestCase):
         self.assertEqual(snapshot(pl), original)
         self.assertFalse(report['applied'])
         self.assertEqual(report['reason'], 'initialization_budget')
+
+
+class WeakReadabilityFlowTests(unittest.TestCase):
+    def test_real_single_capacitor_preserves_initialization_sa_random_stream_and_freedom(self):
+        import structured_placement as structured
+        source_path = ROOT / 'examples/3.cir'  # Eleven MOS devices and one output load capacitor.
+        real_anneal = structured._anneal
+
+        def run(mode, iterations):
+            before_sa = []
+            def tracked_anneal(pl, *args):
+                before_sa.append(deepcopy((pl.cell_of, pl.orient, pl.row_of,
+                    pl.column_x, pl.row_y, pl.blocks, pl.fixed_rows,
+                    pl.passive_relations, pl.rng.getstate())))
+                return real_anneal(pl, *args)
+            with mock.patch.object(structured, '_anneal', side_effect=tracked_anneal):
+                candidates = list(structured.create_candidates(source_path, iterations=iterations,
+                    seed=731, readability_layout=mode, readability_phase=5))
+            return candidates, before_sa
+
+        for iterations in (0, 600):
+            with self.subTest(iterations=iterations):
+                old, old_seeds = run('off', iterations)
+                with mock.patch('readability_routing.make_initializer_cost', side_effect=AssertionError('weak routing estimator')), \
+                     mock.patch('readability_layout._targets', side_effect=AssertionError('weak targets')), \
+                     mock.patch('readability_layout.score_readability', side_effect=AssertionError('weak SA score')), \
+                     mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('unexpected A*')):
+                    new, new_seeds = run('auto', iterations)
+                self.assertEqual(old_seeds, new_seeds)
+                for reference, measured in zip(old, new):
+                    a, b = reference[0], measured[0]
+                    self.assertEqual((a.cell_of, a.orient, a.row_of, a.blocks, a.move_counts, a.rng.getstate()),
+                                     (b.cell_of, b.orient, b.row_of, b.blocks, b.move_counts, b.rng.getstate()))
+                    self.assertEqual(reference[4]['optimization_metrics'], measured[4]['optimization_metrics'])
+                    self.assertEqual(reference[4]['annealing'], measured[4]['annealing'])
+                for candidate in new[1:]:
+                    pl, comps, _, index, metadata = candidate
+                    plan = metadata['layout_readability']['plan']
+                    self.assertEqual(semantics(plan), [('single_attachment', ('C1',))])
+                    self.assertFalse(has_strong_passive_plan(plan))
+                    self.assertFalse(pl.readability_sa_enabled)
+                    report = metadata['layout_readability']['initialization']
+                    self.assertEqual(report['reason'], 'weak_relations_report_only')
+                    self.assertEqual(report['trials'], 0)
+                    self.assertEqual(report['before'], report['after'])
+                    self.assertGreater(report['after']['owner_locality'], 0)
+                    self.assertTrue(metadata['layout_readability']['metrics']['measurable'])
+                    # The measured load remains free to move across display rows.
+                    capacitor = index['C1']
+                    active_cells = [cell for i, cell in enumerate(pl.cell_of) if i != capacitor]
+                    target = next((row, col) for row in range(len(pl.row_y)) for col in range(pl.cols)
+                                  if row != pl.cell_of[capacitor][0] and (row, col) not in pl.comp_at)
+                    undo = pl._passive_move(capacitor, target)
+                    self.assertIsNotNone(undo)
+                    self.assertEqual(pl.cell_of[capacitor], target)
+                    self.assertEqual([cell for i, cell in enumerate(pl.cell_of) if i != capacitor], active_cells)
+                    self.assertTrue(pl.valid_state())
+                    pl.set_state(*undo)
 
 
 if __name__ == '__main__':

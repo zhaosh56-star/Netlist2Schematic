@@ -45,6 +45,11 @@ class ReferenceSeedTests(unittest.TestCase):
         plan['display_rows']['a'] += 1
         self.assertIsNone(reference_seed(PAR, pl, comps, nets, index, metadata, [prior], plan))
 
+    def test_third_candidate_keeps_independent_seed(self):
+        pl, comps, nets, index, metadata, prior, plan = self.fixture()
+        metadata['candidate_id'] = 3
+        self.assertIsNone(reference_seed(PAR, pl, comps, nets, index, metadata, [prior], plan))
+
     def test_fixed_world_coordinates_are_preserved(self):
         pl, comps, nets, index, metadata, prior, plan = self.fixture()
         pl.fixed = {index['bias']}; pl.fixed_cells = {index['bias']: pl.cell_of[index['bias']]}
@@ -69,7 +74,7 @@ class ReferenceSeedTests(unittest.TestCase):
         pl, comps, nets, index, metadata, prior, plan = self.fixture()
         a = {'bank_outlet_planned': 1, 'bank_outlet_error': 0, 'source_count': 1}
         b = dict(a, bank_outlet_error=3)
-        with patch('readability_refinement.measure_refinements', side_effect=[a, b]):
+        with patch('readability_refinement.measure_refinements', side_effect=[a, a, b]):
             self.assertIsNone(reference_seed(PAR, pl, comps, nets, index, metadata, [prior], plan, phase=4))
 
 

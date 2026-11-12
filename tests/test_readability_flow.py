@@ -12,7 +12,8 @@ from readability_selection import feedback_compatible, organization_rank, select
 def result(identifier, score, violations, length=1000, crossings=0, signature='same'):
     metrics = {'wirelength': length, 'crossings': crossings, 'bends': 5}
     report = {'applied': identifier != '1', 'phase': 2, 'plan_signature': signature,
-        'plan': {'signature': signature},
+        'plan': {'signature': signature, 'patterns': [
+            {'kind': 'parallel_bank', 'members': ['a', 'b']}]},
         'metrics': {'passive_supported': True, 'violations': violations,
                     'shape_error': 0, 'pin_axis_error': 0, 'owner_locality': 1}}
     return ((score, crossings, length, identifier), None, [], {}, {},

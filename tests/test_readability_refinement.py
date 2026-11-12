@@ -288,6 +288,160 @@ class CompactionTests(unittest.TestCase):
         self.assertEqual(refine._passive_guard(unknown, unknown), (False, False))
 
 
+class CompactionApplicabilityTests(unittest.TestCase):
+    def fixture(self, rows=(1, 2), passive=False):
+        devices = dict(a=mos('oa', 'ga'), b=mos('ob', 'gb'))
+        cells = dict(a=(rows[0], 1), b=(rows[1], 6))
+        if passive:
+            devices['cap'] = resistor('oa', '0', 'C')
+            cells['cap'] = (max(rows)+1, 0)
+        return base_placement(devices, cells)
+
+    def test_pure_mos_contiguous_active_rows_do_not_use_canvas_void_as_evidence(self):
+        pl, comps, nets, index = self.fixture()
+        original = deepcopy(pl)
+        model = refine.build_refinement_model(PAR, comps, nets, index)
+        self.assertEqual(refine.compaction_applicability(pl, comps, {}, model),
+            (False, 'no_local_attachment_or_interior_row_band'))
+        result, meta = refine.refine_readability(PAR, pl, comps, nets, index, metadata(), phase=4)
+        report = meta['layout_readability']['refinement']
+        self.assertGreater(report['before']['void'], 0)
+        self.assertFalse(report['before']['compaction_applicable'])
+        self.assertEqual(report['stage_counts']['compact'], 0)
+        self.assertEqual(result.cell_of, original.cell_of)
+        self.assertEqual(result.row_y, original.row_y)
+        self.assertEqual(result.column_x, original.column_x)
+        self.assertEqual(pl.rng.getstate(), original.rng.getstate())
+
+    def test_a_single_capacitor_does_not_enable_global_compaction(self):
+        pl, comps, nets, index = self.fixture(passive=True)
+        plan = {'patterns': [dict(id='single', kind='single_attachment', members=['cap'])]}
+        model = refine.build_refinement_model(PAR, comps, nets, index, plan)
+        applicable, _ = refine.compaction_applicability(pl, comps, plan, model)
+        self.assertFalse(applicable)
+
+    def test_interior_reserved_row_can_be_empty_or_hold_an_edge_attachment(self):
+        for passive in (False, True):
+            pl, comps, nets, index = self.fixture(rows=(1, 3), passive=passive)
+            if passive:
+                cells = list(pl.cell_of); cells[index['cap']] = (2, 0)
+                refine._sync(pl, cells, pl.orient)
+            model = refine.build_refinement_model(PAR, comps, nets, index)
+            self.assertEqual(refine.compaction_applicability(pl, comps, {}, model),
+                (True, 'interior_display_row_band'))
+
+    def test_outer_unused_rows_are_not_an_interior_reserved_band(self):
+        pl, comps, nets, index = self.fixture()
+        pl.row_y.extend([pl.row_y[-1]+140, pl.row_y[-1]+280])
+        self.assertFalse(refine.compaction_applicability(pl, comps, {}, {'sources': []})[0])
+
+    def test_source_alone_does_not_enable_compaction_but_real_relationships_still_do(self):
+        pl, comps, nets, index = tail_fixture()
+        model = refine.build_refinement_model(PAR, comps, nets, index)
+        self.assertEqual(refine.compaction_applicability(pl, comps, {'supported': False}, model),
+            (False, 'local_source_only_no_core_compaction'))
+        pl, comps, nets, index = self.fixture()
+        self.assertEqual(refine.compaction_applicability(pl, comps, {'series_axes': [{'pins': []}]}, {}),
+            (True, 'verified_series_axes'))
+        devices = dict(a=mos('oa', 'ga'), b=mos('ob', 'gb'),
+                       r=resistor('oa', 'mid'), c=resistor('mid', '0', 'C'))
+        pl, comps, nets, index = base_placement(devices,
+            dict(a=(1, 1), b=(2, 6), r=(1, 3), c=(2, 3)))
+        plan = {'patterns': [dict(id='chain', kind='series_chain', members=['r', 'c'])]}
+        self.assertEqual(refine.compaction_applicability(pl, comps, plan, {}),
+            (True, 'nontrivial_passive_relationship'))
+
+    def test_local_current_voltage_and_multiple_sources_do_not_authorize_core_compaction(self):
+        variants = [dict(a=mos('oa', 'ga', 'tail'), b=mos('ob', 'gb', 'tail'),
+                         bias=source('ISRC', 'tail')),
+                    dict(driver=mos('out', 'reference'), voltage=source('VSRC', 'reference')),
+                    dict(a=mos('oa', 'ga', 'tail'), b=mos('ob', 'gb', 'tail'),
+                         bias=source('ISRC', 'tail'), driver=mos('out', 'reference'),
+                         voltage=source('VSRC', 'reference'))]
+        for devices in variants:
+            cells = {name: (1 if dev['cls'] == 'MOS' else 4, i)
+                     for i, (name, dev) in enumerate(devices.items())}
+            pl, comps, nets, index = base_placement(devices, cells)
+            model = refine.build_refinement_model(PAR, comps, nets, index)
+            self.assertTrue(model['sources'])
+            self.assertEqual(refine.compaction_applicability(pl, comps, {}, model),
+                (False, 'local_source_only_no_core_compaction'))
+
+    def test_single_cap_plus_local_source_is_still_not_a_compaction_trigger(self):
+        devices = dict(a=mos('oa', 'ga', 'tail'), b=mos('ob', 'gb', 'tail'),
+                       bias=source('ISRC', 'tail'), cap=resistor('oa', '0', 'C'))
+        pl, comps, nets, index = base_placement(devices,
+            dict(a=(1, 2), b=(1, 4), bias=(4, 0), cap=(2, 6)))
+        model = refine.build_refinement_model(PAR, comps, nets, index)
+        plan = {'patterns': [dict(id='single', kind='single_attachment', members=['cap'])]}
+        self.assertFalse(refine.compaction_applicability(pl, comps, plan, model)[0])
+
+    def test_local_source_with_a_real_inner_band_or_rc_chain_still_compacts(self):
+        pl, comps, nets, index = tail_fixture()
+        cells = list(pl.cell_of); cells[index['b']] = (3, 4)
+        refine._sync(pl, cells, pl.orient)
+        model = refine.build_refinement_model(PAR, comps, nets, index)
+        self.assertEqual(refine.compaction_applicability(pl, comps, {}, model),
+            (True, 'interior_display_row_band'))
+        devices = dict(a=mos('oa', 'ga', 'tail'), b=mos('ob', 'gb', 'tail'),
+                       bias=source('ISRC', 'tail'), r=resistor('oa', 'mid'), c=resistor('mid', '0', 'C'))
+        pl, comps, nets, index = base_placement(devices,
+            dict(a=(1, 2), b=(1, 4), bias=(4, 0), r=(2, 6), c=(3, 6)))
+        model = refine.build_refinement_model(PAR, comps, nets, index)
+        plan = {'patterns': [dict(id='chain', kind='series_chain', members=['r', 'c'])]}
+        self.assertEqual(refine.compaction_applicability(pl, comps, plan, model),
+            (True, 'nontrivial_passive_relationship'))
+
+    def test_phase_four_keeps_source_locality_improvement_without_moving_active_cells_or_axes(self):
+        pl, comps, nets, index = tail_fixture()
+        original = deepcopy(pl)
+        result, meta = refine.refine_readability(PAR, pl, comps, nets, index, metadata(), phase=4)
+        report = meta['layout_readability']['refinement']
+        self.assertFalse(report['compaction_applicable'])
+        self.assertEqual(report['compaction_reason'], 'local_source_only_no_core_compaction')
+        self.assertGreater(report['accepted'], 0)
+        self.assertLess(report['after']['source_distance'], report['before']['source_distance'])
+        self.assertIsInstance(report['after']['void'], (int, float))
+        self.assertEqual(report['stage_counts']['compact'], 0)
+        self.assertEqual(result.row_y, original.row_y)
+        self.assertEqual(result.column_x, original.column_x)
+        for name in ('a', 'b'):
+            i = index[name]
+            self.assertEqual(result.cell_of[i], original.cell_of[i])
+            self.assertEqual(result.orient[i], original.orient[i])
+        # Same-plan selection may reward the source improvement, but changing
+        # only this drawing's empty area must not change its final rank.
+        from readability_selection import organization_rank
+        selected = dict(phase=4, plan={}, metrics={}, refinement_metrics=deepcopy(report['after']))
+        rank = organization_rank(selected)
+        selected['refinement_metrics']['void'] += 100
+        selected['refinement_metrics']['compactness'] += 100
+        self.assertEqual(organization_rank(selected), rank)
+
+    def test_actual_fvf_inner_band_and_lna_rl_still_qualify(self):
+        from netlist_core import parse_netlist, to_document
+        paths = [ROOT/'test_data/11-15/self-adaptive-current-mirror-buffer-fvf-ldo.cir',
+                 ROOT/'test_data/11-15/lna-with-degeneration.cir']
+        for path in paths:
+            if not path.is_file():
+                self.skipTest('optional original source corpus is unavailable')
+            cell = ('self_adaptive_current_mirror_buffer_fvf_ldo' if 'self-adaptive' in path.name else 'main')
+            devices = parse_netlist(path, cell=cell)
+            doc = to_document(devices); comps, nets = doc['components'], doc['nets']
+            index = {row['id']: i for i, row in enumerate(comps)}
+            levels = structured.dl.compute_levels(devices)
+            conduction = {net for dev in devices.values() if dev['cls'] in ('MOS', 'BJT')
+                          for net in (dev.get('d'), dev.get('s'), dev.get('c'), dev.get('e')) if net is not None}
+            att = structured.legacy.attach_info(devices, levels['net_levels'], conduction)
+            rows, _ = structured.legacy._allocate_rows(devices, comps, index,
+                levels['net_levels'], levels['device_levels'], att)
+            cells = {name: (rows[i], i) for name, i in index.items()}
+            pl, comps, nets, index = base_placement(devices, cells)
+            plan = build_readability_plan(devices, comps, nets, index, structured._structures(devices), levels, rows)
+            model = refine.build_refinement_model(PAR, comps, nets, index, plan)
+            self.assertTrue(refine.compaction_applicability(pl, comps, plan, model)[0], path.name)
+
+
 class BankOutletRefinementTests(unittest.TestCase):
     def fixture(self):
         devices = dict(a=mos('left', 'right'), b=mos('right', 'left'))

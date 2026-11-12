@@ -118,10 +118,43 @@ def _union_area(rects):
     return area
 
 
+def compaction_applicability(pl, comps, plan, model):
+    """Require a nontrivial passive relation or an interior display-row band.
+
+    Blank canvas outside occupied active rows is not a reason to alter an
+    otherwise complete MOS drawing. A local source only authorizes its own
+    placement, not compression of the whole core. This predicate is pure and
+    independent of bounding-box area, pitch, route quality and instance names.
+    """
+    plan = _plan(plan)
+    model = model or {}
+    if plan.get('series_axes'):
+        return True, 'verified_series_axes'
+    by_id = {comp['id']: comp for comp in comps}
+    for pattern in plan.get('patterns', ()):
+        names = set(pattern.get('members', ()))
+        if not names or any(name not in by_id or by_id[name]['symbol'] not in PASSIVE for name in names):
+            continue
+        kind = pattern.get('kind')
+        if kind in ('parallel_bank', 'series_chain', 'two_arm_join', 'multi_path_bridge') and len(names) >= 2:
+            return True, 'nontrivial_passive_relationship'
+        if kind in ('bridge', 'rl_branch_bridge') and any(
+                by_id[name]['symbol'] in ('resistor', 'inductor') for name in names):
+            return True, 'nontrivial_passive_relationship'
+    active_rows = sorted({pl.cell_of[i][0] for i, comp in enumerate(comps)
+                          if comp['symbol'] in ACTIVE and pl.cell_of[i] is not None})
+    if len(active_rows) > 1 and any(b-a > 1 for a, b in zip(active_rows, active_rows[1:])):
+        return True, 'interior_display_row_band'
+    if model.get('sources'):
+        return False, 'local_source_only_no_core_compaction'
+    return False, 'no_local_attachment_or_interior_row_band'
+
+
 def measure_refinements(par, pl, comps, nets, index, metadata_or_plan=None, *, phase=4):
     """Pure, same-plan measurements for candidates, recovery and saved redraw."""
     plan = _plan(metadata_or_plan)
     model = build_refinement_model(par, comps, nets, index, plan)
+    compact_applicable, compact_reason = compaction_applicability(pl, comps, plan, model)
     records, distance, errors = [], 0.0, 0
     for row in model['sources']:
         anchor = _source_anchor(pl, index, row)
@@ -156,6 +189,7 @@ def measure_refinements(par, pl, comps, nets, index, metadata_or_plan=None, *, p
         bank_outlet_count=banks['count'], bank_outlet_error=banks['error'],
         bank_outlet_planned=banks.get('planned_count', banks['count']),
         bank_outlet_measurable=banks.get('measurable', banks['error'] is not None),
+        compaction_applicable=compact_applicable, compaction_reason=compact_reason,
         bank_outlets=deepcopy(banks['records']), skipped_bank_outlets=deepcopy(banks['skipped']),
         sources=records, skipped_sources=deepcopy(model['skipped_sources']))
 
@@ -503,6 +537,7 @@ def refine_readability(par, pl, comps, nets, index, metadata, *, options=None,
         status='unchanged', model=model, before=deepcopy(current), after=deepcopy(current),
         candidates=0, accepted=0, actions=[], static_rejections=0, hpwl_rejections=0,
         legal_rejections=0, bank_rejections=0, stage_counts={}, seconds_limit=seconds, max_candidates=max_candidates,
+        compaction_applicable=current['compaction_applicable'], compaction_reason=current['compaction_reason'],
         estimated_hpwl_before=baseline_hpwl, estimated_hpwl_limit=baseline_hpwl*1.15,
         estimated_hpwl_ratio_limit=1.15, passive_before=deepcopy(passive_current), passive_rejections=0)
     result.setdefault('layout_readability', {})['refinement'] = report
@@ -514,6 +549,9 @@ def refine_readability(par, pl, comps, nets, index, metadata, *, options=None,
     stages = ['source'] if phase == 3 else ['passive', 'source', 'compact']
     for stage in stages:
         report['stage_counts'][stage] = 0
+        if stage == 'compact' and not current['compaction_applicable']:
+            report.setdefault('skipped_stages', {})['compact'] = current['compaction_reason']
+            continue
         quota = max_candidates if phase == 3 else max(1, max_candidates//4) if stage == 'passive' else max(1, max_candidates//2) if stage == 'source' else max_candidates
         while report['stage_counts'][stage] < quota:
             if perf_counter() >= until or report['candidates'] >= max_candidates:

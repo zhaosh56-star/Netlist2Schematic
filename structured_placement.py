@@ -595,7 +595,7 @@ def _estimate(pl, nets, index, alignment, pairs):
         region_energy, regions = score_region_placement(pl, index, pl.region_plan)
         value += region_energy
         metrics.update(region_regularization=regions, normalized_energy=value)
-    if getattr(pl, 'readability_plan', None):
+    if getattr(pl, 'readability_plan', None) and getattr(pl, 'readability_sa_enabled', True):
         from readability_layout import score_readability
         regularity = score_readability(pl, pl.comps, index, pl.readability_plan)
         value += regularity['weighted_total']
@@ -829,7 +829,7 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
 def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
                       passive_layout='flexible', include_legacy=False,
                       structure_layout='off', structure_phase=3, region_layout='off',
-                      readability_layout='off', readability_phase=4, routing_options=None):
+                      readability_layout='off', readability_phase=5, routing_options=None):
     """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -971,8 +971,8 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         readability_initialization = None
         initializer_risk = None
         if readability_layout == 'auto' and variant:
-            from readability_layout import prepare_readability_placement
-            if readability_phase >= 5:
+            from readability_layout import prepare_readability_placement, has_strong_passive_plan
+            if readability_phase >= 5 and has_strong_passive_plan(readability_plan):
                 from readability_routing import make_initializer_cost
                 from orthogonal_router import RoutingFailure
                 seed_before = placement
@@ -1026,7 +1026,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
             metadata['layout_readability'] = {
                 'policy': 'auto', 'phase': readability_phase,
                 'version': readability_plan['version'], 'plan': copy.deepcopy(readability_plan),
-                'applied': bool(getattr(placement, 'readability_plan', None)),
+                'applied': bool(getattr(placement, 'readability_sa_enabled', False)),
                 'initialization': copy.deepcopy(readability_initialization),
                 'metrics': measure_readability(placement, comps, index, readability_plan),
                 'measurement_stage': 'after_sa_and_geometry_floor'}
