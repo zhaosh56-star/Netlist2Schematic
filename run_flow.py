@@ -32,7 +32,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
         candidate_budget='sequential', port_preflight='off', presentation='legacy', net_labels='off',
-        region_layout='off'):
+        region_layout='off', route_tradeoff='strict'):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -66,6 +66,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     rescue_policy = _rescue_policy(local_rescue, policy == 'auto')
     _validate_rescue_seconds(rescue_seconds)
     _validate_simplification(simplify_routes, simplify_seconds)
+    _validate_route_tradeoff(route_tradeoff)
     if policy == 'only' and candidate_id is not None:
         raise ValueError('fallback only cannot be combined with candidate_id')
     for name, value, minimum, inclusive in (
@@ -182,7 +183,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     return _finish(data, par, placement, comps, nets, comp_index, base, destination,
                    protected_paths={source}, options=options, routed_result=routed_result,
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
-                   net_labels=net_labels)
+                   net_labels=net_labels, route_tradeoff=route_tradeoff)
 
 
 def _validate_region_policy(region_layout, structure_layout='off', symmetry_layout='off'):
@@ -190,6 +191,11 @@ def _validate_region_policy(region_layout, structure_layout='off', symmetry_layo
         raise ValueError('region_layout must be auto or off')
     if region_layout == 'auto' and (structure_layout == 'auto' or symmetry_layout == 'auto'):
         raise ValueError('region_layout auto cannot be combined with structure_layout auto or symmetry_layout auto')
+
+
+def _validate_route_tradeoff(value):
+    if value not in ('strict', 'balanced'):
+        raise ValueError('route_tradeoff must be strict or balanced')
 
 
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
@@ -288,9 +294,11 @@ def _simplification_context_sha256(data, par):
 
 
 def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_result,
-                        options, policy, seconds, *, allow_verified_replay=False):
+                        options, policy, seconds, *, allow_verified_replay=False,
+                        route_tradeoff='strict'):
     """Postprocess one selected route; candidate selection is already finished."""
     routed, metrics, validation = routed_result
+    _validate_route_tradeoff(route_tradeoff)
     data = deepcopy(data)
     automatic = seconds == 'auto'
     reason = ('bus_fallback' if is_bus_layout({**data, 'validation': validation}) else
@@ -329,6 +337,7 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
             and isinstance(previous, dict) and previous.get('budget_seconds') == seconds)
     if (allow_verified_replay and isinstance(previous, dict)
             and previous.get('version') == VERSION
+            and previous.get('tradeoff', {}).get('policy', 'strict') == route_tradeoff
             and selection_matches
             and previous.get('routing_parameters') == routing_parameters
             and previous.get('context_sha256') == context_sha
@@ -343,7 +352,8 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
     allocated_seconds = selection['selected_seconds']
     simplified, final_metrics, checked, report = simplify(
         par, nets, placement, comp_index, routed_result,
-        options=effective_options, seconds=allocated_seconds)
+        options=effective_options, seconds=allocated_seconds,
+        **({'tradeoff': route_tradeoff} if route_tradeoff != 'strict' else {}))
     final_validation = deepcopy(validation)
     final_validation.update(checked)
     # Search diagnostics describe the original selected router invocation, not
@@ -460,10 +470,11 @@ def _record_failure(exc, diagnostic_path, source):
 def _finish(data, par, placement, comps, nets, comp_index, base, destination,
             *, protected_paths=(), options=None, routed_result=None,
             simplify_routes='safe', simplify_seconds=5, allow_verified_replay=False,
-            input_hashes=None, net_labels='off'):
+            input_hashes=None, net_labels='off', route_tradeoff='strict'):
     """Route and validate before staging any success artifacts."""
     destination = Path(destination).resolve()
     _validate_simplification(simplify_routes, simplify_seconds)
+    _validate_route_tradeoff(route_tradeoff)
     if net_labels not in ('off', 'auto'):
         raise ValueError('net_labels must be off or auto')
     names, diagnostic_path = _output_targets(base, data.get('mode', 'layered'), destination, protected_paths)
@@ -480,7 +491,8 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
     data['source_sha256'] = expected_hash
     data, (routed, metrics, validation) = _postprocess_routes(
         data, par, placement, comps, nets, comp_index, (routed, metrics, validation), options,
-        simplify_routes, simplify_seconds, allow_verified_replay=allow_verified_replay)
+        simplify_routes, simplify_seconds, allow_verified_replay=allow_verified_replay,
+        route_tradeoff=route_tradeoff)
     if isinstance(data.get('layout_symmetry'), dict):
         # Recovery may enlarge physical axes. Saved rerouting/redraw never
         # regularizes devices; this only measures the positions being exported.
@@ -601,10 +613,12 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
 
 def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
                       *, local_rescue=None, rescue_seconds=60,
-                      simplify_routes='safe', simplify_seconds=5,presentation=None, net_labels='off'):
+                      simplify_routes='safe', simplify_seconds=5,presentation=None, net_labels='off',
+                      route_tradeoff='strict'):
     rescue_policy = _rescue_policy(local_rescue, False)
     _validate_rescue_seconds(rescue_seconds)
     _validate_simplification(simplify_routes, simplify_seconds)
+    _validate_route_tradeoff(route_tradeoff)
     source_json = Path(jpath).expanduser().resolve()
     data, source, par, placement, comps, nets, comp_index = load_placement(
         source_json, analog_canvas_root=analog_canvas_root)
@@ -663,13 +677,15 @@ def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opti
                    protected_paths={source, source_json},
                    options=options, routed_result=routed_result,
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
-                   net_labels=net_labels)
+                   net_labels=net_labels, route_tradeoff=route_tradeoff)
 
 
 def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
-                       *, simplify_routes='safe', simplify_seconds=5,presentation=None, net_labels='off'):
+                       *, simplify_routes='safe', simplify_seconds=5,presentation=None, net_labels='off',
+                       route_tradeoff='strict'):
     """Validate and simplify saved wires without invoking any layout/router."""
     _validate_simplification(simplify_routes, simplify_seconds)
+    _validate_route_tradeoff(route_tradeoff)
     source_json = Path(jpath).expanduser().resolve()
     original_hash = hashlib.sha256(source_json.read_bytes()).hexdigest()
     data, source, par, placement, comps, nets, comp_index = load_placement(
@@ -711,7 +727,7 @@ def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opt
                    routed_result=(routed, metrics, validation),
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
                    allow_verified_replay=True, input_hashes={source_json: original_hash},
-                   net_labels=net_labels)
+                   net_labels=net_labels, route_tradeoff=route_tradeoff)
 
 
 def main(argv=None, default_mode='layered'):
@@ -748,6 +764,8 @@ def main(argv=None, default_mode='layered'):
                         help='Failure-only local routing; defaults to fallback policy, off for saved rerouting')
     parser.add_argument('--rescue-seconds', type=float, default=60)
     parser.add_argument('--simplify-routes', choices=('safe', 'off'), default='safe')
+    parser.add_argument('--route-tradeoff', choices=('strict', 'balanced'), default='strict',
+                        help='Allow at most two sparse extra crossings for substantial shortening; default strict')
     from simplify_budget import parse_simplify_seconds
     parser.add_argument('--simplify-seconds', type=parse_simplify_seconds, default=5,
                         help='Fixed non-negative seconds, or auto (5-30s); default: 5')
@@ -773,7 +791,7 @@ def main(argv=None, default_mode='layered'):
             simplify_placement(args.simplify_placement, out_dir=args.out_dir,
                                analog_canvas_root=args.analog_canvas_root,
                                simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
-                               net_labels=args.net_labels,
+                               net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
                                **({'presentation':args.presentation} if args.presentation is not None else {}))
         elif args.reroute_placement:
             if args.region_layout != 'off':
@@ -785,7 +803,7 @@ def main(argv=None, default_mode='layered'):
                               analog_canvas_root=args.analog_canvas_root,
                               local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
                               simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
-                              net_labels=args.net_labels,
+                              net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
                               **({'presentation':args.presentation} if args.presentation is not None else {}))
         else:
             run(args.netlist, mode=args.mode, iterations=args.iterations, seed=args.seed,
@@ -802,7 +820,7 @@ def main(argv=None, default_mode='layered'):
                 spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
                 local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
                 simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
-                net_labels=args.net_labels)
+                net_labels=args.net_labels, route_tradeoff=args.route_tradeoff)
     except (ValueError, OSError, KeyError) as exc:
         parser.exit(2, f'Error: {exc}\n')
     return 0

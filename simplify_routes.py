@@ -14,11 +14,14 @@ from orthogonal_router import RoutingFailure
 from route_patterns import MAX_TRACKS_PER_AXIS, three_segment_candidates
 from route_reattachment import MAX_TARGETS_PER_BRANCH, reattachment_candidates
 from route_tracks import MAX_TRACK_CANDIDATES_PER_CHAIN, track_compaction_candidates
+from route_tradeoff import (MAX_EXTRA_CROSSINGS, VERSION as TRADEOFF_VERSION,
+                            crossing_identities, evaluate as evaluate_tradeoff,
+                            physical_pitch)
 from routing_rules import (EPS, PreparedOccupancy, build_scene, canonical_topology,
                            check_deadline, intersection, on_segment)
 from sa_routing import RoutingValidationError, _verify
 
-VERSION = 'orthogonal-shortcuts-v8'
+VERSION = 'orthogonal-shortcuts-v9'
 MAX_ROUNDS = 4
 MAX_CANDIDATES = 512
 OPERATIONS = ('chain_shortcut', 'leaf_reattachment', 'three_segment_shortcut',
@@ -158,6 +161,9 @@ def _shortcut_candidates(scene, routed, deadline=None):
         base = [segment for segment in chain['segments'] if _edge(*segment) not in removed]
         for replacement in _replacements(path):
             yield {'net': chain['net'], 'segments': base + list(replacement),
+                   'old_chain_length': chain['length'],
+                   'new_chain_length': sum(abs(a[0]-b[0])+abs(a[1]-b[1])
+                                           for a, b in replacement),
                    'shortcut_identity': (chain['net'], tuple(chain['segments']), replacement)}
 
 
@@ -264,7 +270,8 @@ def _crossing_clearance_conflict(scene, net, candidate, occupied, deadline=None)
     return None
 
 
-def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=None, seconds=5):
+def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=None, seconds=5,
+                    tradeoff='strict'):
     """Return the last completely verified shortcut result and JSON-safe report.
 
     ``routed_result`` must already be a fully validated three-item result. A
@@ -273,6 +280,8 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
     """
     if type(seconds) not in (int, float) or not isfinite(seconds) or seconds < 0:
         raise ValueError('simplification seconds must be finite and non-negative')
+    if tradeoff not in ('strict', 'balanced'):
+        raise ValueError('simplification tradeoff must be strict or balanced')
     if not isinstance(routed_result, (tuple, list)) or len(routed_result) != 3:
         raise ValueError('simplification requires a validated route result')
     if not isinstance(routed_result[2], dict) or routed_result[2].get('valid') is not True:
@@ -323,6 +332,19 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
     report['duplicate_candidates'] = 0
     report['accepted_changes'] = []
     report['topology_rebuilds'] = 0
+    tradeoff_report = {'policy': tradeoff, 'version': TRADEOFF_VERSION,
+                      'baseline_crossings': incumbent[1]['crossings'],
+                      'maximum_crossings': incumbent[1]['crossings'] +
+                                           (MAX_EXTRA_CROSSINGS if tradeoff == 'balanced' else 0),
+                      'maximum_net_increase': MAX_EXTRA_CROSSINGS if tradeoff == 'balanced' else 0,
+                      'baseline_revalidated': False, 'pitch': None,
+                      'crossing_spacing': None, 'assessed': 0, 'accepted': 0,
+                      'accepted_with_extra_crossings': 0,
+                      'final_crossings': incumbent[1]['crossings'],
+                      'net_crossing_increase': 0,
+                      'remaining_crossings': MAX_EXTRA_CROSSINGS if tradeoff == 'balanced' else 0,
+                      'rejected_by_reason': {}, 'candidates': []}
+    report['tradeoff'] = tradeoff_report
     changed = set()
     if seconds == 0:
         report['elapsed_seconds'] = round(perf_counter()-started, 6)
@@ -341,6 +363,15 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
         precheck_occupancy = PreparedOccupancy(analysis['topologies'])
         report['before_metrics'] = deepcopy(actual)
         report['original_revalidated'] = True
+        tradeoff_report.update(baseline_crossings=actual['crossings'],
+            maximum_crossings=actual['crossings']+tradeoff_report['maximum_net_increase'],
+            baseline_revalidated=True)
+        accepted_crossings = None
+        if tradeoff == 'balanced':
+            tradeoff_report.update(pitch=physical_pitch(par, placement),
+                                   crossing_spacing=2*scene.options.cross_clearance)
+            accepted_crossings = crossing_identities(analysis['topologies'],
+                                                      scene.power_nets, deadline)
         work_started = perf_counter()
         remaining = max(0.0, deadline-work_started)
         for stage in report['stages']:
@@ -441,7 +472,32 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                         # Even a substituted validator may return after its
                         # deadline. Never commit a trial across that boundary.
                         check_deadline(stage_deadline, 'simplify_commit')
-                        if not _improves(metrics, incumbent[1]):
+                        decision = None
+                        trial_crossings = None
+                        if tradeoff == 'balanced':
+                            work = 'screening'
+                            trial_crossings = crossing_identities(analysis['topologies'],
+                                scene.power_nets, stage_deadline)
+                            decision = evaluate_tradeoff(incumbent[1], metrics,
+                                tradeoff_report['baseline_crossings'], proposal,
+                                tradeoff_report['pitch'], accepted_crossings, trial_crossings,
+                                scene.options.cross_clearance, stage_deadline)
+                            check_deadline(stage_deadline, 'simplify_tradeoff_commit')
+                            tradeoff_report['assessed'] += 1
+                            tradeoff_report['candidates'].append({
+                                'operation': operation, 'net': net, 'phase': stage['phase'],
+                                **deepcopy(decision)})
+                            improves = decision['accepted']
+                            if not improves:
+                                reasons = tradeoff_report['rejected_by_reason']
+                                reasons[decision['reason']] = reasons.get(decision['reason'], 0)+1
+                        else:
+                            improves = _improves(metrics, incumbent[1])
+                            tradeoff_report['assessed'] += 1
+                            if not improves:
+                                reasons = tradeoff_report['rejected_by_reason']
+                                reasons['strict_non_improvement'] = reasons.get('strict_non_improvement', 0)+1
+                        if not improves:
                             count('objective_rejected')
                             continue
                         validation = deepcopy(incumbent[2])
@@ -451,6 +507,10 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                         change = {'operation': operation, 'net': net, 'phase': stage['phase'],
                                   'before_metrics': deepcopy(incumbent[1]),
                                   'after_metrics': deepcopy(metrics)}
+                        if decision is not None:
+                            change['tradeoff'] = deepcopy(decision)
+                            tradeoff_report['accepted_with_extra_crossings'] += int(
+                                decision['crossing_increase'] > 0)
                         for key in ('source', 'source_pin', 'component', 'pin',
                                     'old_attachment', 'new_attachment',
                                     'old_branch_length', 'new_branch_length',
@@ -460,8 +520,11 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                             if key in proposal:
                                 change[key] = deepcopy(proposal[key])
                         report['accepted_changes'].append(change)
+                        tradeoff_report['accepted'] += 1
                         incumbent = (routed, metrics, validation)
                         precheck_occupancy = PreparedOccupancy(analysis['topologies'])
+                        if tradeoff == 'balanced':
+                            accepted_crossings = trial_crossings
                         count('accepted')
                         report['topology_rebuilds'] += 1
                         first_operation = (OPERATIONS.index(operation)+1) % (phase_index+1)
@@ -514,6 +577,9 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
             stage['skip_reason'] = report['stop_reason']
     report.update(after_metrics=deepcopy(incumbent[1]), changed_nets=sorted(changed),
                   changed_net_count=len(changed), elapsed_seconds=round(perf_counter()-started, 6))
+    tradeoff_report.update(final_crossings=incumbent[1]['crossings'],
+        net_crossing_increase=incumbent[1]['crossings']-tradeoff_report['baseline_crossings'],
+        remaining_crossings=tradeoff_report['maximum_crossings']-incumbent[1]['crossings'])
     return (*incumbent, report)
 
 
