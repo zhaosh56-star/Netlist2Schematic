@@ -152,6 +152,12 @@ def _relations(devices, structs, index, row_of):
 
 
 class StructuredPlacement(legacy.LayeredPlacement):
+    def allowed_orientations(self, i):
+        if (i in getattr(self, 'source_orientation_ids', ())
+                and self.comps[i]['symbol'] in ('voltage-source', 'current-source')):
+            return list(range(self.n_orients(i)))
+        return super().allowed_orientations(i)
+
     """Keep active rows and semantic blocks while proposing collective moves."""
 
     def set_state(self, cells, orientations):
@@ -241,7 +247,8 @@ class StructuredPlacement(legacy.LayeredPlacement):
                 if other is not None:
                     self.cell_of[other] = (row, col)
                 self.comp_at = {cell: j for j, cell in enumerate(self.cell_of)}
-        if (getattr(self, 'layout_relations', None) or getattr(self, 'region_plan', None)) and any(
+        if (getattr(self, 'layout_relations', None) or getattr(self, 'region_plan', None)
+                or getattr(self, 'readability_plan', None)) and any(
                 self.cell_of[i] != before[0][i] or self.orient[i] != before[1][i]
                 for i in set(getattr(self, 'fixed', ())) | set(getattr(self, 'fixed_cells', {}))):
             self.set_state(*before)
@@ -588,6 +595,11 @@ def _estimate(pl, nets, index, alignment, pairs):
         region_energy, regions = score_region_placement(pl, index, pl.region_plan)
         value += region_energy
         metrics.update(region_regularization=regions, normalized_energy=value)
+    if getattr(pl, 'readability_plan', None):
+        from readability_layout import score_readability
+        regularity = score_readability(pl, pl.comps, index, pl.readability_plan)
+        value += regularity['weighted_total']
+        metrics.update(readability_regularization=regularity, normalized_energy=value)
     return value, metrics
 
 
@@ -816,7 +828,8 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
 
 def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
                       passive_layout='flexible', include_legacy=False,
-                      structure_layout='off', structure_phase=3, region_layout='off'):
+                      structure_layout='off', structure_phase=3, region_layout='off',
+                      readability_layout='off', readability_phase=2):
     """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -836,6 +849,13 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         raise ValueError('region_layout must be off or auto')
     if region_layout == 'auto' and structure_layout == 'auto':
         raise ValueError('region_layout auto cannot be combined with structure_layout auto')
+    if readability_layout not in ('off', 'auto'):
+        raise ValueError('readability_layout must be off or auto')
+    if type(readability_phase) is not int or readability_phase not in (2, 3, 4, 5):
+        raise ValueError('readability_phase must be 2, 3, 4 or 5')
+    if readability_layout == 'auto' and (region_layout == 'auto' or structure_layout == 'auto'
+                                         or passive_layout != 'flexible'):
+        raise ValueError('readability layout requires flexible passives and no other layout experiment')
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     if deadline is not None and time.perf_counter() >= deadline:
@@ -875,6 +895,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
     att = legacy.attach_info(devices, levels['net_levels'], conduction)
     evidence = evidence_relations = None
     region_plan = region_evidence = region_relations = None
+    readability_plan = None
     if structure_layout == 'auto':
         from layout_intent import build_intent
         evidence, evidence_relations = build_intent(
@@ -885,6 +906,14 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         candidate_seed = seed + (variant + 1) * 104729
         layout_relations = row_plan = None
         candidate_structs = structs
+        if readability_layout == 'auto' and variant:
+            if readability_plan is None:
+                from readability_layout import build_readability_plan
+                original_rows, _ = legacy._allocate_rows(devices, comps, index,
+                    levels['net_levels'], levels['device_levels'], att)
+                readability_plan = build_readability_plan(
+                    devices, comps, nets, index, structs, levels, original_rows)
+            row_plan = readability_plan.get('branch_row_plan')
         if region_layout == 'auto' and variant:
             if region_plan is None:
                 from layout_evidence import build_layout_evidence
@@ -939,6 +968,11 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         if row_plan is not None:
             placement.branch_connections=copy.deepcopy(row_plan.get('bridge_alignment',[]))
         attachment_report = None
+        readability_initialization = None
+        if readability_layout == 'auto' and variant:
+            from readability_layout import prepare_readability_placement
+            placement, readability_initialization = prepare_readability_placement(
+                placement, devices, comps, nets, index, readability_plan, deadline=deadline)
         if layout_relations is not None and structure_phase >= 3:
             from attachment_placement import prepare_attachments
             placement, attachment_report = prepare_attachments(
@@ -962,6 +996,17 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                     'alignment_relations': [{'devices': [comps[a]['id'], comps[b]['id']],
                                               'weight': weight}
                                              for a, b, weight in alignment]}
+        if readability_layout == 'auto' and variant:
+            from readability_layout import measure_readability
+            metadata['layout_readability'] = {
+                'policy': 'auto', 'phase': readability_phase,
+                'version': readability_plan['version'], 'plan': copy.deepcopy(readability_plan),
+                'applied': bool(getattr(placement, 'readability_plan', None)),
+                'initialization': copy.deepcopy(readability_initialization),
+                'metrics': measure_readability(placement, comps, index, readability_plan),
+                'measurement_stage': 'after_sa_and_geometry_floor'}
+            if row_plan:
+                metadata['branch_row_plan'] = copy.deepcopy(row_plan)
         if region_layout == 'auto' and variant:
             from region_layout import measure_regions
             applied = bool(getattr(placement, 'region_plan', None))

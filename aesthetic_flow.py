@@ -64,7 +64,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   quality_seconds=300, routing_options=None, candidate_id=None,
                   passive_layout='flexible', symmetry_layout='off', structure_layout='off',
                   structure_phase=3, candidate_budget='sequential',port_preflight='off',
-                  region_layout='off'):
+                  region_layout='off', readability_layout='off', readability_phase=2,
+                  route_tradeoff='strict'):
     validate_policy(candidate_budget)
     if port_preflight not in ('off','repair'):
         raise ValueError('port_preflight must be off or repair')
@@ -82,6 +83,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         raise ValueError('region_layout must be auto or off')
     if region_layout == 'auto' and (structure_layout == 'auto' or symmetry_layout == 'auto'):
         raise ValueError('region_layout auto cannot be combined with structure_layout auto or symmetry_layout auto')
+    from run_flow import _validate_readability_policy, _validate_route_tradeoff
+    _validate_readability_policy(readability_layout, readability_phase,
+                                 region_layout, structure_layout, symmetry_layout)
+    _validate_route_tradeoff(route_tradeoff)
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     from structured_placement import create_candidates, feedback_candidate
@@ -94,6 +99,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     records, best = [], None
     shared_relations = None
     shared_region_plan = None
+    shared_readability_plan = None
     valid_results = []
     retry_context = retry_options = rescue_context = None
     candidate_data_error = False
@@ -107,7 +113,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         candidates = create_candidates(path, cell=cell, iterations=iterations,
                                        seed=seed, deadline=deadline, passive_layout=passive_layout,
                                        include_legacy=include_legacy, structure_layout=structure_layout,
-                                       structure_phase=structure_phase, region_layout=region_layout)
+                                       structure_phase=structure_phase, region_layout=region_layout,
+                                       readability_layout=readability_layout,
+                                       readability_phase=readability_phase)
         for number, item in enumerate(candidates):
             if number >= candidate_limit:
                 stop_reason = 'candidate_limit'
@@ -116,6 +124,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             identifier = str(metadata.get('candidate_id', 0 if include_legacy else number + 1))
             if region_layout == 'auto' and metadata.get('layout_regions', {}).get('plan') is not None:
                 shared_region_plan = deepcopy(metadata['layout_regions']['plan'])
+            if readability_layout == 'auto' and metadata.get('layout_readability', {}).get('plan') is not None:
+                shared_readability_plan = deepcopy(metadata['layout_readability']['plan'])
             replay_feedback = str(candidate_id) == '3'
             if candidate_id is not None and str(candidate_id) != identifier and not replay_feedback:
                 continue
@@ -141,6 +151,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             # Small unavoidable local loops still get the compact third seed.
             feedback_replaced = False
             feedback_best = best
+            local_refinement_deadline = min(candidate_deadline, perf_counter()+1)
+            if readability_layout == 'auto' and identifier == '3':
+                from readability_selection import feedback_compatible
+                compatible = [row for row in valid_results if feedback_compatible(row[5], metadata)]
+                feedback_best = min(compatible, key=lambda row: row[0]) if compatible else None
             if (region_layout == 'auto' and identifier == '3'
                     and shared_region_plan is not None and shared_region_plan.get('supported')):
                 compatible = [row for row in valid_results
@@ -151,6 +166,16 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 severe = any((row.get('detour_factor') or 0) >= 2.5
                              and row.get('excess_detour', 0) >= 500
                              for row in detail.get('per_net', {}).values())
+                if readability_layout == 'auto' and readability_phase >= 5:
+                    from readability_routing import feedback_readability
+                    proposal = feedback_readability(par, feedback_best[1], feedback_best[2],
+                        feedback_best[3], feedback_best[4], feedback_best[5], feedback_best[6],
+                        options=effective_options, deadline=local_refinement_deadline)
+                    if proposal is not None:
+                        placement, comps, nets, index, metadata = proposal
+                        metadata['candidate_id'] = int(identifier)
+                        feedback_replaced = True
+                    severe = False
                 if severe:
                     proposal = feedback_candidate(feedback_best[1], feedback_best[2], feedback_best[3], feedback_best[4],
                                                   feedback_best[5], detail)
@@ -161,6 +186,12 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                         metadata['candidate_id'] = int(identifier)
                         metadata['candidate_seed'] = feedback_best[5].get('candidate_seed', seed)
                         feedback_replaced = True
+            if readability_layout == 'auto' and identifier in ('2', '3') and readability_phase >= 3:
+                from readability_refinement import refine_readability
+                placement, metadata = refine_readability(
+                    par, placement, comps, nets, index, metadata, options=effective_options,
+                    deadline=local_refinement_deadline, seconds=max(0, local_refinement_deadline-perf_counter()),
+                    max_candidates=128, phase=min(readability_phase, 4))
             # Apply to the actual layout after feedback replacement, before
             # capturing a checkpoint.  Keep candidate 1 as the original seed.
             if symmetry_layout == 'auto' and identifier in ('1', '2', '3'):
@@ -254,6 +285,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             if region_layout == 'auto' and shared_region_plan is not None:
                 metadata = _measure_region_candidate(placement, comps, index, metadata,
                                                      shared_region_plan, identifier)
+            if readability_layout == 'auto' and shared_readability_plan is not None:
+                from readability_selection import measure_candidate
+                metadata = measure_candidate(par, placement, comps, nets, index, metadata,
+                    shared_readability_plan, phase=readability_phase, stage='before_final_routing')
             routing_at = perf_counter()
             print(f'Quality candidate {identifier}: final routing, '
                   f'budget remaining={candidate_deadline-routing_at:.1f}s', flush=True)
@@ -269,6 +304,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 record['structure_layout'] = deepcopy(metadata['structure_layout'])
             if 'layout_regions' in metadata:
                 record['layout_regions'] = deepcopy(metadata['layout_regions'])
+            if 'layout_readability' in metadata:
+                record['layout_readability'] = deepcopy(metadata['layout_readability'])
             if 'parallel_attachment_refinement' in metadata:
                 record['parallel_attachment_refinement'] = deepcopy(metadata['parallel_attachment_refinement'])
             if 'port_preflight' in metadata:
@@ -379,8 +416,19 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     # Feedback above deliberately uses the original-Q incumbent.  Only after
     # all routing attempts do device symmetry and the 125% wire cap choose the
     # delivered candidate. Explicit replay always returns its requested ID.
-    symmetry_selection = structure_selection = region_selection = None
-    if region_layout == 'auto' and shared_region_plan is not None:
+    symmetry_selection = structure_selection = region_selection = readability_selection = None
+    if readability_layout == 'auto' and shared_readability_plan is not None:
+        from readability_selection import measure_candidate, select_readable_result
+        for result in valid_results:
+            measured = measure_candidate(par, result[1], result[2], result[3], result[4], result[5],
+                shared_readability_plan, phase=readability_phase, stage='before_route_simplification')
+            result[5].update(measured)
+            for record in records:
+                if record.get('candidate_id') == result[8]:
+                    record['layout_readability'] = deepcopy(measured['layout_readability'])
+        if candidate_id is None:
+            best, readability_selection = select_readable_result(valid_results, tradeoff=route_tradeoff)
+    elif region_layout == 'auto' and shared_region_plan is not None:
         # The unmodified reference was generated/routed before region analysis.
         # Measure it now with the exact same immutable evidence as candidates 2/3.
         for result in valid_results:
@@ -409,6 +457,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         'selected_candidate': identifier, 'score': quality['score'],
         'details': quality, 'candidates': records})
     metadata['quality']['selection_policy'] = (
+        readability_selection['policy'] if readability_selection else
         region_selection['policy'] if region_selection else
         structure_selection['policy'] if structure_selection else
         symmetry_selection['policy'] if symmetry_selection else
@@ -419,6 +468,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         metadata['quality']['structure_selection'] = structure_selection
     if region_selection is not None:
         metadata['quality']['region_selection'] = region_selection
+    if readability_selection is not None:
+        metadata['quality']['readability_selection'] = readability_selection
     return placement, comps, nets, index, metadata, routed_result
 
 
