@@ -6,6 +6,8 @@
 
 结构布局改进通过 `--structure-layout auto` 试用，开发期间默认关闭。候选1保留参照，候选2/3按有拓扑证据的局部块和支路改善排列，继续使用原A*、完整验收和安全缩线。分阶段规则与对照命令见[结构布局说明](docs/structure-layout.md)。
 
+区域组织另有独立实验开关 `--region-layout auto`：在有完整端口证据时，先安排功能区、主支路和附件，再做SA。首轮覆盖时控双支路核心、折叠主级及采样控制区；候选1仍保留原算法。不与旧结构或对称实验同时开启，开发期间默认关闭，只有完整出图和视觉发布门槛通过才推广。用法及对照见[区域布局说明](docs/region-layout.md)。
+
 独立试验开关包括 `--presentation clean`（只清理黑白成品展示）、`--candidate-budget reserved`（给后续候选预留时间）、`--port-preflight repair`（修复静态端口/标记冲突）。三者默认分别为legacy、sequential、off，不自动改变日常结果。已有JSON可用 `render-clean.py 原JSON 新SVG --presentation clean` 只重绘。
 
 可选的 `--net-labels auto` 在完整布线和安全缩线完成后，额外生成“局部连线＋同名网标”视图，用网标省去少量严重长连接。默认off；完整原图、线路及评分保留，局部组与网标另行验收，不接入现有RSI评分。已有JSON可独立处理，见[网标插件说明](docs/net-labels.md)。

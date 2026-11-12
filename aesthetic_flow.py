@@ -63,7 +63,8 @@ def _select_symmetric_result(results):
 def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   quality_seconds=300, routing_options=None, candidate_id=None,
                   passive_layout='flexible', symmetry_layout='off', structure_layout='off',
-                  structure_phase=3, candidate_budget='sequential',port_preflight='off'):
+                  structure_phase=3, candidate_budget='sequential',port_preflight='off',
+                  region_layout='off'):
     validate_policy(candidate_budget)
     if port_preflight not in ('off','repair'):
         raise ValueError('port_preflight must be off or repair')
@@ -77,6 +78,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         raise ValueError('symmetry_layout must be auto or off')
     if structure_layout not in ('auto', 'off'):
         raise ValueError('structure_layout must be auto or off')
+    if region_layout not in ('auto', 'off'):
+        raise ValueError('region_layout must be auto or off')
+    if region_layout == 'auto' and (structure_layout == 'auto' or symmetry_layout == 'auto'):
+        raise ValueError('region_layout auto cannot be combined with structure_layout auto or symmetry_layout auto')
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     from structured_placement import create_candidates, feedback_candidate
@@ -88,6 +93,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     par = load_local('place_and_route', 'place-and-route.py')
     records, best = [], None
     shared_relations = None
+    shared_region_plan = None
     valid_results = []
     retry_context = retry_options = rescue_context = None
     candidate_data_error = False
@@ -101,13 +107,15 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         candidates = create_candidates(path, cell=cell, iterations=iterations,
                                        seed=seed, deadline=deadline, passive_layout=passive_layout,
                                        include_legacy=include_legacy, structure_layout=structure_layout,
-                                       structure_phase=structure_phase)
+                                       structure_phase=structure_phase, region_layout=region_layout)
         for number, item in enumerate(candidates):
             if number >= candidate_limit:
                 stop_reason = 'candidate_limit'
                 break
             placement, comps, nets, index, metadata = item
             identifier = str(metadata.get('candidate_id', 0 if include_legacy else number + 1))
+            if region_layout == 'auto' and metadata.get('layout_regions', {}).get('plan') is not None:
+                shared_region_plan = deepcopy(metadata['layout_regions']['plan'])
             replay_feedback = str(candidate_id) == '3'
             if candidate_id is not None and str(candidate_id) != identifier and not replay_feedback:
                 continue
@@ -132,20 +140,26 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             # when a prior route has a substantial, clearly excessive detour.
             # Small unavoidable local loops still get the compact third seed.
             feedback_replaced = False
-            if identifier == '3' and best is not None:
-                detail = best[7]
+            feedback_best = best
+            if (region_layout == 'auto' and identifier == '3'
+                    and shared_region_plan is not None and shared_region_plan.get('supported')):
+                compatible = [row for row in valid_results
+                              if _region_feedback_compatible(row[5], metadata)]
+                feedback_best = min(compatible, key=lambda row: row[0]) if compatible else None
+            if identifier == '3' and feedback_best is not None:
+                detail = feedback_best[7]
                 severe = any((row.get('detour_factor') or 0) >= 2.5
                              and row.get('excess_detour', 0) >= 500
                              for row in detail.get('per_net', {}).values())
                 if severe:
-                    proposal = feedback_candidate(best[1], best[2], best[3], best[4],
-                                                  best[5], detail)
+                    proposal = feedback_candidate(feedback_best[1], feedback_best[2], feedback_best[3], feedback_best[4],
+                                                  feedback_best[5], detail)
                     if proposal is not None and (structure_layout == 'off' or
                             proposal[4].get('branch_row_plan', {}).get('rows') ==
                             metadata.get('branch_row_plan', {}).get('rows')):
                         placement, comps, nets, index, metadata = proposal
                         metadata['candidate_id'] = int(identifier)
-                        metadata['candidate_seed'] = best[5].get('candidate_seed', seed)
+                        metadata['candidate_seed'] = feedback_best[5].get('candidate_seed', seed)
                         feedback_replaced = True
             # Apply to the actual layout after feedback replacement, before
             # capturing a checkpoint.  Keep candidate 1 as the original seed.
@@ -237,6 +251,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     from structure_selection import measure_structure
                     metadata['structure_layout']['metrics']=measure_structure(
                         par,placement,comps,nets,index,metadata,structure_phase)
+            if region_layout == 'auto' and shared_region_plan is not None:
+                metadata = _measure_region_candidate(placement, comps, index, metadata,
+                                                     shared_region_plan, identifier)
             routing_at = perf_counter()
             print(f'Quality candidate {identifier}: final routing, '
                   f'budget remaining={candidate_deadline-routing_at:.1f}s', flush=True)
@@ -250,6 +267,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 record['layout_symmetry'] = deepcopy(metadata['layout_symmetry'])
             if 'structure_layout' in metadata:
                 record['structure_layout'] = deepcopy(metadata['structure_layout'])
+            if 'layout_regions' in metadata:
+                record['layout_regions'] = deepcopy(metadata['layout_regions'])
             if 'parallel_attachment_refinement' in metadata:
                 record['parallel_attachment_refinement'] = deepcopy(metadata['parallel_attachment_refinement'])
             if 'port_preflight' in metadata:
@@ -360,8 +379,21 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     # Feedback above deliberately uses the original-Q incumbent.  Only after
     # all routing attempts do device symmetry and the 125% wire cap choose the
     # delivered candidate. Explicit replay always returns its requested ID.
-    symmetry_selection = structure_selection = None
-    if structure_layout == 'auto' and candidate_id is None:
+    symmetry_selection = structure_selection = region_selection = None
+    if region_layout == 'auto' and shared_region_plan is not None:
+        # The unmodified reference was generated/routed before region analysis.
+        # Measure it now with the exact same immutable evidence as candidates 2/3.
+        for result in valid_results:
+            measured = _measure_region_candidate(result[1], result[2], result[4],
+                                                  result[5], shared_region_plan, result[8])
+            result[5].update(measured)
+            for record in records:
+                if record.get('candidate_id') == result[8]:
+                    record['layout_regions'] = deepcopy(measured['layout_regions'])
+        if candidate_id is None:
+            from region_layout import select_region_result
+            best, region_selection = select_region_result(valid_results)
+    elif structure_layout == 'auto' and candidate_id is None:
         from structure_selection import select_structured_result
         best, structure_selection = select_structured_result(valid_results)
     elif symmetry_layout == 'auto' and candidate_id is None:
@@ -377,6 +409,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         'selected_candidate': identifier, 'score': quality['score'],
         'details': quality, 'candidates': records})
     metadata['quality']['selection_policy'] = (
+        region_selection['policy'] if region_selection else
         structure_selection['policy'] if structure_selection else
         symmetry_selection['policy'] if symmetry_selection else
         'explicit_candidate_replay' if candidate_id is not None else 'balanced-v1')
@@ -384,4 +417,27 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         metadata['quality']['symmetry_selection'] = symmetry_selection
     if structure_selection is not None:
         metadata['quality']['structure_selection'] = structure_selection
+    if region_selection is not None:
+        metadata['quality']['region_selection'] = region_selection
     return placement, comps, nets, index, metadata, routed_result
+
+
+def _region_feedback_compatible(source, target):
+    """An old/reference placement must never replace a region seed."""
+    a, b = source.get('layout_regions', {}), target.get('layout_regions', {})
+    ap, bp = a.get('plan', {}), b.get('plan', {})
+    return bool(a.get('applied') and b.get('applied') and ap.get('signature')
+                and ap['signature'] == bp.get('signature'))
+
+
+def _measure_region_candidate(placement, comps, index, metadata, plan, identifier):
+    from region_layout import measure_regions
+    metadata = deepcopy(metadata)
+    report = metadata.setdefault('layout_regions', {
+        'policy': 'auto', 'version': plan.get('version'), 'applied': False,
+        'reason': 'reference_candidate' if str(identifier) == '1' else 'report_only'})
+    report.update(plan=deepcopy(plan), plan_signature=plan.get('signature'),
+                  reference_candidate=str(identifier) == '1',
+                  metrics=measure_regions(placement, comps, index, plan),
+                  measurement_stage='before_route_simplification')
+    return metadata

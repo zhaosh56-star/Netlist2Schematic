@@ -173,6 +173,9 @@ class StructuredPlacement(legacy.LayeredPlacement):
 
     def propose(self):
         """Block translation, mirror, branch exchange, or internal refinement."""
+        if getattr(self, 'region_plan', None) and self.rng.random() < .25:
+            from region_placement import propose_region_move
+            return propose_region_move(self)
         before = (list(self.cell_of), list(self.orient))
         rng = self.rng
         action = rng.random()
@@ -238,7 +241,7 @@ class StructuredPlacement(legacy.LayeredPlacement):
                 if other is not None:
                     self.cell_of[other] = (row, col)
                 self.comp_at = {cell: j for j, cell in enumerate(self.cell_of)}
-        if getattr(self, 'layout_relations', None) and any(
+        if (getattr(self, 'layout_relations', None) or getattr(self, 'region_plan', None)) and any(
                 self.cell_of[i] != before[0][i] or self.orient[i] != before[1][i]
                 for i in set(getattr(self, 'fixed', ())) | set(getattr(self, 'fixed_cells', {}))):
             self.set_state(*before)
@@ -308,14 +311,33 @@ def _passive_profile(pl, devices, nets, index, structs, variant, policy):
 
 
 def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, variant,
-                       *, passive_layout='fixed', row_override=None, bridge_alignment=()):
+                       *, passive_layout='fixed', row_override=None, bridge_alignment=(),
+                       region_plan=None, region_relations=(), deadline=None):
     if passive_layout not in ('flexible', 'fixed'):
         raise ValueError('passive_layout must be flexible or fixed')
     keys = _canonical_keys(devices)
+    region_report = None
     row_of, _ = legacy._allocate_rows(devices, comps, index, levels['net_levels'],
                                       levels['device_levels'], att)
     if row_override is not None:
         row_of = list(row_override)
+    if region_plan is not None and region_plan.get('supported'):
+        from region_placement import initialize_regions
+        region_started = time.perf_counter()
+        # An independently seeded old placement is the transactional fallback;
+        # trial enumeration never consumes its RNG or mutates its state.
+        baseline = _initial_placement(devices, comps, nets, index, levels, att,
+            structs, seed, variant, row_override=row_of, bridge_alignment=bridge_alignment)
+        initialized, region_report = initialize_regions(
+            devices, comps, nets, index, row_of, structs, seed, variant,
+            region_plan, relations=region_relations, deadline=deadline,
+            baseline=baseline, started=region_started)
+        if initialized is not None:
+            pl, alignment, pairs, _ = initialized
+            return _passive_profile(pl, devices, nets, index, structs, variant, passive_layout), alignment, pairs
+        pl, alignment, pairs = baseline
+        pl.region_initialization = region_report
+        return _passive_profile(pl, devices, nets, index, structs, variant, passive_layout), alignment, pairs
     opamp = None
     if not levels['device_levels']:
         opamp = _opamp_seed(devices, structs, index, row_of, variant)
@@ -335,6 +357,8 @@ def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, 
     if opamp:
         cols = max(cols, opamp[2])
     pl = StructuredPlacement(comps, random.Random(seed), row_of, cols=cols)
+    if region_report is not None:
+        pl.region_initialization = region_report
     pl.blocks = blocks
     pl.block_of = {i: n for n, block in enumerate(blocks) for i in block}
     pl.role_orders = []
@@ -559,6 +583,11 @@ def _estimate(pl, nets, index, alignment, pairs):
         backtracking=sum(costs)/max(1,len(costs))
         value+=backtracking
         metrics.update(branch_backtracking=backtracking,normalized_energy=value)
+    if getattr(pl, 'region_plan', None):
+        from region_placement import score_region_placement
+        region_energy, regions = score_region_placement(pl, index, pl.region_plan)
+        value += region_energy
+        metrics.update(region_regularization=regions, normalized_energy=value)
     return value, metrics
 
 
@@ -787,7 +816,7 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
 
 def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
                       passive_layout='flexible', include_legacy=False,
-                      structure_layout='off', structure_phase=3):
+                      structure_layout='off', structure_phase=3, region_layout='off'):
     """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -803,6 +832,10 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         raise ValueError('include_legacy must be boolean')
     if structure_layout not in ('off', 'auto'):
         raise ValueError('structure_layout must be off or auto')
+    if region_layout not in ('off', 'auto'):
+        raise ValueError('region_layout must be off or auto')
+    if region_layout == 'auto' and structure_layout == 'auto':
+        raise ValueError('region_layout auto cannot be combined with structure_layout auto')
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     if deadline is not None and time.perf_counter() >= deadline:
@@ -841,6 +874,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                   if net is not None}
     att = legacy.attach_info(devices, levels['net_levels'], conduction)
     evidence = evidence_relations = None
+    region_plan = region_evidence = region_relations = None
     if structure_layout == 'auto':
         from layout_intent import build_intent
         evidence, evidence_relations = build_intent(
@@ -851,6 +885,20 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         candidate_seed = seed + (variant + 1) * 104729
         layout_relations = row_plan = None
         candidate_structs = structs
+        if region_layout == 'auto' and variant:
+            if region_plan is None:
+                from layout_evidence import build_layout_evidence
+                from layout_relations import build_layout_relations
+                from region_layout import build_region_plan
+                # The first rollout keeps the original source row contract;
+                # it neither invokes branch row rebuilding nor changes levels.
+                region_evidence = build_layout_evidence(devices, structs)
+                region_relations = build_layout_relations(devices, validated_evidence=region_evidence)
+                original_rows, _ = legacy._allocate_rows(devices, comps, index,
+                    levels['net_levels'], levels['device_levels'], att)
+                region_plan = build_region_plan(devices, evidence=region_evidence,
+                    relations=region_relations, display_rows={c['id']: original_rows[i]
+                    for i, c in enumerate(comps)}, comps=comps, index=index)
         if structure_layout == 'auto' and variant != 0:
             layout_relations = copy.deepcopy(evidence_relations)
             candidate_structs = evidence['structures']
@@ -864,7 +912,9 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
             devices, comps, nets, index, levels, att, candidate_structs, candidate_seed, variant,
             passive_layout=passive_layout,
             row_override=[row_plan['rows'][c['id']] for c in comps] if row_plan else None,
-            bridge_alignment=row_plan.get('bridge_alignment', ()) if row_plan else ())
+            bridge_alignment=row_plan.get('bridge_alignment', ()) if row_plan else (),
+            region_plan=region_plan if region_layout == 'auto' and variant else None,
+            region_relations=region_relations or (), deadline=deadline)
         if layout_relations is not None:
             from layout_relations import prepare_structure_placement
             prepare_structure_placement(placement, comps, index, layout_relations)
@@ -912,6 +962,37 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                     'alignment_relations': [{'devices': [comps[a]['id'], comps[b]['id']],
                                               'weight': weight}
                                              for a, b, weight in alignment]}
+        if region_layout == 'auto' and variant:
+            from region_layout import measure_regions
+            applied = bool(getattr(placement, 'region_plan', None))
+            initialization = copy.deepcopy(getattr(placement, 'region_initialization', {}))
+            changes = []
+            if applied:
+                seed_cells, seed_orient = placement.region_seed_state
+                for i, comp in enumerate(comps):
+                    before_xy = placement.region_seed_positions[i]
+                    after_xy = placement.pos_of(i)
+                    if (seed_cells[i] != placement.cell_of[i] or seed_orient[i] != placement.orient[i]
+                            or before_xy != after_xy):
+                        changes.append({'device': comp['id'],
+                            'seed': {'cell': list(seed_cells[i]), 'orient': seed_orient[i],
+                                     'position': list(before_xy)},
+                            'chosen': {'cell': list(placement.cell_of[i]), 'orient': placement.orient[i],
+                                       'position': list(after_xy)}})
+            metadata['layout_regions'] = {
+                'policy': 'auto', 'version': region_plan['version'],
+                'applied': applied, 'reference_candidate': False,
+                'plan': copy.deepcopy(region_plan),
+                'metrics': measure_regions(placement, comps, index, region_plan),
+                'initialization': initialization,
+                'sa_proposals': {'counts': copy.deepcopy(getattr(placement, 'region_move_counts', {})),
+                    'scope': 'all_proposals_including_temperature_sampling',
+                    'meaning': 'legal proposals may subsequently be rejected by annealing'},
+                'chosen_changes': changes,
+                'changes_stage': 'seed_to_after_sa_and_geometry_floor',
+                'reason': 'region_seed' if applied else ('no_supported_regions'
+                    if not region_plan.get('supported') else initialization.get('reason', 'initialization_not_applied')),
+                'measurement_stage': 'after_sa_and_geometry_floor'}
         if layout_relations is not None:
             from layout_relations import measure_layout_relations, VERSION as STRUCTURE_VERSION
             metadata['layout_relations'] = copy.deepcopy(layout_relations)

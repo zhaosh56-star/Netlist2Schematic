@@ -31,7 +31,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
-        candidate_budget='sequential', port_preflight='off', presentation='legacy', net_labels='off'):
+        candidate_budget='sequential', port_preflight='off', presentation='legacy', net_labels='off',
+        region_layout='off'):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -42,6 +43,9 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         raise ValueError('symmetry_layout must be auto or off')
     if structure_layout not in ('auto', 'off'):
         raise ValueError('structure_layout must be auto or off')
+    _validate_region_policy(region_layout, structure_layout, symmetry_layout)
+    if region_layout == 'auto' and (mode != 'layered' or layout_style != 'structured'):
+        raise ValueError('region_layout auto requires structured layered layouts')
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     from candidate_budget import validate_policy
@@ -101,7 +105,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                                         seed, quality_seconds, candidate_id, options,
                                         passive_layout=passive_layout, symmetry_layout=symmetry_layout,
                                         structure_layout=structure_layout, structure_phase=structure_phase,
-                                        candidate_budget=candidate_budget,port_preflight=port_preflight)
+                                        candidate_budget=candidate_budget,port_preflight=port_preflight,
+                                        region_layout=region_layout)
             except ROUTING_FAILURES as exc:
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
                     raise
@@ -170,6 +175,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         'requested_structure_phase': structure_phase,
         'requested_candidate_budget': candidate_budget,
         'requested_port_preflight': port_preflight,
+        **({'requested_region_layout': region_layout} if region_layout != 'off' else {}),
         **({'presentation':{'style':'clean'}} if presentation=='clean' else {}),
         'placement': _saved_positions(placement, comps),
     }
@@ -179,10 +185,17 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                    net_labels=net_labels)
 
 
+def _validate_region_policy(region_layout, structure_layout='off', symmetry_layout='off'):
+    if region_layout not in ('auto', 'off'):
+        raise ValueError('region_layout must be auto or off')
+    if region_layout == 'auto' and (structure_layout == 'auto' or symmetry_layout == 'auto'):
+        raise ValueError('region_layout auto cannot be combined with structure_layout auto or symmetry_layout auto')
+
+
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    quality_seconds, candidate_id, options, *, passive_layout='flexible',
                    symmetry_layout='off', structure_layout='off', structure_phase=3,
-                   candidate_budget='sequential',port_preflight='off'):
+                   candidate_budget='sequential',port_preflight='off', region_layout='off'):
     if mode == 'layered' and layout_style == 'structured':
         from aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
@@ -190,7 +203,7 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                              candidate_id=candidate_id, passive_layout=passive_layout,
                              symmetry_layout=symmetry_layout, structure_layout=structure_layout,
                              structure_phase=structure_phase,candidate_budget=candidate_budget,
-                             port_preflight=port_preflight)
+                             port_preflight=port_preflight, region_layout=region_layout)
     elif mode == 'layered':
         layered = load_local('place_layered', 'place-layered.py')
         placement, comps, nets, comp_index, metadata = layered.create_placement(
@@ -477,6 +490,19 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
             policy=data['layout_symmetry'].get('policy', 'auto'),
             grid_step=validation.get('parameters', {}).get('grid_step', 2.0))
         data['layout_symmetry']['measurement_stage'] = 'final_output'
+    if data.get('requested_region_layout') == 'auto' or isinstance(data.get('layout_regions'), dict):
+        # Read saved evidence against actual recovery/replay coordinates.  This
+        # never seeds, moves or reorients devices (including the bus fallback).
+        report = data.setdefault('layout_regions', {
+            'policy': 'auto', 'applied': False, 'reason': 'no_region_candidate_evaluated'})
+        plan = report.get('plan')
+        if plan is not None:
+            from region_layout import measure_regions
+            report['metrics'] = measure_regions(placement, comps, comp_index, plan)
+        else:
+            report['metrics'] = {'measurable': False, 'reason': 'no_saved_region_plan'}
+        report['measurement_stage'] = 'final_output'
+        report['routing_stage'] = data.get('routing_stage', 'normal')
     if data.get('requested_structure_layout') == 'auto' or isinstance(data.get('structure_layout'), dict):
         from layout_relations import build_layout_relations, measure_layout_relations
         from netlist_core import parse_netlist
@@ -701,6 +727,8 @@ def main(argv=None, default_mode='layered'):
                         help='Device-only symmetry for new structured candidates 2/3 (default: off); saved coordinates are preserved')
     parser.add_argument('--structure-layout', choices=('auto', 'off'), default='off',
                         help='Role-aware structure layout for new candidates 2/3 (default: off)')
+    parser.add_argument('--region-layout', choices=('auto', 'off'), default='off',
+                        help='Experimental functional-region layout for candidates 2/3 (default: off)')
     parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=3,
                         help='Replay a structure rollout phase; ignored when structure-layout is off')
     parser.add_argument('--quality-seconds', type=float, default=300)
@@ -733,9 +761,12 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--analog-canvas-root', help='Read-only original project directory')
     args = parser.parse_args(argv)
     try:
+        _validate_region_policy(args.region_layout, args.structure_layout, args.symmetry_layout)
         if sum(map(bool, (args.netlist, args.reroute_placement, args.simplify_placement))) != 1:
             parser.error('provide exactly one netlist, --reroute-placement JSON or --simplify-placement JSON')
         if args.simplify_placement:
+            if args.region_layout != 'off':
+                parser.error('--simplify-placement preserves coordinates; it cannot request region layout')
             if args.fallback in ('auto', 'only') or args.local_rescue == 'auto':
                 parser.error('--simplify-placement only uses saved routes; it cannot request recovery')
             if args.port_preflight!='off':parser.error('saved coordinates cannot request port repair')
@@ -745,6 +776,8 @@ def main(argv=None, default_mode='layered'):
                                net_labels=args.net_labels,
                                **({'presentation':args.presentation} if args.presentation is not None else {}))
         elif args.reroute_placement:
+            if args.region_layout != 'off':
+                parser.error('--reroute-placement preserves coordinates; it cannot request region layout')
             if args.fallback in ('auto', 'only'):
                 parser.error('--reroute-placement preserves coordinates; it cannot request fallback relayout')
             if args.port_preflight!='off':parser.error('saved coordinates cannot request port repair')
@@ -761,6 +794,7 @@ def main(argv=None, default_mode='layered'):
                 passive_layout=args.passive_layout,
                 symmetry_layout=args.symmetry_layout,
                 structure_layout=args.structure_layout,
+                region_layout=args.region_layout,
                 structure_phase=args.structure_phase,
                 candidate_budget=args.candidate_budget,port_preflight=args.port_preflight,
                 presentation=args.presentation or 'legacy',
