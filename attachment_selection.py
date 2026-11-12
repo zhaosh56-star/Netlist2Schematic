@@ -3,7 +3,7 @@ from copy import copy, deepcopy
 from math import isfinite
 
 
-VERSION = 'attachment-selection-v1'
+VERSION = 'attachment-selection-v2'
 
 
 def _measurement_view(placement, comps, index, report, plan):
@@ -15,6 +15,8 @@ def _measurement_view(placement, comps, index, report, plan):
     live = getattr(placement, 'attachment_junction_rows', None)
     saved = report.get('placement_slot_contract', {})
     groups = {g['id']: g for g in plan.get('groups', ())}
+    previous_plan = report.get('plan', {})
+    previous_groups = {g['id']: g for g in previous_plan.get('groups', ())}
     current_rows = {c['id']: placement.cell_of[i][0] for i, c in enumerate(comps)}
     restored = {}
     records = {}
@@ -22,9 +24,12 @@ def _measurement_view(placement, comps, index, report, plan):
         names = sorted(set(group.get('members', ())) | set(group.get('host_members', ())))
         rows = {name: current_rows[name] for name in names if name in index}
         previous = saved.get('groups', {}).get(identifier, {})
+        same_evidence = (saved.get('plan_signature') == plan['signature'] or (
+            saved.get('plan_signature') == previous_plan.get('signature')
+            and previous_groups.get(identifier) == group))
         if live is not None:
             slots = live.get(identifier, ())
-        elif saved.get('plan_signature') == plan['signature'] and previous.get('device_rows') == rows:
+        elif same_evidence and previous.get('device_rows') == rows:
             slots = previous.get('rows', ())
         else:
             slots = ()
@@ -72,9 +77,21 @@ def organization_rank(report):
         return None
     if any(type(metrics.get(key)) not in (int, float) or not isfinite(metrics[key]) for key in keys):
         return None
+    count = metrics.get('source_count', 0 if report.get('policy') != 'all' else None)
+    if type(count) is not int or count < 0:
+        return None
+    source_rank = (0, 0)
+    if count:
+        if not metrics.get('source_measurable'):
+            return None
+        source_keys = ('source_errors', 'source_distance')
+        if any(type(metrics.get(key)) not in (int, float) or not isfinite(metrics[key])
+               or metrics[key] < 0 for key in source_keys):
+            return None
+        source_rank = tuple(round(metrics[key], 8) for key in source_keys)
     return (round(metrics['active_order_errors'], 8), round(metrics['violations'], 8),
             -metrics['embedded_members'], round(metrics['shape_error'] + metrics['pin_axis_error'], 8),
-            round(metrics['owner_distance'], 8))
+            round(metrics['owner_distance'], 8)) + source_rank
 
 
 def select_attachment_result(results):
@@ -97,10 +114,15 @@ def select_attachment_result(results):
             reason = 'different_or_missing_evidence'
         elif reference_rank is None or rank is None:
             reason = 'unmeasurable_relationships'
+        elif report['metrics'].get('source_count', 0) != original['metrics'].get('source_count', 0):
+            reason = 'different_or_missing_source_evidence'
         elif routes['wirelength'] > length_cap + 1e-8:
             reason = 'wirelength_limit'
         elif routes['crossings'] > cross_cap:
             reason = 'crossing_limit'
+        elif (report['metrics'].get('source_count', 0) > 0
+              and report['metrics']['source_errors'] > original['metrics']['source_errors']):
+            reason = 'source_organization_regression'
         elif rank >= reference_rank:
             reason = 'no_organization_gain'
         else:

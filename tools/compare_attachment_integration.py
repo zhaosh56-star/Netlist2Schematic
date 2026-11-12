@@ -121,7 +121,7 @@ def checked_payload(value):
 
 def verify(path, signature):
     """Reuse the original full validator, SVG checks and exact saved redraw."""
-    from attachment_integration import measure_attachments
+    from attachment_selection import measure_candidate
     from sa_saved import load_placement
     result = region.verify(path, signature)
     data = read_json(path)
@@ -138,7 +138,12 @@ def verify(path, signature):
         _, source, _, pl, comps, nets, index = load_placement(path)
         plan = build_measurement_plan(source, signature['cell'], comps, nets, index,
                                       signature['parameters']['measurement_policy'])
-        result['attachment_measurement'] = measure_attachments(pl, comps, index, plan)
+        measured = measure_candidate(pl, comps, index, data, plan,
+            stage='independent_comparison', policy=signature['parameters']['measurement_policy'])
+        result['attachment_measurement'] = measured['layout_attachments']['metrics']
+        result['attachment_measurement_context'] = {
+            'placement_slot_contract': measured['layout_attachments'].get('placement_slot_contract'),
+            'measurement_stage': measured['layout_attachments'].get('measurement_stage')}
         result['attachment_measurement_plan'] = plan
         result['attachment_plan_signature'] = common._digest(plan)
         result['connectivity_digest'] = common._digest({c['id']: c['nodes'] for c in comps})
@@ -296,7 +301,21 @@ def execute(case, seed, policy, output, parameters, code, frozen, *, retry_faile
     return record
 
 
-def gates(old, new):
+def source_gates(old, new):
+    """Unavailable source measurements cannot be interpreted as zero errors."""
+    counts = old.get('source_count'), new.get('source_count')
+    same_count = all(type(value) is int and value >= 0 for value in counts) and counts[0] == counts[1]
+    if same_count and counts[0] == 0:
+        return {'same_source_count': True, 'source_measurement_available': True,
+                'source_errors_nonincreasing': True}
+    measured = same_count and all(value.get('source_measurable') is True and all(
+        type(value.get(key)) in (int, float) and isfinite(value[key]) and value[key] >= 0
+        for key in ('source_errors', 'source_distance')) for value in (old, new))
+    return {'same_source_count': same_count, 'source_measurement_available': bool(measured),
+            'source_errors_nonincreasing': bool(measured and new['source_errors'] <= old['source_errors'] + 1e-8)}
+
+
+def gates(old, new, *, policy='passive'):
     a, b = old['metrics'], new['metrics']
     om, nm = old.get('attachment_measurement', {}), new.get('attachment_measurement', {})
     same_plan = bool(old.get('attachment_plan_signature')) and old.get('attachment_plan_signature') == new.get('attachment_plan_signature')
@@ -305,12 +324,15 @@ def gates(old, new):
         organization = bool(om.get('measurable') and nm.get('measurable')) and all(
             isinstance(om.get(key), (float, int)) and isinstance(nm.get(key), (float, int))
             and nm[key] <= om[key] + 1e-8 for key in ('violations', 'active_order_errors'))
-    return {'wirelength_115_percent': b['wirelength'] <= 1.15 * a['wirelength'] + 1e-8,
+    checks = {'wirelength_115_percent': b['wirelength'] <= 1.15 * a['wirelength'] + 1e-8,
         'crossings_limit': b['crossings'] <= (0 if a['crossings'] == 0 else a['crossings'] + 1),
         'same_measurement_plan': same_plan, 'no_new_structure_violations': organization,
         'same_original_connectivity': bool(old.get('connectivity_digest')) and old.get('connectivity_digest') == new.get('connectivity_digest'),
         'strict_simplification_passed': bool(old.get('strict_simplification_audit', {}).get('valid')) and bool(new.get('strict_simplification_audit', {}).get('valid')),
         'no_new_bus_fallback': new['routing_stage'] != 'bus_fallback' or old['routing_stage'] == 'bus_fallback'}
+    if policy == 'all':
+        checks.update(source_gates(om, nm))
+    return checks
 
 
 def report_off_references(path):
@@ -390,7 +412,7 @@ def publish(output, jobs, records, parameters, code, frozen, *, regression=None,
             old, new = results.get('off', {}), results.get(policy, {})
             if old.get('status') == new.get('status') == 'valid':
                 same_input = old['signature']['source_files'] == new['signature']['source_files']
-                checks = gates(old['verified'], new['verified'])
+                checks = gates(old['verified'], new['verified'], policy=policy)
                 checks['same_input_version'] = same_input
                 row['comparisons'][policy] = checks
                 pairs[policy].append((old['verified'], new['verified'], checks))
@@ -412,6 +434,7 @@ def publish(output, jobs, records, parameters, code, frozen, *, regression=None,
             table.append([policy, m['wirelength'], m['crossings'], m['bends'],
                 v.get('route_detours', {}).get('maximum_factor'), f'{v["width"]}×{v["height"]}',
                 am.get('owner_distance'), am.get('embedded_members'), am.get('active_order_errors'),
+                am.get('source_count'), am.get('source_errors'), am.get('source_distance'),
                 v.get('selected_candidate'), ','.join(v.get('attempted_candidate_ids', [])),
                 v['routing_stage'], result.get('elapsed_seconds'),
                 '历史 off 复验' if result.get('historical_baseline') else '缓存复验' if result.get('reused') else '本次运行'])
@@ -420,7 +443,7 @@ def publish(output, jobs, records, parameters, code, frozen, *, regression=None,
         sections.append('<section><h2>' + escape(f'{case["case"]} · seed {seed} · ' + case.get('title', '')) +
             '</h2><div class="figures">' + ''.join(figures) + '</div>' + common._table(
                 ['策略', '线长', '交叉', '折角', '最大整网绕行比', '尺寸', '附件距离', '嵌入成员',
-                 '有源顺序违规', '保留候选', '实际尝试候选', '阶段', '耗时', '来源'], table) +
+                 '有源顺序违规', '已识别源', '源位置违规', '源归属距离', '保留候选', '实际尝试候选', '阶段', '耗时', '来源'], table) +
             '<pre>' + escape(json.dumps(row['comparisons'], ensure_ascii=False, indent=2)) + '</pre>' +
             '<details><summary>实际测量、候选与恢复记录</summary><pre>' + escape(json.dumps(details, ensure_ascii=False, indent=2)) + '</pre></details></section>')
         rows.append(row)

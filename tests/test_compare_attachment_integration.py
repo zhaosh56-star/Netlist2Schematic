@@ -24,7 +24,7 @@ def verified(length=100, crossings=0, stage='normal'):
         'routing_stage': stage, 'strict_simplification_audit': {'valid': True},
         'attachment_plan_signature': 'shared-plan', 'connectivity_digest': 'original-ports',
         'attachment_measurement': {'supported': True, 'measurable': True,
-            'violations': 0, 'active_order_errors': 0},
+            'violations': 0, 'active_order_errors': 0, 'source_count': 0},
         'clean_svg': str(comparison.ROOT / 'output/example-clean.svg'),
         'width': 200, 'height': 300}
 
@@ -72,6 +72,29 @@ class AttachmentComparisonTests(unittest.TestCase):
         new['attachment_measurement']['supported'] = False
         self.assertTrue(comparison.gates(old, new)['no_new_structure_violations'])
 
+    def test_all_policy_rejects_missing_or_unmeasurable_source_evidence(self):
+        old = verified(); new = verified()
+        for item in (old, new):
+            item['attachment_measurement'].update(source_count=1, source_measurable=True,
+                source_errors=0, source_distance=1.2)
+        self.assertTrue(all(comparison.gates(old, new, policy='all').values()))
+        for key in ('source_measurable', 'source_errors', 'source_distance', 'source_count'):
+            invalid = deepcopy(new); invalid['attachment_measurement'].pop(key)
+            self.assertFalse(comparison.gates(old, invalid, policy='all')['source_measurement_available'])
+        invalid = deepcopy(new); invalid['attachment_measurement']['source_distance'] = float('inf')
+        self.assertFalse(comparison.gates(old, invalid, policy='all')['source_measurement_available'])
+
+    def test_source_error_growth_does_not_hide_behind_improved_passives(self):
+        old = verified(); new = verified()
+        old['attachment_measurement'].update(source_count=1, source_measurable=True,
+            source_errors=0, source_distance=2)
+        new['attachment_measurement'].update(source_count=1, source_measurable=True,
+            source_errors=1, source_distance=1)
+        self.assertFalse(comparison.gates(old, new, policy='all')['source_errors_nonincreasing'])
+        self.assertNotIn('source_errors_nonincreasing', comparison.gates(old, new, policy='passive'))
+        self.assertTrue(all(comparison.source_gates({'source_count': 0}, {'source_count': 0}).values()))
+        self.assertFalse(all(comparison.source_gates({}, {}).values()))
+
     def test_simplifier_audit_disallows_balanced_even_when_final_crossings_drop(self):
         data = {'metrics': {'wirelength': 90, 'crossings': 0, 'bends': 3},
             'route_simplification': {'before_metrics': {'wirelength': 100, 'crossings': 1, 'bends': 4},
@@ -101,6 +124,27 @@ class AttachmentComparisonTests(unittest.TestCase):
                 comparison.checked_payload(invalid)
         self.assertEqual({'spent': 12, 'distance': None},
             comparison.checked_payload({'spent': 12, 'distance': None}))
+
+    def test_independent_verification_restores_equivalent_saved_display_slots(self):
+        from attachment_selection import measure_candidate
+        from tests.test_attachment_integration_review import inserted_row_fixture
+        trial, comps, nets, index, plan, bridge = inserted_row_fixture()
+        saved = measure_candidate(trial, comps, index, {'candidate_id': 2}, plan)
+        restored = deepcopy(trial)
+        del restored.attachment_junction_rows
+        common_plan = deepcopy(plan)
+        common_plan.update(policy='all', signature='independent-all-plan')
+        saved.update(placement={}, routes={}, metrics={'wirelength': 10, 'crossings': 0, 'bends': 0},
+            route_simplification={'before_metrics': {'wirelength': 10, 'crossings': 0, 'bends': 0}})
+        signature = {'cell': None, 'parameters': {'measurement_policy': 'all'}}
+        with patch.object(comparison.region, 'verify', return_value={'valid': True}), \
+                patch.object(comparison, 'read_json', return_value=saved), \
+                patch.object(comparison, 'build_measurement_plan', return_value=common_plan), \
+                patch('sa_saved.load_placement', return_value=(saved, Path('source.cir'), None, restored, comps, nets, index)):
+            result = comparison.verify(Path('saved.json'), signature)
+        self.assertEqual(len(bridge['members']), result['attachment_measurement']['embedded_members'])
+        self.assertEqual('independent-all-plan', result['attachment_measurement_context']['placement_slot_contract']['plan_signature'])
+        self.assertFalse(hasattr(restored, 'attachment_junction_rows'))
 
     def test_policy_rollouts_have_independent_release_gates(self):
         records = {('x', 1, policy): record(verified()) for policy in comparison.POLICIES}

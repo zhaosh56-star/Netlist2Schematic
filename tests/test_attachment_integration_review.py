@@ -81,6 +81,22 @@ class AttachmentIntegrationReviewTests(unittest.TestCase):
         self.assertEqual(measured['layout_attachments']['metrics']['embedded_members'], 0)
         self.assertFalse(hasattr(restored, 'attachment_junction_rows'))
 
+    def test_common_all_plan_keeps_only_identical_passive_slot_evidence(self):
+        from attachment_selection import measure_candidate
+        trial, comps, _, index, plan, bridge = inserted_row_fixture()
+        metadata = measure_candidate(trial, comps, index, {'candidate_id': 2}, plan)
+        restored = deepcopy(trial)
+        del restored.attachment_junction_rows
+        common = deepcopy(plan)
+        common.update(policy='all', signature='common-all-evidence')
+        result = measure_candidate(restored, comps, index, metadata, common, policy='all')
+        self.assertEqual(result['layout_attachments']['metrics']['embedded_members'], len(bridge['members']))
+        altered = next(g for g in common['groups'] if g['id'] == bridge['id'])
+        altered['host_ports'] = list(reversed(altered['host_ports']))
+        result = measure_candidate(restored, comps, index, metadata, common, policy='all')
+        self.assertEqual(result['layout_attachments']['metrics']['embedded_members'], 0)
+        self.assertFalse(hasattr(restored, 'attachment_junction_rows'))
+
     def test_source_only_installed_state_supports_real_passive_diagnostics(self):
         devices = dict(host=mos('out', 'control'), voltage=source('VSRC', 'control'))
         original, comps, nets, index, _ = convert(devices, dict(host=(1, 3), voltage=(3, 0)))

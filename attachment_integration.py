@@ -19,7 +19,7 @@ from structured_placement import StructuredPlacement
 from readability_layout import (build_readability_plan, measure_readability,
                                 junction_point)
 
-VERSION = 'attachment-integration-v1'
+VERSION = 'attachment-integration-v2'
 ACTIVE = frozenset(('nmos', 'pmos', 'npn', 'pnp'))
 PASSIVE = frozenset(('resistor', 'capacitor', 'inductor', 'diode'))
 EPS = 1e-8
@@ -63,8 +63,8 @@ def _has_budget(budget, until):
 
 def build_attachment_plan(devices, comps, nets, index, structs, levels, row_of, *, policy='passive'):
     """Compile real terminal roles; no placement or random state is changed."""
-    if policy != 'passive':
-        raise ValueError('only the passive attachment phase is implemented')
+    if policy not in ('passive', 'all'):
+        raise ValueError('attachment policy must be passive or all')
     readable = build_readability_plan(devices, comps, nets, index, structs, levels, row_of)
     rows = readable['display_rows']
     from structured_placement import _relations
@@ -119,14 +119,38 @@ def build_attachment_plan(devices, comps, nets, index, structs, levels, row_of, 
     active_bands = set(active_rows.values())
     reserved_rows = sorted({rows[c['id']] for c in comps if c['symbol'] in PASSIVE
                             and rows[c['id']] not in active_bands})
-    plan = dict(version=VERSION, policy=policy, supported=bool(groups), groups=groups,
+    source_model = None
+    source_groups = []
+    if policy == 'all':
+        from attachment_sources import build_source_groups
+        source_model = build_source_groups(devices, comps, nets, index, display_rows=rows)
+        for source_group in source_model['groups']:
+            source_group = deepcopy(source_group)
+            hosts = set(source_group['host_members'])
+            source_group.update(host_blocks=[block for block in owners if set(block) & hosts],
+                host_lanes=[], requires_interior=False)
+            source_groups.append(source_group)
+    source_managed = sorted({n for g in source_groups for n in g['members']})
+    plan = dict(version=VERSION, policy=policy, supported=bool(groups or source_groups), groups=groups,
         readability_plan=readable, branch_row_plan=deepcopy(readable.get('branch_row_plan')),
         display_rows=deepcopy(rows), active_rows=active_rows,
         coverage=deepcopy(readable['coverage']), sources=[], host_axes=host_axes,
         reserved_passive_rows=reserved_rows,
         preserve_feedback_rows=any(s['kind'] == 'feedback_network' for s in structs))
+    plan.update(source_model=source_model, source_groups=source_groups,
+                source_managed_members=source_managed)
     plan['signature'] = sha256(json.dumps(plan, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     return plan
+
+
+def _motion_groups(plan):
+    managed = set(plan.get('source_managed_members', ()))
+    return [g for g in plan['groups'] if not managed.intersection(g['members'])] + list(plan.get('source_groups', ()))
+
+
+def _passive_motion_groups(plan):
+    managed = set(plan.get('source_managed_members', ()))
+    return [g for g in plan['groups'] if not managed.intersection(g['members'])]
 
 
 def _envelope_ids(group, index):
@@ -204,6 +228,11 @@ def _order_errors(pl, comps, index, plan):
             current = pl.cell_of[index[a]][0]-pl.cell_of[index[b]][0]
             errors += (delta == 0 and current != 0) or (delta != 0 and delta*current <= 0)
     return errors
+
+
+def _source_chain_errors(pl, comps, index, group):
+    from attachment_sources import source_chain_errors
+    return source_chain_errors(pl, comps, index, group)
 
 
 def _group_paths(group):
@@ -285,13 +314,23 @@ def measure_attachments(pl, comps, index, plan):
         interior_member_count=len({n for g in plan.get('groups', ())
                                   if g.get('requires_interior') for n in g['members']}),
         violations=None, shape_error=None, pin_axis_error=None, owner_distance=None, port_direction_errors=None,
-        embedded_groups=0, embedded_members=0, active_order_errors=None, groups=[], source_count=0)
+        embedded_groups=0, embedded_members=0, active_order_errors=None, groups=[],
+        source_count=len(plan.get('source_groups', ())), source_errors=None,
+        source_distance=None, source_measurable=False, source_raw_errors=None,
+        source_chain_errors=None, sources=[])
     if not plan.get('supported'):
         return result
     try:
         physical = measure_readability(pl, comps, index, plan['readability_plan'])
-        if not physical.get('measurable'):
+        if plan['groups'] and not physical.get('measurable'):
             return result
+        source = None
+        if plan.get('source_groups'):
+            from attachment_sources import measure_source_groups
+            source = measure_source_groups(pl, comps, {}, index, plan['source_model'])
+            if not source['measurable']:
+                result['sources'] = source['records']
+                return result
         for i in index.values():
             if not all(isfinite(v) for v in pl.pos_of(i)):
                 return result
@@ -303,14 +342,18 @@ def measure_attachments(pl, comps, index, plan):
         host_error = sum(abs(pl.pin_world(index[a['a']], a['pin_a'])[0]
                              -pl.pin_world(index[a['b']], a['pin_b'])[0])/100 for a in plan.get('host_axes', ()))
         port_errors = sum(g['port_direction_errors'] for g in details)
-        result.update(measurable=True, violations=(physical['violations'] or 0)+port_errors,
+        result.update(measurable=True, violations=(physical.get('violations') or 0)+port_errors,
             port_direction_errors=port_errors,
-            shape_error=physical['shape_error'] or 0.0,
-            pin_axis_error=(physical['pin_axis_error'] or 0.0)+host_error,
-            owner_distance=physical['owner_locality'] or 0.0,
+            shape_error=physical.get('shape_error') or 0.0,
+            pin_axis_error=(physical.get('pin_axis_error') or 0.0)+host_error,
+            owner_distance=physical.get('owner_locality') or 0.0,
             embedded_groups=sum(bool(g['embedded_members']) and g['requires_interior'] for g in details),
             embedded_members=len(embedded), active_order_errors=_order_errors(pl, comps, index, plan),
             groups=details)
+        if source is not None:
+            result.update(source_errors=source['source_errors'], source_distance=source['source_distance'],
+                source_measurable=True, source_raw_errors=source['raw_source_errors'],
+                source_chain_errors=source['chain_errors'], sources=source['records'])
     except (KeyError, IndexError, TypeError, ValueError):
         return result
     return result
@@ -319,8 +362,21 @@ def measure_attachments(pl, comps, index, plan):
 def attachment_rank(metrics):
     if not metrics.get('measurable'):
         return None
-    return (metrics['violations'], metrics['active_order_errors'], -metrics['embedded_members'],
-            metrics['shape_error']+metrics['pin_axis_error'], metrics['owner_distance'])
+    passive = (metrics['active_order_errors'], metrics['violations'], -metrics['embedded_members'],
+               metrics['shape_error']+metrics['pin_axis_error'], metrics['owner_distance'])
+    return passive + ((metrics['source_errors'], metrics['source_distance']) if metrics['source_count'] else (0, 0))
+
+
+def _source_improves(before, after):
+    if (not before.get('measurable') or not after.get('measurable')
+            or not before['source_count'] or before['source_count'] != after['source_count']):
+        return False
+    if any(after[k] > before[k]+EPS for k in ('violations', 'active_order_errors',
+            'shape_error', 'pin_axis_error', 'owner_distance')):
+        return False
+    if after['embedded_members'] < before['embedded_members']:
+        return False
+    return (after['source_errors'], after['source_distance']) < (before['source_errors'], before['source_distance'])
 
 
 def score_attachments(pl, comps, index, plan):
@@ -331,6 +387,8 @@ def score_attachments(pl, comps, index, plan):
     value = (1.25*metrics['violations'] + 2.5*metrics['active_order_errors']
              + metrics['shape_error'] + 2.5*metrics['pin_axis_error']
              + .35*metrics['owner_distance'] + .75*missing)
+    if metrics['source_count']:
+        value += 1.25*metrics['source_errors'] + .5*metrics['source_distance']
     return dict(weighted_total=value, metrics=metrics)
 
 
@@ -383,6 +441,8 @@ class AttachmentPlacement(FlexiblePassivePlacement):
                 return False
         if any(self.cell_of[i][0] != row for i, row in self.fixed_rows.items()):
             return False
+        if any(self.cell_of[i][0] not in self.attachment_source_rows for i in self.attachment_source_ids):
+            return False
         for i, (cell, orient, point) in self.attachment_fixed.items():
             if self.cell_of[i] != cell or self.orient[i] != orient or self.pos_of(i) != point:
                 return False
@@ -411,6 +471,24 @@ class AttachmentPlacement(FlexiblePassivePlacement):
                 if pattern['id'] in limits and any(pattern[key] > value+EPS
                         for key, value in limits[pattern['id']].items()):
                     return False
+        if self.attachment_plan.get('source_groups'):
+            from attachment_sources import measure_source_groups
+            measured = measure_source_groups(self, self.comps, {}, index, self.attachment_plan['source_model'])
+            if not measured['measurable']:
+                return False
+            if any(r['id'] in self.attachment_source_error_limits
+                   and r['source_errors'] > self.attachment_source_error_limits[r['id']]
+                   for r in measured['records']):
+                return False
+            for group in self.attachment_plan['source_groups']:
+                if (group['id'] in self.attachment_source_port_limits
+                        and _port_errors(self, self.comps, index, self.attachment_plan, group)
+                            > self.attachment_source_port_limits[group['id']]):
+                    return False
+                if (group['id'] in self.attachment_source_chain_limits
+                        and _source_chain_errors(self, self.comps, index, group)
+                            > self.attachment_source_chain_limits[group['id']]):
+                    return False
         return True
 
     def propose(self):
@@ -418,10 +496,26 @@ class AttachmentPlacement(FlexiblePassivePlacement):
         if self.rng.random() < .25:
             count['joint_attempts'] += 1
             before = list(self.cell_of), list(self.orient)
-            groups = self.attachment_plan['groups']
+            groups = _motion_groups(self.attachment_plan)
             if not groups:
                 return None
             group = self.rng.choice(groups)
+            if group['id'] in {g['id'] for g in self.attachment_plan.get('source_groups', ())}:
+                from attachment_sources import source_group_states
+                count['source_attempts'] += 1
+                model = dict(self.attachment_plan['source_model'], groups=[group])
+                choices = list(source_group_states(self, self.comps, {}, self.attachment_index,
+                                                   model, max_candidates=8))
+                if not choices:
+                    return None
+                cells, orientations, _ = self.rng.choice(choices)
+                self.set_state(cells, orientations)
+                if not self.valid_state():
+                    count['slot_guard_rejections'] += 1
+                    self.set_state(*before)
+                    return None
+                count['joint_legal'] += 1; count['source_legal'] += 1
+                return before
             # Movement bundles are local and non-transitive. They do not alter
             # semantic ownership, slot eligibility, or the annealer snapshot.
             ids = {self.attachment_index[n] for n in group['members']}
@@ -478,23 +572,31 @@ def _install(pl, comps, index, plan, *, required=None):
     clone.attachment_plan, clone.attachment_index = deepcopy(plan), dict(index)
     clone.attachment_axes = tuple(clone.column_x), tuple(clone.row_y)
     clone.cols = len(clone.column_x)
-    clone.passive_indices = tuple(i for i, c in enumerate(comps)
-        if c['symbol'] in PASSIVE and i not in _fixed_ids(clone, index))
+    fixed = _fixed_ids(clone, index)
+    managed = {index[n] for n in plan.get('source_managed_members', ())}
+    source_ids = {index[g['device']] for g in plan.get('source_groups', ())} - fixed
+    movable = {i for i, c in enumerate(comps) if c['symbol'] in PASSIVE and i not in fixed} | source_ids
+    clone.attachment_source_ids = frozenset(source_ids)
+    clone.attachment_source_rows = tuple(range(len(clone.row_y)))
+    clone.source_orientation_ids = frozenset(getattr(clone, 'source_orientation_ids', ())) | source_ids
+    clone.passive_indices = tuple(i for i in sorted(movable) if comps[i]['symbol'] in PASSIVE and i not in managed)
     clone._passive_set = frozenset(clone.passive_indices)
-    clone.fixed_rows = {i: cell[0] for i, cell in enumerate(clone.cell_of)
-                        if i not in clone._passive_set}
+    clone.fixed_rows = {i: cell[0] for i, cell in enumerate(clone.cell_of) if i not in movable}
     clone.attachment_fixed = {i: (tuple(clone.cell_of[i]), clone.orient[i], tuple(clone.pos_of(i)))
                               for i in _fixed_ids(clone, index)}
     clone.attachment_required_embeddings = dict(required or {})
     clone.attachment_shape_limits = getattr(clone, 'attachment_shape_limits', {})
     clone.attachment_port_limits = getattr(clone, 'attachment_port_limits', {})
+    clone.attachment_source_error_limits = getattr(clone, 'attachment_source_error_limits', {})
+    clone.attachment_source_port_limits = getattr(clone, 'attachment_source_port_limits', {})
+    clone.attachment_source_chain_limits = getattr(clone, 'attachment_source_chain_limits', {})
     clone.attachment_axis_limits = getattr(clone, 'attachment_axis_limits', ())
     clone.attachment_junction_rows = getattr(clone, 'attachment_junction_rows', {})
     clone.attachment_row_origin = getattr(clone, 'attachment_row_origin', tuple(range(len(clone.row_y))))
-    clone.attachment_orientation_ids = frozenset(index[n] for group in plan['groups']
-                                                for n in group['members'])
+    clone.attachment_orientation_ids = frozenset(index[n] for group in
+        list(plan['groups'])+list(plan.get('source_groups', ())) for n in group['members'])
     guest_map = defaultdict(list)
-    for group in plan['groups']:
+    for group in list(plan['groups'])+list(plan.get('source_groups', ())):
         ids = {index[n] for n in group['members']}
         for block in getattr(clone, 'blocks', ()) + getattr(clone, 'layout_macro_blocks', []):
             names = {comps[i]['id'] for i in block}
@@ -503,7 +605,10 @@ def _install(pl, comps, index, plan, *, required=None):
     clone.attachment_guests = {key: tuple(value) for key, value in guest_map.items()}
     clone.attachment_move_counts = getattr(clone, 'attachment_move_counts', {name: 0 for name in (
         'joint_attempts', 'joint_legal', 'translation_legal', 'mirror_legal',
-        'slot_guard_rejections', 'ordinary_attempts', 'ordinary_legal', 'ordinary_rejections')})
+        'slot_guard_rejections', 'ordinary_attempts', 'ordinary_legal', 'ordinary_rejections',
+        'source_attempts', 'source_legal')})
+    clone.attachment_move_counts.setdefault('source_attempts', 0)
+    clone.attachment_move_counts.setdefault('source_legal', 0)
     # Flexible instances already have these. Plain/source-only seeds do not.
     clone.passive_neighbors = getattr(clone, 'passive_neighbors', {i: () for i in clone.passive_indices})
     clone.passive_relations = getattr(clone, 'passive_relations',
@@ -584,7 +689,8 @@ def _rehome_related_shunts(pl, comps, index, plan, moving_group):
     for group in plan['groups']:
         if (group['kind'] != 'single_attachment' or len(group['members']) != 1
                 or len(group['owner_junctions']) != 1
-                or not active_nets.intersection(group['owner_junctions'])):
+                or not active_nets.intersection(group['owner_junctions'])
+                or set(group['members']).intersection(plan.get('source_managed_members', ()))):
             continue
         i = index[group['members'][0]]
         if i in fixed:
@@ -630,29 +736,6 @@ def _rehome_related_shunts(pl, comps, index, plan, moving_group):
             break
         else:
             pl.set_state(*original)
-
-
-def _rail_marker_direction_conflicts(pl, i):
-    """Describe terminal orders that fold a default vertical rail stub back."""
-    from structured_placement import par
-    nodes = pl.comps[i]['nodes']
-    conflicts = []
-    for rail_pin, net in nodes.items():
-        symbol = par.power_marker_sym(net)
-        if not symbol:
-            continue
-        rail = pl.pin_world(i, rail_pin)
-        sign = -1 if symbol == 'vdd-port' else 1
-        for pin, other in nodes.items():
-            if pin != rail_pin and not par.power_marker_sym(other):
-                signal = pl.pin_world(i, pin)
-                if sign*(rail[1]-signal[1]) < -EPS:
-                    conflicts.append(dict(device=pl.comps[i]['id'], orientation=pl.orient[i],
-                        rail_net=net, rail_pin=rail_pin, rail_point=list(rail),
-                        signal_net=other, signal_pin=pin, signal_point=list(signal),
-                        marker_direction='north' if sign < 0 else 'south',
-                        reason='default_rail_stub_reverses_signal_terminal_order'))
-    return conflicts
 
 
 def _slot_specs(pl, group, index):
@@ -812,6 +895,7 @@ def initialize_attachments(pl, devices, comps, nets, index, plan, *, deadline=No
     """Open and fill real interior slots, using a single bounded budget ledger."""
     budget, started, until = _begin_budget(budget, deadline)
     report = dict(version=VERSION, applied=False, status='skipped', candidate_trials=0,
+                  source_candidate_trials=0, source_applied=False, passive_applied=False,
                   interior_candidate_trials=0, local_candidate_trials=0, group_trials={},
                   state_legal_trials=0, legal_trials=0, static_rejections=0,
                   slot_guard_rejections=0, rail_direction_rejections=0, actions=[], budget=budget)
@@ -829,7 +913,7 @@ def initialize_attachments(pl, devices, comps, nets, index, plan, *, deadline=No
     report['before'] = deepcopy(before)
     common = estimate or (lambda p: score_attachments(p, comps, index, plan)['weighted_total'])
     report['estimate_before'] = common(pl)
-    groups = sorted((g for g in plan['groups'] if g.get('requires_interior')), key=lambda g: (
+    groups = sorted((g for g in _passive_motion_groups(plan) if g.get('requires_interior')), key=lambda g: (
         {'multi_path_bridge': 0, 'series_chain': 1, 'two_arm_join': 2,
          'parallel_bank': 3, 'single_attachment': 4}.get(g['kind'], 5), g['id']))
     for group in groups:
@@ -882,7 +966,7 @@ def initialize_attachments(pl, devices, comps, nets, index, plan, *, deadline=No
                 slot_diagnostics=deepcopy(current.attachment_slot_diagnostics),
                 row=spec['row'], anchor=spec['anchor'], embedded_members=_embedded(current, group, index)))
     from attachment_local import enum_local_attachment_trials
-    local_groups = [g for g in plan['groups'] if not g.get('requires_interior')
+    local_groups = [g for g in _passive_motion_groups(plan) if not g.get('requires_interior')
                     and len(g['owner_junctions']) == 1]
     for group in local_groups:
         if not _has_budget(budget, until):
@@ -920,6 +1004,46 @@ def initialize_attachments(pl, devices, comps, nets, index, plan, *, deadline=No
         if best:
             _, current, action = best
             report['actions'].append(action)
+    if plan.get('source_groups'):
+        from attachment_sources import source_group_trials
+        report['source_candidate_trials'] = 0
+        for group in plan['source_groups']:
+            if not _has_budget(budget, until):
+                break
+            measured = measure_attachments(current, comps, index, plan)
+            best = None
+            allowance = max(1, (budget['max_candidates']-budget['candidates'])//len(plan['source_groups']))
+            model = dict(plan['source_model'], groups=[group])
+            for trial, action in source_group_trials(current, comps, nets, index, model,
+                    deadline=until, max_candidates=min(128, allowance)):
+                if not _has_budget(budget, until):
+                    break
+                budget['candidates'] += 1; report['candidate_trials'] += 1
+                report['source_candidate_trials'] += 1
+                report['group_trials'][group['id']] = report['group_trials'].get(group['id'], 0)+1
+                if not trial.valid_state() or not _fixed_world_safe(pl, trial, index):
+                    report['slot_guard_rejections'] += 1
+                    continue
+                after = measure_attachments(trial, comps, index, plan)
+                if not _source_improves(measured, after):
+                    continue
+                report['state_legal_trials'] += 1
+                safe = _checked_static(par, trial, nets, index, options, until)
+                if safe is None:
+                    budget['exhausted'] = True
+                    _end_budget(budget, started)
+                    report.update(status='rolled_back', reason='attachment_budget', actions=[], after=deepcopy(before))
+                    return pl, report
+                if not safe:
+                    report['static_rejections'] += 1
+                    continue
+                report['legal_trials'] += 1
+                key = after['source_errors'], after['source_distance'], attachment_rank(after), common(trial)
+                if best is None or key < best[0]:
+                    best = key, trial, action
+            if best:
+                _, current, action = best
+                report['actions'].append(action)
     if report['actions']:
         current, expired = _release_empty_rows(par, current, pl, comps, nets, index, plan,
                                                options, budget, until, report)
@@ -929,7 +1053,7 @@ def initialize_attachments(pl, devices, comps, nets, index, plan, *, deadline=No
             return pl, report
     if report['actions']:
         applied = {action.get('group') for action in report['actions']}
-        protected_groups = [g for g in plan['groups'] if g['id'] in applied or any(
+        protected_groups = [g for g in _passive_motion_groups(plan) if g['id'] in applied or any(
             current.cell_of[index[n]] != pl.cell_of[index[n]] or current.orient[index[n]] != pl.orient[index[n]]
             for n in g['members'])]
         protected = {n for g in protected_groups for n in g['members']}
@@ -942,6 +1066,16 @@ def initialize_attachments(pl, devices, comps, nets, index, plan, *, deadline=No
             -current.pin_world(index[axis['b']], axis['pin_b'])[0])) for axis in plan.get('host_axes', ()))
         current.attachment_port_limits = {g['id']: _port_errors(current, comps, index, plan, g)
                                          for g in protected_groups}
+        if plan.get('source_groups'):
+            from attachment_sources import measure_source_groups
+            source = measure_source_groups(current, comps, nets, index, plan['source_model'])
+            current.attachment_source_error_limits = {r['id']: r['source_errors'] for r in source['records']}
+            current.attachment_source_port_limits = {g['id']: _port_errors(current, comps, index, plan, g)
+                                                     for g in plan['source_groups']}
+            current.attachment_source_chain_limits = {g['id']: _source_chain_errors(current, comps, index, g)
+                                                      for g in plan['source_groups']}
+        report['source_applied'] = any(a['kind'] == 'source_group_attachment' for a in report['actions'])
+        report['passive_applied'] = any(a['kind'] != 'source_group_attachment' for a in report['actions'])
         report.update(applied=True, status='applied', reason='junction_organization',
             after=measure_attachments(current, comps, index, plan), estimate_after=common(current))
         report['estimate_ratio'] = report['estimate_after']/report['estimate_before'] if report['estimate_before'] else None
@@ -973,7 +1107,7 @@ def refine_attachments(par, pl, comps, nets, index, metadata, *, options=None,
         baseline_hpwl = _hpwl(par, pl, nets, index)
         report.update(estimated_hpwl_before=baseline_hpwl, estimated_hpwl_limit=baseline_hpwl*1.15,
                       hpwl_rejections=0)
-        for group in plan['groups']:
+        for group in _passive_motion_groups(plan):
             if not _has_budget(budget, until):
                 break
             ids = {index[n] for n in group['members']}
@@ -1015,6 +1149,37 @@ def refine_attachments(par, pl, comps, nets, index, metadata, *, options=None,
                 current, baseline = trial, measured
                 report['accepted'] += 1
                 report['actions'].append(action)
+        if plan.get('source_groups'):
+            from attachment_sources import source_group_trials
+            report['source_candidates'] = 0
+            for group in plan['source_groups']:
+                if not _has_budget(budget, until):
+                    break
+                model = dict(plan['source_model'], groups=[group])
+                remaining = min(128, max(0, budget['max_candidates']-budget['candidates']))
+                for trial, action in source_group_trials(current, comps, nets, index, model,
+                        deadline=until, max_candidates=remaining):
+                    if not _has_budget(budget, until):
+                        break
+                    budget['candidates'] += 1; report['candidates'] += 1; report['source_candidates'] += 1
+                    if not trial.valid_state():
+                        continue
+                    measured = measure_attachments(trial, comps, index, plan)
+                    if not _source_improves(baseline, measured):
+                        continue
+                    if _hpwl(par, trial, nets, index) > baseline_hpwl*1.15+EPS:
+                        report['hpwl_rejections'] += 1
+                        continue
+                    safe = _checked_static(par, trial, nets, index, options, until)
+                    if safe is None:
+                        budget['exhausted'] = True
+                        report['reason'] = 'attachment_budget'
+                        break
+                    if not safe:
+                        continue
+                    current, baseline = trial, measured
+                    report['accepted'] += 1
+                    report['actions'].append(action)
         report.update(applied=bool(report['accepted']), after=baseline)
         pl = current
     saved.update(refinement=report, budget=budget)
@@ -1040,9 +1205,37 @@ def finalize_attachment_state(pl, checkpoint):
                 and pl.attachment_required_embeddings == checkpoint.attachment_required_embeddings
                 and pl.attachment_shape_limits == checkpoint.attachment_shape_limits
                 and pl.attachment_port_limits == checkpoint.attachment_port_limits
+                and pl.attachment_source_ids == checkpoint.attachment_source_ids
+                and pl.attachment_source_rows == checkpoint.attachment_source_rows
+                and pl.attachment_source_error_limits == checkpoint.attachment_source_error_limits
+                and pl.attachment_source_port_limits == checkpoint.attachment_source_port_limits
+                and pl.attachment_source_chain_limits == checkpoint.attachment_source_chain_limits
                 and pl.fixed_rows == checkpoint.fixed_rows)
     if safe:
         return pl, dict(version=VERSION, status='kept', reverted=False,
                         scope='frozen_axes_slots_and_fixed_world')
     return deepcopy(checkpoint), dict(version=VERSION, status='restored_checkpoint', reverted=True,
         reason='post_sa_change_violated_attachment_contract', scope='frozen_axes_slots_and_fixed_world')
+
+
+def _rail_marker_direction_conflicts(pl, i):
+    """Describe terminal orders that fold a default vertical rail stub back."""
+    from structured_placement import par
+    nodes = pl.comps[i]['nodes']
+    conflicts = []
+    for rail_pin, net in nodes.items():
+        symbol = par.power_marker_sym(net)
+        if not symbol:
+            continue
+        rail = pl.pin_world(i, rail_pin)
+        sign = -1 if symbol == 'vdd-port' else 1
+        for pin, other in nodes.items():
+            if pin != rail_pin and not par.power_marker_sym(other):
+                signal = pl.pin_world(i, pin)
+                if sign*(rail[1]-signal[1]) < -EPS:
+                    conflicts.append(dict(device=pl.comps[i]['id'], orientation=pl.orient[i],
+                        rail_net=net, rail_pin=rail_pin, rail_point=list(rail),
+                        signal_net=other, signal_pin=pin, signal_point=list(signal),
+                        marker_direction='north' if sign < 0 else 'south',
+                        reason='default_rail_stub_reverses_signal_terminal_order'))
+    return conflicts

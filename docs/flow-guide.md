@@ -6,7 +6,7 @@
 无需启动网页编辑器，也无需安装 Node.js、pnpm 或仿真器。
 
 日常命令见 [README](../README.md)，全部文件的职责和保留范围见[项目目录说明](project-layout.md)。
-当前1090项主项目完整回归通过；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)，缩线预算预留见[v6说明](route-scheduling-v6.md)，按链轮转见[v7说明](track-fairness-v7.md)，交叉净区预筛见[v8说明](candidate-clearance-v8.md)，可选自动预算见[预算说明与对照](auto-simplify-budget.md)。下文各历史版本的测试数量与实测数字保留当时口径。
+当前1187项主项目完整回归通过；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)，缩线预算预留见[v6说明](route-scheduling-v6.md)，按链轮转见[v7说明](track-fairness-v7.md)，交叉净区预筛见[v8说明](candidate-clearance-v8.md)，可选自动预算见[预算说明与对照](auto-simplify-budget.md)。下文各历史版本的测试数量与实测数字保留当时口径。
 
 本轮另加两个独立实验入口：`--readability-layout auto` 组织无源、局部源和失效间距；`--route-tradeoff balanced` 在完整几何验收下允许少量稀疏交叉换取明显缩线。默认仍为 `off` 和 `strict`，不改变日常命令的原算法。边界、执行顺序、模块及实际未达标项见[可读性改进说明](readability-improvement.md)。本说明下文“线长、交叉、折角不增加”描述的是默认严格缩线策略。
 
@@ -28,6 +28,7 @@
 | 可选证据校准 | `layout_evidence.py`、`layout_intent.py` | 仅结构布局auto构造校准的供电／输入对、对应支路和端口附件；独立对照测量使用同一清单 |
 | 结构化优化与比较 | `structured_placement.py`、`aesthetic_flow.py`、`layout_quality.py` | 生成结构种子、低成本 SA、预算管理和真实布线候选评分 |
 | 无源灵活布局 | `passive_placement.py` | R/C/L/D跨行试摆、当前行同步及串联/并联/反馈软评分 |
+| 可选附件联合布局 | `attachment_integration.py`、`attachment_local.py`、`attachment_sources.py`、`attachment_selection.py` | 按真实接入节点预留内部空间、联合试摆宿主与无源／源器件；统一量测后按原布线护栏选优，默认关闭 |
 | 可选器件对称规整 | `symmetry_layout.py` | 仅显式 `--symmetry-layout auto` 时，候选2/3在A*前规整器件位置与朝向；局部轴、组合核心及独立对称指标 |
 | 布局与基础布线 | `place-layered.py`、`place-and-route.py` | 旧布局参考、分层挂位、符号坐标及快速布线估价 |
 | 最终布线 | `sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 统一几何规则、正交图 A*、拆网重布、原引脚连接检查及最终统计 |

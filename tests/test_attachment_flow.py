@@ -97,6 +97,46 @@ class AttachmentFlowTests(unittest.TestCase):
         old, new = candidate('1'), candidate('2', score=12)
         self.assertIs(select_attachment_result([old, new])[0], old)
 
+    def test_source_only_gain_can_win_without_hiding_missing_source_measurement(self):
+        old, new = candidate('1'), candidate('2', score=11)
+        for row, distance in ((old, 8), (new, 2)):
+            report = row[5]['layout_attachments']
+            report['policy'] = 'all'
+            report['metrics'].update(source_count=1, source_measurable=True,
+                                     source_errors=0, source_distance=distance)
+        self.assertIs(select_attachment_result([old, new])[0], new)
+        metrics = new[5]['layout_attachments']['metrics']
+        for bad in (None, float('nan'), -1):
+            with self.subTest(distance=bad):
+                metrics['source_distance'] = bad
+                self.assertIs(select_attachment_result([old, new])[0], old)
+        metrics['source_distance'] = 2
+        metrics['source_measurable'] = False
+        self.assertIs(select_attachment_result([old, new])[0], old)
+        metrics['source_measurable'] = True
+        metrics['source_count'] = 0
+        chosen, report = select_attachment_result([old, new])
+        self.assertIs(chosen, old)
+        self.assertEqual(report['candidates'][1]['reason'], 'different_or_missing_source_evidence')
+
+    def test_passive_gain_does_not_hide_source_role_regression(self):
+        old, new = candidate('1'), candidate('2', score=11, embedded=4)
+        for row, errors in ((old, 0), (new, 1)):
+            row[5]['layout_attachments']['metrics'].update(source_count=1,
+                source_measurable=True, source_errors=errors, source_distance=2)
+        chosen, report = select_attachment_result([old, new])
+        self.assertIs(chosen, old)
+        self.assertEqual(report['candidates'][1]['reason'], 'source_organization_regression')
+
+    def test_absent_source_relationship_is_neutral_but_not_unknown(self):
+        row = candidate('1')[5]['layout_attachments']
+        previous = organization_rank(row)
+        row['policy'] = 'all'
+        self.assertIsNone(organization_rank(row))
+        row['metrics'].update(source_count=0, source_measurable=False,
+                               source_errors=None, source_distance=None)
+        self.assertEqual(organization_rank(row), previous)
+
     def test_disabled_policy_and_reference_keep_original_random_stream(self):
         import structured_placement as placement
         source = Path(__file__).resolve().parents[1] / 'examples/1.cir'

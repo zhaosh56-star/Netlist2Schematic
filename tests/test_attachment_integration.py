@@ -14,7 +14,7 @@ import structured_placement as structured
 from circuit_structures import analyze_structures
 from device_leveling import compute_levels
 from netlist_core import parse_netlist, to_document
-from tests.test_passive_placement import convert, mos, resistor
+from tests.test_passive_placement import convert, mos, resistor, source
 
 
 def bridge_fixture(*, fixed=False, adjacent=False):
@@ -241,6 +241,51 @@ class AttachmentIntegrationTests(unittest.TestCase):
                 for name in ('C1', 'C2'):
                     self.assertEqual(integration._rail_marker_direction_conflicts(result, index[name]), [])
                 self.assertTrue(result.valid_state())
+
+    def test_all_without_sources_keeps_passive_seed_and_proposal_random_stream_exact(self):
+        d, original, comps, nets, index, passive = bridge_fixture()
+        all_plan = integration.build_attachment_plan(d, comps, nets, index,
+            analyze_structures(d), compute_levels(d), original.row_of, policy='all')
+        a, ra = integration.initialize_attachments(original, d, comps, nets, index, passive)
+        b, rb = integration.initialize_attachments(original, d, comps, nets, index, all_plan)
+        self.assertTrue(ra['applied'] and rb['applied'])
+        self.assertEqual(integration.measure_attachments(b, comps, index, all_plan)['source_count'], 0)
+        for _ in range(80):
+            aa, bb = a.propose(), b.propose()
+            self.assertEqual(aa, bb)
+            self.assertEqual(a.cell_of, b.cell_of)
+            self.assertEqual(a.orient, b.orient)
+            self.assertEqual(a.column_x, b.column_x)
+            self.assertEqual(a.row_y, b.row_y)
+            self.assertEqual(a.rng.getstate(), b.rng.getstate())
+            if aa is not None:
+                a.set_state(*aa); b.set_state(*bb)
+
+    def test_source_chain_cannot_trade_a_bend_for_shorter_source_locality(self):
+        d = dict(host=mos('out', 'gate'), voltage=source('VSRC', 'drive'),
+                 series=resistor('drive', 'gate'))
+        original, comps, nets, index, st = convert(d,
+            dict(host=(1, 5), voltage=(3, 0), series=(0, 0)))
+        plan = integration.build_attachment_plan(d, comps, nets, index, st,
+                                               compute_levels(d), original.row_of, policy='all')
+        result, report = integration.initialize_attachments(original, d, comps, nets, index, plan)
+        self.assertTrue(report['source_applied'])
+        baseline = integration.measure_attachments(result, comps, index, plan)
+        group = plan['source_groups'][0]
+        self.assertEqual(set(group['members']), {'voltage', 'series'})
+        self.assertFalse(any('series' in g['members'] for g in integration._passive_motion_groups(plan)))
+        row, col = result.cell_of[index['series']]
+        source_cell = result.cell_of[index['voltage']]
+        options = [(row+1, col), (row-1, col)] if row == source_cell[0] else [(row,col+1),(row,col-1)]
+        target = next(cell for cell in options if 0 <= cell[0] < len(result.row_y)
+                      and 0 <= cell[1] < result.cols and cell not in result.comp_at)
+        changed = deepcopy(result)
+        cells = list(changed.cell_of); cells[index['series']] = target
+        changed.set_state(cells, changed.orient)
+        after = integration.measure_attachments(changed, comps, index, plan)
+        self.assertGreater(after['source_errors'], baseline['source_errors'])
+        self.assertGreater(after['sources'][0]['chain_errors'], 0)
+        self.assertFalse(changed.valid_state())
 
 
 if __name__ == '__main__':
