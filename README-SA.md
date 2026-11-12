@@ -15,3 +15,5 @@ Set-Location D:\gongzuo
 安全缩线默认仍为固定5秒。需要按首次合法线路的复杂度自动分配5～30秒时，可加 `--simplify-seconds auto`；估计后只执行一次缩线，候选上限仍是512。使用方式和实测见[自动缩线预算说明](docs/auto-simplify-budget.md)。
 
 新增的可读性实验保持关闭：`--readability-layout auto` 尝试无源成组、源器件归位和失效间距回收，`--route-tradeoff balanced` 允许用少量稀疏交叉换取明显缩短。两者独立启用，默认仍为 `off` 和 `strict`；实现边界、分阶段实测及未达标项见[可读性改进说明](docs/readability-improvement.md)，本地对照入口为 `output/readability-improvement/index.html`。
+
+附件联合布局使用独立开关 `--attachment-layout off|passive|all`，默认 `off`。`passive` 为有明确端口关系的无源网络预留内部位置，`all` 再尝试源器件归位；候选1保持原参照，不与其他布局实验同时开启。它与默认 flexible 的区别是可以在初排时让宿主支路一起让位，并保护附件后续的相对位置。用法、验收及两阶段的实际结果见[附件联合布局说明](docs/attachment-integration.md)。

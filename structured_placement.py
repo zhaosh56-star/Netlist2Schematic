@@ -600,6 +600,11 @@ def _estimate(pl, nets, index, alignment, pairs):
         regularity = score_readability(pl, pl.comps, index, pl.readability_plan)
         value += regularity['weighted_total']
         metrics.update(readability_regularization=regularity, normalized_energy=value)
+    if getattr(pl, 'attachment_plan', None):
+        from attachment_integration import score_attachments
+        regularity = score_attachments(pl, pl.comps, index, pl.attachment_plan)
+        value += regularity['weighted_total']
+        metrics.update(attachment_integration=regularity, normalized_energy=value)
     return value, metrics
 
 
@@ -829,7 +834,8 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
 def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
                       passive_layout='flexible', include_legacy=False,
                       structure_layout='off', structure_phase=3, region_layout='off',
-                      readability_layout='off', readability_phase=5, routing_options=None):
+                      readability_layout='off', readability_phase=5, routing_options=None,
+                      attachment_layout='off'):
     """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -856,6 +862,9 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
     if readability_layout == 'auto' and (region_layout == 'auto' or structure_layout == 'auto'
                                          or passive_layout != 'flexible'):
         raise ValueError('readability layout requires flexible passives and no other layout experiment')
+    from run_flow import _validate_attachment_policy
+    _validate_attachment_policy(attachment_layout, passive_layout=passive_layout,
+        readability=readability_layout, region=region_layout, structure=structure_layout)
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     if deadline is not None and time.perf_counter() >= deadline:
@@ -896,6 +905,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
     evidence = evidence_relations = None
     region_plan = region_evidence = region_relations = None
     readability_plan = None
+    attachment_plan = None
     if structure_layout == 'auto':
         from layout_intent import build_intent
         evidence, evidence_relations = build_intent(
@@ -906,6 +916,15 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         candidate_seed = seed + (variant + 1) * 104729
         layout_relations = row_plan = None
         candidate_structs = structs
+        attachment_initialization = attachment_budget = None
+        if attachment_layout != 'off' and variant:
+            if attachment_plan is None:
+                from attachment_integration import build_attachment_plan
+                original_rows, _ = legacy._allocate_rows(devices, comps, index,
+                    levels['net_levels'], levels['device_levels'], att)
+                attachment_plan = build_attachment_plan(devices, comps, nets, index,
+                    structs, levels, original_rows, policy=attachment_layout)
+            row_plan = attachment_plan.get('branch_row_plan')
         if readability_layout == 'auto' and variant:
             if readability_plan is None:
                 from readability_layout import build_readability_plan
@@ -1002,12 +1021,29 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
             from attachment_placement import prepare_attachments
             placement, attachment_report = prepare_attachments(
                 placement, devices, comps, nets, index, layout_relations)
+        if attachment_layout != 'off' and variant:
+            from attachment_integration import initialize_attachments
+            attachment_budget = {'seconds_limit': 1.0, 'max_candidates': 128,
+                                 'spent_seconds': 0.0, 'candidates': 0}
+            placement, attachment_initialization = initialize_attachments(
+                placement, devices, comps, nets, index, attachment_plan,
+                deadline=deadline, budget=attachment_budget, options=routing_options,
+                estimate=lambda trial: _estimate(trial, nets, index, alignment, pairs)[0])
         # Leave most of the global budget to final routing, which is authoritative.
         local_deadline = min(deadline, time.perf_counter() + 12) if deadline else None
         energy, metrics, annealing = _anneal(placement, nets, index, alignment, pairs,
                                              iterations // 3, local_deadline)
+        attachment_checkpoint = (copy.deepcopy(placement)
+            if attachment_layout != 'off' and getattr(placement, 'attachment_plan', None) else None)
         role_adjustments = _orient_latch_clock_access(placement, devices, candidate_structs, index)
         _enforce_geometry_floor(placement)
+        attachment_postprocess = None
+        if attachment_checkpoint is not None:
+            from attachment_integration import finalize_attachment_state
+            placement, attachment_postprocess = finalize_attachment_state(placement, attachment_checkpoint)
+            if attachment_postprocess.get('reverted'):
+                attachment_postprocess['rejected_role_adjustments'] = role_adjustments
+                role_adjustments = []
         energy, metrics = _estimate(placement, nets, index, alignment, pairs)
         metadata = {'source_note': levels['source_note'], 'levels': levels['device_levels'],
                     'attach': copy.deepcopy(att), 'structs': copy.deepcopy(structs),
@@ -1021,6 +1057,17 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                     'alignment_relations': [{'devices': [comps[a]['id'], comps[b]['id']],
                                               'weight': weight}
                                              for a, b, weight in alignment]}
+        if attachment_layout != 'off' and variant:
+            from attachment_selection import measure_candidate
+            metadata['layout_attachments'] = {
+                'policy': attachment_layout, 'version': attachment_plan['version'],
+                'applied': bool(getattr(placement, 'attachment_plan', None)),
+                'initialization': copy.deepcopy(attachment_initialization),
+                'postprocess': copy.deepcopy(attachment_postprocess),
+                'budget': copy.deepcopy(attachment_budget),
+                'sa_proposals': copy.deepcopy(getattr(placement, 'attachment_move_counts', {}))}
+            metadata = measure_candidate(placement, comps, index, metadata, attachment_plan,
+                policy=attachment_layout, stage='after_sa_and_geometry_floor')
         if readability_layout == 'auto' and variant:
             from readability_layout import measure_readability
             metadata['layout_readability'] = {

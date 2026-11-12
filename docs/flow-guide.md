@@ -9,6 +9,8 @@
 当前1090项主项目完整回归通过；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)，缩线预算预留见[v6说明](route-scheduling-v6.md)，按链轮转见[v7说明](track-fairness-v7.md)，交叉净区预筛见[v8说明](candidate-clearance-v8.md)，可选自动预算见[预算说明与对照](auto-simplify-budget.md)。下文各历史版本的测试数量与实测数字保留当时口径。
 
 本轮另加两个独立实验入口：`--readability-layout auto` 组织无源、局部源和失效间距；`--route-tradeoff balanced` 在完整几何验收下允许少量稀疏交叉换取明显缩线。默认仍为 `off` 和 `strict`，不改变日常命令的原算法。边界、执行顺序、模块及实际未达标项见[可读性改进说明](readability-improvement.md)。本说明下文“线长、交叉、折角不增加”描述的是默认严格缩线策略。
+
+独立的附件联合布局实验使用 `--attachment-layout off|passive|all`，默认关闭。它在候选2、3中为真实接入节点预留空间，允许宿主有源支路与附件一起调整，保留原导通上下顺序；进入SA后不再插入物理行列。初排与末尾试摆共用每候选1秒、128次预算，最终仍由原A*和完整几何验收决定是否可用。它不隐式启用readability、region、structure或symmetry实验；两阶段分别验收，详见[附件联合布局说明](attachment-integration.md)。
 希望先按执行顺序理解算法，可读[当前flow逐步详解](flow-walkthrough.md)，其中分别解释解析、分层、两类SA估价、最终A*、恢复链、v4简化及JSON记录。
 下面的 PowerShell 命令均从项目根目录执行；日常输出集中在 `output/<网表标签>/`，不依赖历史出图。
 

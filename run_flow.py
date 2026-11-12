@@ -32,7 +32,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
         candidate_budget='sequential', port_preflight='off', presentation='legacy', net_labels='off',
-        region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5):
+        region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5,
+        attachment_layout='off'):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -46,6 +47,9 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     _validate_region_policy(region_layout, structure_layout, symmetry_layout)
     _validate_readability_policy(readability_layout, readability_phase, region_layout,
                                  structure_layout, symmetry_layout)
+    _validate_attachment_policy(attachment_layout, mode=mode, layout_style=layout_style,
+        passive_layout=passive_layout, readability=readability_layout, region=region_layout,
+        structure=structure_layout, symmetry=symmetry_layout)
     if readability_layout == 'auto' and (mode != 'layered' or layout_style != 'structured'
                                          or passive_layout != 'flexible'):
         raise ValueError('readability layout requires structured layered layouts with flexible passives')
@@ -113,7 +117,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                                         structure_layout=structure_layout, structure_phase=structure_phase,
                                         candidate_budget=candidate_budget,port_preflight=port_preflight,
                                         region_layout=region_layout, readability_layout=readability_layout,
-                                        readability_phase=readability_phase, route_tradeoff=route_tradeoff)
+                                        readability_phase=readability_phase, route_tradeoff=route_tradeoff,
+                                        attachment_layout=attachment_layout)
             except ROUTING_FAILURES as exc:
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
                     raise
@@ -185,6 +190,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         **({'requested_region_layout': region_layout} if region_layout != 'off' else {}),
         **({'requested_readability_layout': readability_layout,
             'requested_readability_phase': readability_phase} if readability_layout != 'off' else {}),
+        **({'requested_attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
         **({'presentation':{'style':'clean'}} if presentation=='clean' else {}),
         'placement': _saved_positions(placement, comps),
     }
@@ -215,11 +221,25 @@ def _validate_readability_policy(policy, phase=5, region='off', structure='off',
         raise ValueError('readability layout cannot be combined with region, structure or symmetry auto')
 
 
+def _validate_attachment_policy(policy, *, mode='layered', layout_style='structured',
+                                passive_layout='flexible', readability='off', region='off',
+                                structure='off', symmetry='off'):
+    if policy not in ('off', 'passive', 'all'):
+        raise ValueError('attachment_layout must be off, passive or all')
+    if policy == 'off':
+        return
+    if 'auto' in (readability, region, structure, symmetry):
+        raise ValueError('attachment layout cannot be combined with readability, region, structure or symmetry auto')
+    if mode != 'layered' or layout_style != 'structured' or passive_layout != 'flexible':
+        raise ValueError('attachment layout requires structured layered layouts with flexible passives')
+
+
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    quality_seconds, candidate_id, options, *, passive_layout='flexible',
                    symmetry_layout='off', structure_layout='off', structure_phase=3,
                    candidate_budget='sequential',port_preflight='off', region_layout='off',
-                   readability_layout='off', readability_phase=5, route_tradeoff='strict'):
+                   readability_layout='off', readability_phase=5, route_tradeoff='strict',
+                   attachment_layout='off'):
     if mode == 'layered' and layout_style == 'structured':
         from aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
@@ -229,7 +249,8 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                              structure_phase=structure_phase,candidate_budget=candidate_budget,
                              port_preflight=port_preflight, region_layout=region_layout,
                              readability_layout=readability_layout, readability_phase=readability_phase,
-                             route_tradeoff=route_tradeoff)
+                             route_tradeoff=route_tradeoff,
+                             **({'attachment_layout': attachment_layout} if attachment_layout != 'off' else {}))
     elif mode == 'layered':
         layered = load_local('place_layered', 'place-layered.py')
         placement, comps, nets, comp_index, metadata = layered.create_placement(
@@ -541,6 +562,11 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
             data.get('layout_readability', {}).get('plan'),
             phase=data.get('requested_readability_phase', data.get('layout_readability', {}).get('phase', 5)),
             stage='final_output')
+    if data.get('requested_attachment_layout', 'off') != 'off' or isinstance(data.get('layout_attachments'), dict):
+        from attachment_selection import measure_candidate
+        data = measure_candidate(placement, comps, comp_index, data,
+            data.get('layout_attachments', {}).get('plan'), stage='final_output',
+            policy=data.get('requested_attachment_layout', data.get('layout_attachments', {}).get('policy', 'passive')))
     if data.get('requested_structure_layout') == 'auto' or isinstance(data.get('structure_layout'), dict):
         from layout_relations import build_layout_relations, measure_layout_relations
         from netlist_core import parse_netlist
@@ -775,6 +801,8 @@ def main(argv=None, default_mode='layered'):
                         help='Experimental passive/source organization and compaction for candidates 2/3')
     parser.add_argument('--readability-phase', type=int, choices=(2, 3, 4, 5), default=5,
                         help='Replay an independent readability rollout phase')
+    parser.add_argument('--attachment-layout', choices=('off', 'passive', 'all'), default='off',
+                        help='Joint host/attachment placement in candidates 2/3; all also places source devices')
     parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=3,
                         help='Replay a structure rollout phase; ignored when structure-layout is off')
     parser.add_argument('--quality-seconds', type=float, default=300)
@@ -812,9 +840,14 @@ def main(argv=None, default_mode='layered'):
         _validate_region_policy(args.region_layout, args.structure_layout, args.symmetry_layout)
         _validate_readability_policy(args.readability_layout, args.readability_phase,
                                      args.region_layout, args.structure_layout, args.symmetry_layout)
+        _validate_attachment_policy(args.attachment_layout, mode=args.mode, layout_style=args.layout_style,
+            passive_layout=args.passive_layout, readability=args.readability_layout,
+            region=args.region_layout, structure=args.structure_layout, symmetry=args.symmetry_layout)
         if sum(map(bool, (args.netlist, args.reroute_placement, args.simplify_placement))) != 1:
             parser.error('provide exactly one netlist, --reroute-placement JSON or --simplify-placement JSON')
         if args.simplify_placement:
+            if args.attachment_layout != 'off':
+                parser.error('--simplify-placement preserves coordinates; it cannot request attachment layout')
             if args.readability_layout != 'off':
                 parser.error('--simplify-placement preserves coordinates; it cannot request readability layout')
             if args.region_layout != 'off':
@@ -828,6 +861,8 @@ def main(argv=None, default_mode='layered'):
                                net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
                                **({'presentation':args.presentation} if args.presentation is not None else {}))
         elif args.reroute_placement:
+            if args.attachment_layout != 'off':
+                parser.error('--reroute-placement preserves coordinates; it cannot request attachment layout')
             if args.readability_layout != 'off':
                 parser.error('--reroute-placement preserves coordinates; it cannot request readability layout')
             if args.region_layout != 'off':
@@ -850,6 +885,7 @@ def main(argv=None, default_mode='layered'):
                 structure_layout=args.structure_layout,
                 region_layout=args.region_layout,
                 readability_layout=args.readability_layout, readability_phase=args.readability_phase,
+                attachment_layout=args.attachment_layout,
                 structure_phase=args.structure_phase,
                 candidate_budget=args.candidate_budget,port_preflight=args.port_preflight,
                 presentation=args.presentation or 'legacy',
