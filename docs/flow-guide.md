@@ -6,7 +6,7 @@
 无需启动网页编辑器，也无需安装 Node.js、pnpm 或仿真器。
 
 日常命令见 [README](../README.md)，全部文件的职责和保留范围见[项目目录说明](project-layout.md)。
-当前1187项主项目完整回归通过；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)，缩线预算预留见[v6说明](route-scheduling-v6.md)，按链轮转见[v7说明](track-fairness-v7.md)，交叉净区预筛见[v8说明](candidate-clearance-v8.md)，可选自动预算见[预算说明与对照](auto-simplify-budget.md)。下文各历史版本的测试数量与实测数字保留当时口径。
+当前1194项主项目完整回归通过；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)，缩线预算预留见[v6说明](route-scheduling-v6.md)，按链轮转见[v7说明](track-fairness-v7.md)，交叉净区预筛见[v8说明](candidate-clearance-v8.md)，可选自动预算见[预算说明与对照](auto-simplify-budget.md)。下文各历史版本的测试数量与实测数字保留当时口径。
 
 本轮另加两个独立实验入口：`--readability-layout auto` 组织无源、局部源和失效间距；`--route-tradeoff balanced` 在完整几何验收下允许少量稀疏交叉换取明显缩线。默认仍为 `off` 和 `strict`，不改变日常命令的原算法。边界、执行顺序、模块及实际未达标项见[可读性改进说明](readability-improvement.md)。本说明下文“线长、交叉、折角不增加”描述的是默认严格缩线策略。
 

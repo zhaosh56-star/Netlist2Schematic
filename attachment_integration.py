@@ -19,7 +19,7 @@ from structured_placement import StructuredPlacement
 from readability_layout import (build_readability_plan, measure_readability,
                                 junction_point)
 
-VERSION = 'attachment-integration-v2'
+VERSION = 'attachment-integration-v3'
 ACTIVE = frozenset(('nmos', 'pmos', 'npn', 'pnp'))
 PASSIVE = frozenset(('resistor', 'capacitor', 'inductor', 'diode'))
 EPS = 1e-8
@@ -256,6 +256,10 @@ def _port_errors(pl, comps, index, plan, group):
         vectors = {'north': (0,-1), 'south': (0,1), 'west': (-1,0), 'east': (1,0)}
         for i in members:
             for pin, net in comps[i]['nodes'].items():
+                # A bank's common end is a bus, not a serial continuation
+                # toward the next member. Its real owner still faces anchor.
+                if group.get('kind') == 'parallel_bank' and net != owner:
+                    continue
                 other = [(j,p) for j,p in by_net[net] if j != i]
                 target = anchor if net == owner else pl.pos_of(other[0][0]) if len(other) == 1 else None
                 if target is None:
@@ -912,7 +916,8 @@ def initialize_attachments(pl, devices, comps, nets, index, plan, *, deadline=No
     before = measure_attachments(pl, comps, index, plan)
     report['before'] = deepcopy(before)
     common = estimate or (lambda p: score_attachments(p, comps, index, plan)['weighted_total'])
-    report['estimate_before'] = common(pl)
+    report['estimate_before'] = common(current)
+    report['estimate_basis'] = 'same_attachment_objective'
     groups = sorted((g for g in _passive_motion_groups(plan) if g.get('requires_interior')), key=lambda g: (
         {'multi_path_bridge': 0, 'series_chain': 1, 'two_arm_join': 2,
          'parallel_bank': 3, 'single_attachment': 4}.get(g['kind'], 5), g['id']))

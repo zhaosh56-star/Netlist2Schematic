@@ -35,6 +35,78 @@ def pin_for(comp, net):
 
 
 class AttachmentPortTests(unittest.TestCase):
+    def parallel_bank(self, direction, other_net='outside'):
+        cells = dict(q=(3, 3))
+        layouts = {'west': ((2, 1), (4, 1)), 'east': ((2, 5), (4, 5)),
+                   'north': ((1, 2), (1, 4)), 'south': ((5, 2), (5, 4))}
+        cells['r'], cells['c'] = layouts[direction]
+        devices = dict(q=mos('signal', 'gate'), r=resistor('signal', other_net),
+                       c=resistor(other_net, 'signal', 'C'))
+        inward = {'west': (1, 3), 'east': (3, 1), 'north': (2, 0), 'south': (0, 2)}
+        r, c = inward[direction]
+        pl, comps, nets, index, plan = installed(devices, cells)
+        orientations = list(pl.orient)
+        orientations[index['r']], orientations[index['c']] = r, c
+        pl.set_state(pl.cell_of, orientations)
+        group = next(g for g in plan['groups'] if g['kind'] == 'parallel_bank')
+        return pl, comps, nets, index, plan, group
+
+    def test_parallel_common_ends_are_not_serial_peers_in_all_four_directions(self):
+        for direction in ('west', 'east', 'north', 'south'):
+            with self.subTest(direction=direction):
+                pl, comps, nets, index, plan, group = self.parallel_bank(direction)
+                original = deepcopy((pl.cell_of, pl.orient, comps, nets, pl.rng.getstate()))
+                self.assertEqual(attachment._port_errors(pl, comps, index, plan, group), 0)
+                self.assertEqual((pl.cell_of, pl.orient, comps, nets, pl.rng.getstate()), original)
+
+    def test_parallel_owner_end_still_has_to_face_its_real_host(self):
+        for direction in ('west', 'east', 'north', 'south'):
+            with self.subTest(direction=direction):
+                pl, comps, _, index, plan, group = self.parallel_bank(direction)
+                pl.orient[index['r']] = (pl.orient[index['r']]+2) % 4
+                self.assertEqual(attachment._port_errors(pl, comps, index, plan, group), 1)
+
+    def test_parallel_metric_is_translation_and_mirror_invariant(self):
+        for direction in ('west', 'east', 'north', 'south'):
+            pl, comps, _, index, plan, group = self.parallel_bank(direction)
+            for mirror in (False, True):
+                class WorldView:
+                    def pos_of(self, i):
+                        x, y = pl.pos_of(i)
+                        return (-x if mirror else x)+37, y-53
+                    def pin_world(self, i, pin):
+                        x, y = pl.pin_world(i, pin)
+                        return (-x if mirror else x)+37, y-53
+                    def pin_dir(self, i, pin):
+                        facing = pl.pin_dir(i, pin)
+                        return {'east': 'west', 'west': 'east'}.get(facing, facing) if mirror else facing
+                self.assertEqual(attachment._port_errors(WorldView(), comps, index, plan, group), 0)
+                pl.orient[index['r']] = (pl.orient[index['r']]+2) % 4
+                self.assertEqual(attachment._port_errors(WorldView(), comps, index, plan, group), 1)
+                pl.orient[index['r']] = (pl.orient[index['r']]+2) % 4
+
+    def test_parallel_verified_rails_and_reversed_pin_order_keep_owner_checks(self):
+        for rail, direction in (('0', 'south'), ('vss', 'west'), ('vdd', 'north'), ('vcc', 'east')):
+            with self.subTest(rail=rail, direction=direction):
+                pl, comps, _, index, plan, group = self.parallel_bank(direction, rail)
+                self.assertEqual(group['owner_junctions'], ['signal'])
+                for name in group['members']:
+                    comp = comps[index[name]]
+                    comp['nodes'] = dict(reversed(list(comp['nodes'].items())))
+                self.assertEqual(attachment._port_errors(pl, comps, index, plan, group), 0)
+                pl.orient[index['c']] = (pl.orient[index['c']]+2) % 4
+                self.assertEqual(attachment._port_errors(pl, comps, index, plan, group), 1)
+
+    def test_one_owner_series_internal_end_still_has_to_face_next_member(self):
+        devices = dict(q=mos('out', 'gate'), r=resistor('gate', 'middle'), c=resistor('middle', 'vin', 'C'))
+        pl, comps, _, index, plan = installed(devices,
+            dict(q=(2, 6), r=(2, 4), c=(2, 2)), dict(r=1, c=1))
+        group = next(g for g in plan['groups'] if g['kind'] == 'series_chain')
+        self.assertEqual(group['owner_junctions'], ['gate'])
+        self.assertEqual(attachment._port_errors(pl, comps, index, plan, group), 0)
+        pl.orient[index['c']] = 3
+        self.assertEqual(attachment._port_errors(pl, comps, index, plan, group), 1)
+
     def assert_drawn_path_direction(self, pl, comps, index, path, axis=0):
         members, nodes = path['members'], path['path']
         if len(members) > 1:

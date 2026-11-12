@@ -42,6 +42,24 @@ def inserted_row_fixture():
 
 
 class AttachmentIntegrationReviewTests(unittest.TestCase):
+    def test_initial_estimates_use_the_same_attachment_objective(self):
+        devices = dict(a=mos('left', 'ga'), b=mos('right', 'gb'),
+                       r=resistor('left', 'middle'), c=resistor('middle', 'right', 'C'))
+        original, comps, nets, index, _ = convert(devices,
+            dict(a=(1, 1), b=(1, 6), r=(0, 0), c=(0, 7)), blocks=[['a', 'b']])
+        plan = plan_for(devices, comps, nets, index, original)
+        def estimate(placement):
+            return 10 + (integration.score_attachments(placement, comps, index, plan)['weighted_total']
+                         if hasattr(placement, 'attachment_plan') else 0)
+        expected = 10 + integration.score_attachments(original, comps, index, plan)['weighted_total']
+        result, report = integration.initialize_attachments(original, devices, comps, nets,
+            index, plan, estimate=estimate)
+        self.assertTrue(report['applied'])
+        self.assertGreater(expected, 10)
+        self.assertEqual(report['estimate_before'], expected)
+        self.assertEqual(report['estimate_after'], estimate(result))
+        self.assertEqual(report['estimate_basis'], 'same_attachment_objective')
+
     def test_inserted_slot_measurements_survive_real_json_coordinate_restore(self):
         from attachment_selection import measure_candidate
         from run_flow import _saved_positions
