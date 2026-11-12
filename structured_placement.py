@@ -829,7 +829,7 @@ def feedback_candidate(placement, comps, nets, index, metadata, quality):
 def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadline=None,
                       passive_layout='flexible', include_legacy=False,
                       structure_layout='off', structure_phase=3, region_layout='off',
-                      readability_layout='off', readability_phase=3, routing_options=None):
+                      readability_layout='off', readability_phase=4, routing_options=None):
     """Yield three structured seeds, optionally preceded by legacy candidate 0.
 
     Structured seeds retain IDs 1--3, independent random streams and their

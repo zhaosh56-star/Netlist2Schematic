@@ -64,7 +64,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   quality_seconds=300, routing_options=None, candidate_id=None,
                   passive_layout='flexible', symmetry_layout='off', structure_layout='off',
                   structure_phase=3, candidate_budget='sequential',port_preflight='off',
-                  region_layout='off', readability_layout='off', readability_phase=3,
+                  region_layout='off', readability_layout='off', readability_phase=4,
                   route_tradeoff='strict'):
     validate_policy(candidate_budget)
     if port_preflight not in ('off','repair'):
