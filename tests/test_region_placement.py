@@ -10,13 +10,13 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from layout_evidence import build_layout_evidence
-from layout_relations import build_layout_relations
-from netlist_core import to_document
-from region_layout import build_region_plan, measure_regions
-from region_placement import (_physical_axes, _region_choices, _lanes, initialize_regions, propose_region_move,
+from netlist2schematic.plugins.layout_shared.layout_evidence import build_layout_evidence
+from netlist2schematic.plugins.layout_shared.layout_relations import build_layout_relations
+from netlist2schematic.netlist.netlist_core import to_document
+from netlist2schematic.plugins.region.region_layout import build_region_plan, measure_regions
+from netlist2schematic.plugins.region.region_placement import (_physical_axes, _region_choices, _lanes, initialize_regions, propose_region_move,
                               score_region_placement)
-import structured_placement as structured
+from netlist2schematic.layout import structured_placement as structured
 from tests.test_region_layout import comparator, ota, mos
 from tests.test_passive_placement import resistor
 
@@ -48,7 +48,7 @@ class RegionRolloutTests(unittest.TestCase):
     def test_off_and_reference_do_not_invoke_the_new_planner(self):
         path = ROOT / 'examples/2.cir'
         before = next(structured.create_candidates(path, seed=19, iterations=30))
-        with mock.patch('region_layout.build_region_plan', side_effect=AssertionError('early planner')):
+        with mock.patch('netlist2schematic.plugins.region.region_layout.build_region_plan', side_effect=AssertionError('early planner')):
             off = list(structured.create_candidates(path, seed=19, iterations=30, region_layout='off'))
             reference = next(structured.create_candidates(path, seed=19, iterations=30, region_layout='auto'))
         self.assertEqual(before[0].cell_of, reference[0].cell_of)
@@ -75,7 +75,7 @@ class RegionRolloutTests(unittest.TestCase):
     def test_plan_is_built_once_for_two_three_and_source_rows_remain_unchanged(self):
         path = ROOT / 'examples/2.cir'
         old = list(structured.create_candidates(path, seed=5, iterations=0))
-        with mock.patch('region_layout.build_region_plan', wraps=build_region_plan) as builder:
+        with mock.patch('netlist2schematic.plugins.region.region_layout.build_region_plan', wraps=build_region_plan) as builder:
             new = list(structured.create_candidates(path, seed=5, iterations=0, region_layout='auto'))
         self.assertEqual(builder.call_count, 1)
         for before, after in zip(old, new):
@@ -87,7 +87,7 @@ class RegionRolloutTests(unittest.TestCase):
     def test_supported_seed_timeout_falls_back_transactionally(self):
         path = ROOT / 'examples/2.cir'
         before = list(structured.create_candidates(path, seed=32, iterations=30))
-        with mock.patch('region_placement.INITIAL_SECONDS', 0):
+        with mock.patch('netlist2schematic.plugins.region.region_placement.INITIAL_SECONDS', 0):
             after = list(structured.create_candidates(path, seed=32, iterations=30, region_layout='auto'))
         for i, (old, new) in enumerate(zip(before, after)):
             self.assertEqual(old[0].cell_of, new[0].cell_of)
@@ -112,7 +112,7 @@ class RegionRolloutTests(unittest.TestCase):
         before = list(structured.create_candidates(path, seed=32, iterations=0))
         # Equal measured organization is insufficient, regardless of a trial's
         # cheap wire estimate. The original instance's RNG must stay untouched.
-        with mock.patch('region_layout.region_rank', return_value=(0, 0, 0, 0)):
+        with mock.patch('netlist2schematic.plugins.region.region_layout.region_rank', return_value=(0, 0, 0, 0)):
             after = list(structured.create_candidates(path, seed=32, iterations=0, region_layout='auto'))
         for old, new in zip(before[1:], after[1:]):
             self.assertEqual(old[0].cell_of, new[0].cell_of)
@@ -129,7 +129,7 @@ class RegionRolloutTests(unittest.TestCase):
         path = ROOT / 'test_data/16+/schematic-of-the-folded-cascode-amplifier-ota1-with-its-cmfb-circuit.cir'
         if not path.is_file():
             self.skipTest('optional original source corpus is unavailable')
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* in initializer')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in initializer')):
             candidates = list(structured.create_candidates(path, cell='dut', iterations=0,
                                                           region_layout='auto'))
         rows = candidates[0][0].row_of
@@ -321,7 +321,7 @@ class RegionPlacementTests(unittest.TestCase):
     def test_region_generation_and_annealing_never_route_or_change_source(self):
         path = ROOT / 'examples/2.cir'
         original = path.read_bytes()
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* in regions')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in regions')):
             candidates = list(structured.create_candidates(path, iterations=180, seed=25,
                                                           region_layout='auto'))
         self.assertEqual(path.read_bytes(), original)

@@ -7,11 +7,11 @@ from time import perf_counter
 import unittest
 from unittest import mock
 
-from fallback_bus import VERSION, create_fallback, reroute_fallback
-from routing_rules import RoutingOptions, build_scene
-from sa_common import load_local
-from sa_routing import validate_final_routes
-from sa_saved import load_placement
+from netlist2schematic.recovery.fallback_bus import VERSION, create_fallback, reroute_fallback
+from netlist2schematic.routing.routing_rules import RoutingOptions, build_scene
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.routing.sa_routing import validate_final_routes
+from netlist2schematic.common.sa_saved import load_placement
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / 'tests' / 'fixtures' / 'aesthetic-baseline'
@@ -74,7 +74,7 @@ class FallbackBusTests(unittest.TestCase):
     def test_six_circuits_validate_without_sa_or_global_astar(self):
         fixtures = [(BASELINE / f'{n}.cir', None) for n in range(1, 5)]
         fixtures += [(FIVE, 'dut')]
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* forbidden')), \
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* forbidden')), \
                 mock.patch.object(legacy, 'create_placement', side_effect=AssertionError('SA forbidden')), \
                 mock.patch.object(legacy, 'sa_layered', side_effect=AssertionError('SA forbidden')), \
                 mock.patch.object(par, 'sa', side_effect=AssertionError('SA forbidden')):
@@ -120,7 +120,7 @@ class FallbackBusTests(unittest.TestCase):
         self.assertEqual(first[-1][:2], second[-1][:2])
         pl, comps, nets, index, metadata, original = first
         saved = deepcopy((pl.cell_of, pl.orient, pl.column_x, pl.row_y, pl.power_connections, metadata))
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* forbidden')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* forbidden')):
             again = reroute_fallback(par, pl, comps, nets, index, metadata,
                                      deadline=perf_counter() + 60)
         self.assertEqual(again[:2], original[:2])
@@ -164,7 +164,7 @@ class FallbackBusTests(unittest.TestCase):
                     self.assertEqual(result[4]['power_connections'], [])
 
     def test_deadline_is_checked_before_parsing(self):
-        with mock.patch('fallback_bus.parse_netlist', side_effect=AssertionError('No parse after deadline')):
+        with mock.patch('netlist2schematic.recovery.fallback_bus.parse_netlist', side_effect=AssertionError('No parse after deadline')):
             with self.assertRaisesRegex(ValueError, 'time budget'):
                 create_fallback(FIVE, deadline=perf_counter() - 1)
 

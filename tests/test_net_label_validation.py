@@ -8,10 +8,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from routing_rules import Pin, Scene, canonical_topology
-from net_label_core import build_view
-from net_label_validation import display_routes, validate_view
-from sa_render import _text_box
+from netlist2schematic.routing.routing_rules import Pin, Scene, canonical_topology
+from netlist2schematic.plugins.net_labels.net_label_core import build_view
+from netlist2schematic.plugins.net_labels.net_label_validation import display_routes, validate_view
+from netlist2schematic.rendering.sa_render import _text_box
 
 
 def source_fixture():
@@ -157,7 +157,7 @@ class NetLabelValidationTests(unittest.TestCase):
 
     def test_display_routes_include_the_physical_label_leaders(self):
         runs = canonical_topology(dict(display_routes(self.view))['a'])['runs']
-        from routing_rules import on_segment
+        from netlist2schematic.routing.routing_rules import on_segment
         for label in self.view['labels']:
             anchor,tip = tuple(label['anchor']),tuple(label['tip'])
             self.assertTrue(any(on_segment(anchor,a,b) and on_segment(tip,a,b) for a,b in runs))

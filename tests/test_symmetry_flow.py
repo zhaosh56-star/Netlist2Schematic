@@ -12,11 +12,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import aesthetic_flow
-from orthogonal_router import RoutingFailure
-import run_flow
-from sa_common import load_local
-from sa_saved import load_placement
+from netlist2schematic.flow import aesthetic_flow
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.flow import run_flow
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.common.sa_saved import load_placement
 
 
 class SmallPlacement:
@@ -96,12 +96,12 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
             return deepcopy(result if isinstance(result, dict) else {'score': result, 'per_net': {}})
 
         with ExitStack() as stack:
-            stack.enter_context(patch('structured_placement.create_candidates', return_value=iter(items)))
-            stack.enter_context(patch('aesthetic_flow.final_route', side_effect=route))
-            stack.enter_context(patch('layout_quality.evaluate_quality', side_effect=quality))
-            regularized = stack.enter_context(patch('symmetry_layout.regularize_symmetry', side_effect=regularize))
-            measured = stack.enter_context(patch('symmetry_layout.report_symmetry', side_effect=measure))
-            feedback_mock = stack.enter_context(patch('structured_placement.feedback_candidate', side_effect=feedback))
+            stack.enter_context(patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter(items)))
+            stack.enter_context(patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=route))
+            stack.enter_context(patch('netlist2schematic.layout.layout_quality.evaluate_quality', side_effect=quality))
+            regularized = stack.enter_context(patch('netlist2schematic.plugins.symmetry.symmetry_layout.regularize_symmetry', side_effect=regularize))
+            measured = stack.enter_context(patch('netlist2schematic.plugins.symmetry.symmetry_layout.report_symmetry', side_effect=measure))
+            feedback_mock = stack.enter_context(patch('netlist2schematic.layout.structured_placement.feedback_candidate', side_effect=feedback))
             stack.enter_context(redirect_stdout(io.StringIO()))
             result = aesthetic_flow.select_layout('unused.cir', iterations=0, **kwargs)
         return result, events, regularized, measured, feedback_mock
@@ -142,11 +142,11 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
     def test_default_selector_bypasses_symmetry_for_all_three_candidates(self):
         candidates = [item(identifier) for identifier in (1, 2, 3)]
         qualities = [{'score': score, 'per_net': {}} for score in (30, 10, 20)]
-        with patch('structured_placement.create_candidates', return_value=iter(candidates)), \
-                patch('aesthetic_flow.final_route', return_value=routed()) as router, \
-                patch('layout_quality.evaluate_quality', side_effect=qualities), \
-                patch('symmetry_layout.regularize_symmetry', side_effect=AssertionError('default relayout')), \
-                patch('symmetry_layout.report_symmetry', side_effect=AssertionError('default measure')), \
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter(candidates)), \
+                patch('netlist2schematic.flow.aesthetic_flow.final_route', return_value=routed()) as router, \
+                patch('netlist2schematic.layout.layout_quality.evaluate_quality', side_effect=qualities), \
+                patch('netlist2schematic.plugins.symmetry.symmetry_layout.regularize_symmetry', side_effect=AssertionError('default relayout')), \
+                patch('netlist2schematic.plugins.symmetry.symmetry_layout.report_symmetry', side_effect=AssertionError('default measure')), \
                 redirect_stdout(io.StringIO()):
             # Deliberately call the production function directly without a
             # policy argument; choose() above intentionally opts into auto.
@@ -331,7 +331,7 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
         self.assertEqual(routed(), result[5])
 
     def test_new_regularization_transaction_does_not_reuse_source_before_measurement(self):
-        from symmetry_layout import regularize_symmetry
+        from netlist2schematic.plugins.symmetry.symmetry_layout import regularize_symmetry
         from types import SimpleNamespace
 
         placement, comps, nets, index, metadata = item(3)
@@ -364,18 +364,18 @@ class SymmetryPublicFlowTests(unittest.TestCase):
         for policy, expected in ((None, 'off'), ('auto', 'auto'), ('off', 'off')):
             with self.subTest(policy=policy):
                 args = [str(self.source)] + ([] if policy is None else ['--symmetry-layout', policy])
-                with patch('run_flow.run') as run:
+                with patch('netlist2schematic.flow.run_flow.run') as run:
                     self.assertEqual(0, run_flow.main(args))
                 self.assertEqual(expected, run.call_args.kwargs['symmetry_layout'])
 
     def test_invalid_policy_rejected_before_candidate_generation(self):
-        with patch('structured_placement.create_candidates', side_effect=AssertionError('invalid reached generator')):
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', side_effect=AssertionError('invalid reached generator')):
             with self.assertRaisesRegex(ValueError, 'symmetry_layout'):
                 aesthetic_flow.select_layout('unused.cir', symmetry_layout='invalid')
-        with patch('run_flow._normal_result', side_effect=AssertionError('invalid reached layout')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=AssertionError('invalid reached layout')):
             with self.assertRaisesRegex(ValueError, 'symmetry_layout'):
                 run_flow.run(self.source, symmetry_layout='invalid')
-        with patch('run_flow.run', side_effect=AssertionError('invalid reached run')), redirect_stderr(io.StringIO()):
+        with patch('netlist2schematic.flow.run_flow.run', side_effect=AssertionError('invalid reached run')), redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as caught:
                 run_flow.main([str(self.source), '--symmetry-layout', 'invalid'])
         self.assertEqual(2, caught.exception.code)
@@ -384,7 +384,7 @@ class SymmetryPublicFlowTests(unittest.TestCase):
         for policy, expected in ((None, 'off'), ('auto', 'auto'), ('off', 'off')):
             with self.subTest(policy=policy):
                 options = {} if policy is None else {'symmetry_layout': policy}
-                with patch('aesthetic_flow.select_layout', return_value='sentinel') as select:
+                with patch('netlist2schematic.flow.aesthetic_flow.select_layout', return_value='sentinel') as select:
                     result = run_flow._normal_result(self.source, None, 'layered', 'structured',
                         None, 0, 17, 10, None, None, **options)
                 self.assertEqual('sentinel', result)
@@ -392,8 +392,8 @@ class SymmetryPublicFlowTests(unittest.TestCase):
 
     def test_public_run_default_forwards_off_and_records_requested_policy(self):
         selected = (*item(1), routed())
-        with patch('run_flow._normal_result', return_value=selected) as normal, \
-                patch('run_flow._finish', return_value='sentinel') as finish, \
+        with patch('netlist2schematic.flow.run_flow._normal_result', return_value=selected) as normal, \
+                patch('netlist2schematic.flow.run_flow._finish', return_value='sentinel') as finish, \
                 redirect_stdout(io.StringIO()):
             result = run_flow.run(self.source, iterations=0, fallback='off',
                                   out_dir=self.root / 'default')
@@ -409,8 +409,8 @@ class SymmetryPublicFlowTests(unittest.TestCase):
 
     def test_off_matches_protected_candidate_one_routes_without_deadline_truncation(self):
         auto = self.generate('auto', 'auto')
-        with patch('symmetry_layout.regularize_symmetry', side_effect=AssertionError('off relayout')), \
-                patch('symmetry_layout.report_symmetry', side_effect=AssertionError('off measure')):
+        with patch('netlist2schematic.plugins.symmetry.symmetry_layout.regularize_symmetry', side_effect=AssertionError('off relayout')), \
+                patch('netlist2schematic.plugins.symmetry.symmetry_layout.report_symmetry', side_effect=AssertionError('off measure')):
             off = self.generate('off', 'off')
         for key in ('placement', 'layout_grid', 'routes', 'metrics'):
             self.assertEqual(auto[key], off[key], key)
@@ -423,8 +423,8 @@ class SymmetryPublicFlowTests(unittest.TestCase):
         saved = self.root / 'initial/small-placement.json'
         original_saved = saved.read_bytes()
         renderer = load_local('symmetry_flow_renderer', 'render-clean.py')
-        with patch('symmetry_layout.regularize_symmetry', side_effect=AssertionError('saved input relayout')), \
-                patch('structured_placement.create_candidates', side_effect=AssertionError('saved input generation')), \
+        with patch('netlist2schematic.plugins.symmetry.symmetry_layout.regularize_symmetry', side_effect=AssertionError('saved input relayout')), \
+                patch('netlist2schematic.layout.structured_placement.create_candidates', side_effect=AssertionError('saved input generation')), \
                 redirect_stdout(io.StringIO()):
             rerouted = run_flow.reroute_placement(saved, out_dir=self.root / 'rerouted',
                                                 simplify_routes='off')
@@ -441,7 +441,7 @@ class SymmetryPublicFlowTests(unittest.TestCase):
         self.assertEqual(self.raw, self.source.read_bytes())
 
     def test_final_measurement_preserves_history_but_refreshes_exported_positions(self):
-        from symmetry_layout import measure_symmetry
+        from netlist2schematic.plugins.symmetry.symmetry_layout import measure_symmetry
 
         self.generate()
         saved = self.root / 'initial/small-placement.json'
@@ -457,7 +457,7 @@ class SymmetryPublicFlowTests(unittest.TestCase):
         expected = measure_symmetry(placement, comps, index,
                                     data['layout_symmetry']['relations'])
         with redirect_stdout(io.StringIO()), \
-                patch('symmetry_layout.regularize_symmetry', side_effect=AssertionError('saved input relayout')):
+                patch('netlist2schematic.plugins.symmetry.symmetry_layout.regularize_symmetry', side_effect=AssertionError('saved input relayout')):
             refreshed = run_flow.simplify_placement(saved, out_dir=self.root / 'refreshed',
                                                    simplify_routes='off')
         report = refreshed['layout_symmetry']
@@ -489,9 +489,9 @@ class SymmetryTopologyInvarianceTests(unittest.TestCase):
         return sorted(result, key=repr)
 
     def check_transform(self, devices, names=None, nets=None, seed=17):
-        from circuit_structures import analyze_structures
-        from netlist_core import to_document
-        from symmetry_layout import build_symmetry_groups
+        from netlist2schematic.recognition.circuit_structures import analyze_structures
+        from netlist2schematic.netlist.netlist_core import to_document
+        from netlist2schematic.plugins.symmetry.symmetry_layout import build_symmetry_groups
 
         names, nets = names or {n: n for n in devices}, nets or {}
         original_groups = build_symmetry_groups(to_document(devices)['components'],
@@ -513,7 +513,7 @@ class SymmetryTopologyInvarianceTests(unittest.TestCase):
                          self.relationships(actual_groups, {new: old for old, new in names.items()}))
 
     def dataset(self, stem):
-        from netlist_core import parse_netlist
+        from netlist2schematic.netlist.netlist_core import parse_netlist
 
         path = Path(__file__).resolve().parents[1] / 'test_data' / '16+' / (stem + '.cir')
         if not path.is_file():

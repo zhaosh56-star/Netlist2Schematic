@@ -15,9 +15,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from routing_rules import RoutingOptions, build_scene, canonical_topology, on_segment
-from sa_common import load_local
-from sa_routing import RoutingValidationError, validate_final_routes
+from netlist2schematic.routing.routing_rules import RoutingOptions, build_scene, canonical_topology, on_segment
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.routing.sa_routing import RoutingValidationError, validate_final_routes
 
 
 def schematic_par():
@@ -122,7 +122,7 @@ def fixture(*, feedback=True, obstacle=False, rename=False, reverse=False,
 
 
 def run_simplifier(case, **kwargs):
-    from simplify_routes import simplify_routes
+    from netlist2schematic.postprocess.simplify_routes import simplify_routes
     par, nets, placement, index, result, options = case
     return simplify_routes(par, nets, placement, index, result,
                             options=options, seconds=kwargs.pop('seconds', 5), **kwargs)

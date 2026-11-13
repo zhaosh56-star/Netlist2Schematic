@@ -4,8 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from orthogonal_router import RoutingFailure, route_scene, _route_net
-from routing_rules import Pin, RoutingOptions, Scene, analyze_routes
+from netlist2schematic.routing.orthogonal_router import RoutingFailure, route_scene, _route_net
+from netlist2schematic.routing.routing_rules import Pin, RoutingOptions, Scene, analyze_routes
 
 ROOT = Path(__file__).resolve().parents[1]
 

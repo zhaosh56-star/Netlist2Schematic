@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import run_flow
-from sa_common import load_local
-from sa_saved import load_placement
+from netlist2schematic.flow import run_flow
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.common.sa_saved import load_placement
 
 
 class BranchRoundTripTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class BranchRoundTripTests(unittest.TestCase):
             renderer=load_local('branch_roundtrip_renderer','render-clean.py')
             with redirect_stdout(StringIO()):renderer.render(saved,folder/'redraw.svg')
             self.assertEqual((folder/'first/pair-clean.svg').read_bytes(),(folder/'redraw.svg').read_bytes())
-            with patch('branch_alignment.regularize_branch_layout',side_effect=AssertionError('saved relayout')),redirect_stdout(StringIO()):
+            with patch('netlist2schematic.plugins.layout_shared.branch_alignment.regularize_branch_layout',side_effect=AssertionError('saved relayout')),redirect_stdout(StringIO()):
                 rerouted=run_flow.reroute_placement(saved,out_dir=folder/'rerouted',simplify_routes='off')
             self.assertEqual(data['placement'],rerouted['placement'])
             self.assertTrue(rerouted['validation']['valid'])

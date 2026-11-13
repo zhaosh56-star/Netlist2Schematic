@@ -8,10 +8,10 @@ from time import perf_counter
 import unittest
 from unittest.mock import patch
 
-import simplify_routes as shortcuts
-from orthogonal_router import RoutingFailure
-from routing_rules import Pin, RoutingOptions, Scene, canonical_topology, intersection
-from sa_routing import _verify
+from netlist2schematic.postprocess import simplify_routes as shortcuts
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import Pin, RoutingOptions, Scene, canonical_topology, intersection
+from netlist2schematic.routing.sa_routing import _verify
 
 
 def case(*, foreign=False, cycle_trap=False, parallel_escapes=False):
@@ -66,7 +66,7 @@ def case(*, foreign=False, cycle_trap=False, parallel_escapes=False):
 
 def run_case(fixture, **kwargs):
     par, nets, placement, index, result, scene = fixture
-    with patch('simplify_routes.build_scene', return_value=scene):
+    with patch('netlist2schematic.postprocess.simplify_routes.build_scene', return_value=scene):
         return shortcuts.simplify_routes(par, nets, placement, index, result, **kwargs)
 
 
@@ -99,9 +99,9 @@ class ShortcutSafetyTests(unittest.TestCase):
                 self.assertEqual(120, length, 'the complete v3 result must be retained first')
                 yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
 
-        with patch('simplify_routes._shortcut_candidates', side_effect=old_shortcuts), \
-                patch('simplify_routes.reattachment_candidates', side_effect=old_reattachment), \
-                patch('simplify_routes._three_segment_candidates', side_effect=patterns):
+        with patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', side_effect=old_shortcuts), \
+                patch('netlist2schematic.postprocess.simplify_routes.reattachment_candidates', side_effect=old_reattachment), \
+                patch('netlist2schematic.postprocess.simplify_routes._three_segment_candidates', side_effect=patterns):
             routes, metrics, _, report = run_case(fixture)
         self.assertEqual(100, metrics['wirelength'])
         self.assertEqual(120, report['v3_metrics']['wirelength'])
@@ -122,9 +122,9 @@ class ShortcutSafetyTests(unittest.TestCase):
                 yield {'net': 'a', 'segments': [((0, 0), (10, 0)), ((10, 0), (10, height)),
                     ((10, height), (90, height)), ((90, height), (90, 0)), ((90, 0), (100, 0))]}
 
-        with patch('simplify_routes._shortcut_candidates', side_effect=old_shortcuts), \
-                patch('simplify_routes._three_segment_candidates', side_effect=AssertionError('new phase')), \
-                patch('simplify_routes.MAX_CANDIDATES', 1):
+        with patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', side_effect=old_shortcuts), \
+                patch('netlist2schematic.postprocess.simplify_routes._three_segment_candidates', side_effect=AssertionError('new phase')), \
+                patch('netlist2schematic.postprocess.simplify_routes.MAX_CANDIDATES', 1):
             routes, metrics, _, report = run_case(fixture)
         self.assertEqual(140, metrics['wirelength'])
         self.assertEqual('candidate_budget', report['stop_reason'])
@@ -149,8 +149,8 @@ class ShortcutSafetyTests(unittest.TestCase):
                 self.assertEqual(140, length, 'new operation must see the accepted shortcut')
                 yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
 
-        with patch('simplify_routes._shortcut_candidates', side_effect=old_shortcuts), \
-                patch('simplify_routes.reattachment_candidates', side_effect=new_attachments):
+        with patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', side_effect=old_shortcuts), \
+                patch('netlist2schematic.postprocess.simplify_routes.reattachment_candidates', side_effect=new_attachments):
             routes, metrics, validation, report = run_case(fixture)
         self.assertEqual(100, metrics['wirelength'])
         self.assertEqual(0, metrics['bends'])
@@ -176,9 +176,9 @@ class ShortcutSafetyTests(unittest.TestCase):
             if shortcuts._wire_metrics(dict(routed)['a'])[0] > 100:
                 yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
 
-        with patch('simplify_routes._shortcut_candidates', side_effect=many_rejections), \
-                patch('simplify_routes.reattachment_candidates', side_effect=improvement), \
-                patch('simplify_routes.MAX_CANDIDATES', 4):
+        with patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', side_effect=many_rejections), \
+                patch('netlist2schematic.postprocess.simplify_routes.reattachment_candidates', side_effect=improvement), \
+                patch('netlist2schematic.postprocess.simplify_routes.MAX_CANDIDATES', 4):
             routes, metrics, _, report = run_case(fixture)
         self.assertEqual(100, metrics['wirelength'])
         self.assertEqual(2, report['candidate_counts']['considered'])
@@ -203,8 +203,8 @@ class ShortcutSafetyTests(unittest.TestCase):
                 self.assertEqual(120, length, 'all existing shortcuts must run before reattachment')
                 yield {'net': 'a', 'segments': [((0, 0), (100, 0))]}
 
-        with patch('simplify_routes._shortcut_candidates', side_effect=warmup), \
-                patch('simplify_routes.reattachment_candidates', side_effect=reattach):
+        with patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', side_effect=warmup), \
+                patch('netlist2schematic.postprocess.simplify_routes.reattachment_candidates', side_effect=reattach):
             routes, metrics, _, report = run_case(fixture)
         self.assertEqual(100, metrics['wirelength'])
         self.assertEqual(120, report['warmup_metrics']['wirelength'])
@@ -217,7 +217,7 @@ class ShortcutSafetyTests(unittest.TestCase):
     def test_a_straight_shortcut_is_fully_verified_and_preserves_search_metadata(self):
         fixture = case()
         original = deepcopy(fixture[4])
-        with patch('simplify_routes._verify', wraps=_verify) as verify:
+        with patch('netlist2schematic.postprocess.simplify_routes._verify', wraps=_verify) as verify:
             routed, metrics, validation, report = run_case(fixture)
         self.assertGreaterEqual(verify.call_count, 2)
         self.assertEqual(0, metrics['bends'])
@@ -294,8 +294,8 @@ class ShortcutSafetyTests(unittest.TestCase):
                 raise RoutingFailure('expired', {'reason': 'quality_time_budget'})
             return _verify(*args, **kwargs)
 
-        with patch('simplify_routes._verify', side_effect=verify), \
-                patch('simplify_routes.perf_counter', side_effect=lambda: clock['now']):
+        with patch('netlist2schematic.postprocess.simplify_routes._verify', side_effect=verify), \
+                patch('netlist2schematic.postprocess.simplify_routes.perf_counter', side_effect=lambda: clock['now']):
             routed, metrics, validation, report = run_case(fixture)
         self.assertEqual(fixture[4][0], routed)
         self.assertEqual(fixture[4][1], metrics)
@@ -317,8 +317,8 @@ class ShortcutSafetyTests(unittest.TestCase):
                 raise RoutingFailure('expired', {'reason': 'quality_time_budget'})
             return extract(*args, **kwargs)
 
-        with patch('simplify_routes._chains', side_effect=chains), \
-                patch('simplify_routes.perf_counter', side_effect=lambda: clock['now']):
+        with patch('netlist2schematic.postprocess.simplify_routes._chains', side_effect=chains), \
+                patch('netlist2schematic.postprocess.simplify_routes.perf_counter', side_effect=lambda: clock['now']):
             routed, metrics, validation, report = run_case(fixture)
         self.assertEqual(100, metrics['wirelength'])
         self.assertEqual(0, metrics['bends'])
@@ -330,7 +330,7 @@ class ShortcutSafetyTests(unittest.TestCase):
 
     def test_candidate_budget_has_a_safe_explicit_stop(self):
         fixture = case()
-        with patch('simplify_routes.MAX_CANDIDATES', 0):
+        with patch('netlist2schematic.postprocess.simplify_routes.MAX_CANDIDATES', 0):
             routed, metrics, validation, report = run_case(fixture)
         self.assertEqual(fixture[4][0], routed)
         self.assertEqual(fixture[4][1], metrics)
@@ -351,7 +351,7 @@ class ShortcutSafetyTests(unittest.TestCase):
     def test_scene_construction_expiry_does_not_lose_valid_input(self):
         fixture = case()
         error = RoutingFailure('expired', {'reason': 'quality_time_budget'})
-        with patch('simplify_routes.build_scene', side_effect=error):
+        with patch('netlist2schematic.postprocess.simplify_routes.build_scene', side_effect=error):
             result = shortcuts.simplify_routes(*fixture[:4], fixture[4])
         self.assertEqual(fixture[4], result[:3])
         self.assertEqual('time_budget', result[3]['stop_reason'])

@@ -6,10 +6,10 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
-from fallback_bus import create_fallback
-from sa_render import render_svg
-from sa_routing import validate_final_routes
-import structured_placement as structured
+from netlist2schematic.recovery.fallback_bus import create_fallback
+from netlist2schematic.rendering.sa_render import render_svg
+from netlist2schematic.routing.sa_routing import validate_final_routes
+from netlist2schematic.layout import structured_placement as structured
 from tests.test_passive_placement import base_placement, resistor
 
 NS = '{http://www.w3.org/2000/svg}'

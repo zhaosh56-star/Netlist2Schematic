@@ -13,9 +13,9 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-import net_labels
-import run_flow
-from sa_common import ROOT, load_local
+from netlist2schematic.plugins.net_labels import net_labels
+from netlist2schematic.flow import run_flow
+from netlist2schematic.common.sa_common import ROOT, load_local
 
 
 class NetLabelsFlowTests(unittest.TestCase):
@@ -38,7 +38,7 @@ class NetLabelsFlowTests(unittest.TestCase):
         original_import = builtins.__import__
 
         def guarded_import(name, *args, **kwargs):
-            if name in ('net_labels', 'net_label_core'):
+            if name in ('net_labels', 'net_label_core') or name.startswith('netlist2schematic.plugins.net_labels'):
                 cls.default_plugin_imports.append(name)
                 raise AssertionError('Default flow must bypass the net-label plugin')
             return original_import(name, *args, **kwargs)
@@ -92,11 +92,11 @@ class NetLabelsFlowTests(unittest.TestCase):
 
     def _no_search(self, stack):
         par = load_local('place_and_route', 'place-and-route.py')
-        for name in ('orthogonal_router.route_scene', 'orthogonal_router._find_path',
-                     'sa_routing.final_route', 'run_flow.final_route',
-                     'run_flow._normal_result', 'run_flow._try_local_rescue',
-                     'structured_placement._anneal', 'fallback_bus.create_fallback',
-                     'simplify_routes.simplify_routes'):
+        for name in ('netlist2schematic.routing.orthogonal_router.route_scene', 'netlist2schematic.routing.orthogonal_router._find_path',
+                     'netlist2schematic.routing.sa_routing.final_route', 'netlist2schematic.flow.run_flow.final_route',
+                     'netlist2schematic.flow.run_flow._normal_result', 'netlist2schematic.flow.run_flow._try_local_rescue',
+                     'netlist2schematic.layout.structured_placement._anneal', 'netlist2schematic.recovery.fallback_bus.create_fallback',
+                     'netlist2schematic.postprocess.simplify_routes.simplify_routes'):
             stack.enter_context(patch(name, side_effect=AssertionError(name)))
         stack.enter_context(patch.object(par, 'sa', side_effect=AssertionError('baseline SA')))
 
@@ -116,8 +116,8 @@ class NetLabelsFlowTests(unittest.TestCase):
         self.assertEqual(self.saved_bytes, self.saved.read_bytes())
 
     def test_explicit_off_does_not_build_any_display_view(self):
-        with patch('net_labels.generate', side_effect=AssertionError('disabled plugin')), \
-                patch('net_label_core.build_view', side_effect=AssertionError('disabled build')):
+        with patch('netlist2schematic.plugins.net_labels.net_labels.generate', side_effect=AssertionError('disabled plugin')), \
+                patch('netlist2schematic.plugins.net_labels.net_label_core.build_view', side_effect=AssertionError('disabled build')):
             result = self._finish(policy='off')
         self.assertTrue(result['validation']['valid'])
         self.assertFalse((self.directory / 'flow/net-labels').exists())
@@ -138,7 +138,7 @@ class NetLabelsFlowTests(unittest.TestCase):
         self.assertTrue((self.directory / 'flow/small-layered.svg').is_file())
 
     def test_plugin_failure_does_not_replace_complete_flow_success(self):
-        with patch('net_labels.generate', side_effect=ValueError('no safe label position')):
+        with patch('netlist2schematic.plugins.net_labels.net_labels.generate', side_effect=ValueError('no safe label position')):
             result = self._finish(policy='auto')
         self.assertTrue(result['validation']['valid'])
         self.assertTrue((self.directory / 'flow/small-placement.json').is_file())
@@ -170,7 +170,7 @@ class NetLabelsFlowTests(unittest.TestCase):
         manifest = self._generate()
         with ExitStack() as stack:
             self._no_search(stack)
-            stack.enter_context(patch('net_label_core.build_view', side_effect=AssertionError('replan')))
+            stack.enter_context(patch('netlist2schematic.plugins.net_labels.net_label_core.build_view', side_effect=AssertionError('replan')))
             replay = self._redraw(manifest['artifacts']['json'])
         for key in ('clean_svg', 'color_svg'):
             self.assertEqual(Path(manifest['artifacts'][key]).read_bytes(),
@@ -188,8 +188,8 @@ class NetLabelsFlowTests(unittest.TestCase):
         self.assertEqual(wires[0], wires[1])
 
     def test_net_label_renderer_marks_ordinary_and_leader_t_junctions_in_both_styles(self):
-        from net_label_validation import label_position
-        from sa_render import _text_box, render_svg
+        from netlist2schematic.plugins.net_labels.net_label_validation import label_position
+        from netlist2schematic.rendering.sa_render import _text_box, render_svg
         context = net_labels._load_context(self.saved)
         (_, _, par, placement, comps, nets, index, routed, metrics, validation,
          _, hints, _) = context
@@ -206,7 +206,7 @@ class NetLabelsFlowTests(unittest.TestCase):
         view = {'labels': [label], 'render_hints': hints,
                 'display_metrics': dict(metrics, wirelength=388, crossings=0, bends=0)}
         roots = []
-        with patch('net_label_validation.display_routes', return_value=merged):
+        with patch('netlist2schematic.plugins.net_labels.net_label_validation.display_routes', return_value=merged):
             for clean in (True, False):
                 output = self.directory / ('clean.svg' if clean else 'color.svg')
                 render_svg(par, placement, comps, nets, index, routed, metrics, output,
@@ -294,10 +294,10 @@ class NetLabelsFlowTests(unittest.TestCase):
             self._redraw(path)
 
     def test_cached_generation_reuses_only_after_full_and_display_revalidation(self):
-        from net_label_validation import validate_view
+        from netlist2schematic.plugins.net_labels.net_label_validation import validate_view
         manifest = self._generate()
-        with patch('net_label_core.build_view', side_effect=AssertionError('cached replan')), \
-                patch('net_label_validation.validate_view', wraps=validate_view) as validation:
+        with patch('netlist2schematic.plugins.net_labels.net_label_core.build_view', side_effect=AssertionError('cached replan')), \
+                patch('netlist2schematic.plugins.net_labels.net_label_validation.validate_view', wraps=validate_view) as validation:
             cached = self._generate()
         self.assertTrue(cached['reused'])
         self.assertTrue(validation.called)
@@ -312,7 +312,7 @@ class NetLabelsFlowTests(unittest.TestCase):
         altered['view_sha256'] = net_labels._digest(altered['view'])
         path.write_text(json.dumps(altered), encoding='utf-8')
         before = path.read_bytes()
-        with patch('net_label_core.build_view', side_effect=AssertionError('cached replan')), \
+        with patch('netlist2schematic.plugins.net_labels.net_label_core.build_view', side_effect=AssertionError('cached replan')), \
                 self.assertRaises(ValueError):
             self._generate()
         self.assertEqual(before, path.read_bytes())
@@ -321,7 +321,7 @@ class NetLabelsFlowTests(unittest.TestCase):
         manifest = self._generate()
         view = deepcopy(manifest['view'])
         view['scale'] *= 2
-        with patch('net_label_core.build_view', return_value=view), self.assertRaisesRegex(ValueError, 'scale'):
+        with patch('netlist2schematic.plugins.net_labels.net_label_core.build_view', return_value=view), self.assertRaisesRegex(ValueError, 'scale'):
             self._generate(out_dir=self.directory / 'wrong-scale')
 
     def test_policy_and_budget_select_separate_fingerprints(self):
@@ -372,7 +372,7 @@ class NetLabelsFlowTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
 
     def test_cli_forwards_explicit_auto_and_preserves_default_off(self):
-        with patch('run_flow.run') as run:
+        with patch('netlist2schematic.flow.run_flow.run') as run:
             self.assertEqual(0, run_flow.main([str(self.source)]))
             self.assertEqual('off', run.call_args.kwargs['net_labels'])
             self.assertEqual(0, run_flow.main([str(self.source), '--net-labels', 'auto']))

@@ -97,7 +97,7 @@ output/5-dut/
 
 ### 2.2 入口先检查什么
 
-**代码：** [run_flow.py](../run_flow.py) 的 `main()`、`run()`、`_output_targets()`；[sa_common.py](../sa_common.py) 的 `configure_resources()`；[sa_geometry.py](../sa_geometry.py) 的 `validate_geometry()`。
+**代码：** [run_flow.py](../netlist2schematic/flow/run_flow.py) 的 `main()`、`run()`、`_output_targets()`；[sa_common.py](../netlist2schematic/common/sa_common.py) 的 `configure_resources()`；[sa_geometry.py](../netlist2schematic/common/sa_geometry.py) 的 `validate_geometry()`。
 
 入口依次检查：
 
@@ -117,7 +117,7 @@ output/5-dut/
 
 ## 3. 第一步：把网表变成统一的器件与连接数据
 
-**代码：** [netlist_core.py](../netlist_core.py) 的 `parse_netlist()`、`classify_tokens()`、`to_document()`；[parse-netlist.py](../parse-netlist.py) 的 `parse()`。
+**代码：** [netlist_core.py](../netlist2schematic/netlist/netlist_core.py) 的 `parse_netlist()`、`classify_tokens()`、`to_document()`；[parse-netlist.py](../netlist2schematic/netlist/parse_netlist.py) 的 `parse()`。
 
 ### 3.1 先处理文本和作用范围
 
@@ -178,7 +178,7 @@ nets = {
 
 ## 4. 第二步：决定谁在上、谁在下
 
-**代码：** [device_leveling.py](../device_leveling.py) 的 `compute_levels()`、`build_active_edges()`、`tarjan_scc()`、`pick_sources()`、`longest_levels()`。
+**代码：** [device_leveling.py](../netlist2schematic/recognition/device_leveling.py) 的 `compute_levels()`、`build_active_edges()`、`tarjan_scc()`、`pick_sources()`、`longest_levels()`。
 
 这一步是**根据连接拓扑估计导通层级**，不是先仿真出真实电流或电压再分层。
 
@@ -211,7 +211,7 @@ nets = {
 
 不是。它们先做**挂靠**：根据连接到哪条支路、哪个控制网和哪个供电端，决定放在相应层旁边或中间空行。
 
-**代码：** [place-layered.py](../place-layered.py) 的 `attach_info()`、`_allocate_rows()`；结构化初排还会进一步调整。
+**代码：** [place-layered.py](../netlist2schematic/layout/place_layered.py) 的 `attach_info()`、`_allocate_rows()`；结构化初排还会进一步调整。
 
 | 挂靠情况 | 当前处理思路 |
 | --- | --- |
@@ -231,7 +231,7 @@ nets = {
 可以单独打印分层解释：
 
 ```powershell
-.\.venv\Scripts\python.exe -X utf8 .\device_leveling.py .\examples\5.cir --cell dut
+.\.venv\Scripts\python.exe -X utf8 -m netlist2schematic.recognition.device_leveling .\examples\5.cir --cell dut
 ```
 
 这里的挂靠文字是诊断说明；真正用于布局的row以 `_allocate_rows()`和最终JSON为准。
@@ -240,7 +240,7 @@ nets = {
 
 ## 5. 第三步：认出子结构，保留各器件的角色
 
-**代码：** [circuit_structures.py](../circuit_structures.py) 的 `analyze_structures()`；旧参考候选仍使用 [vf2_match.py](../vf2_match.py)。
+**代码：** [circuit_structures.py](../netlist2schematic/recognition/circuit_structures.py) 的 `analyze_structures()`；旧参考候选仍使用 [vf2_match.py](../netlist2schematic/recognition/vf2_match.py)。
 
 默认新布局主要使用连接拓扑规则，而非仅看到“两只管子连一起”就把它们成对。
 
@@ -265,7 +265,7 @@ VF2旧代码使用“器件—网络”二部图和带引脚标签的子图匹�
 
 ## 6. 第四步：生成候选摆法，再用SA调整
 
-**代码：** [structured_placement.py](../structured_placement.py) 的 `create_candidates()`、`_initial_placement()`、`StructuredPlacement.propose()`、`_anneal()`；[passive_placement.py](../passive_placement.py)增加无源跨行动作和软评分；[aesthetic_flow.py](../aesthetic_flow.py) 的 `select_layout()`组织候选比较。
+**代码：** [structured_placement.py](../netlist2schematic/layout/structured_placement.py) 的 `create_candidates()`、`_initial_placement()`、`StructuredPlacement.propose()`、`_anneal()`；[passive_placement.py](../netlist2schematic/layout/passive_placement.py)增加无源跨行动作和软评分；[aesthetic_flow.py](../netlist2schematic/flow/aesthetic_flow.py) 的 `select_layout()`组织候选比较。
 
 ### 6.1 默认三个候选及显式旧参考分别是什么
 
@@ -303,7 +303,7 @@ y = layout_grid.row_y[row]
   = 器件中心世界坐标 + 对应朝向下的引脚局部坐标
 ```
 
-**代码：** [place-and-route.py](../place-and-route.py) 的 `Placement.pos_of()`、`pin_world()`、`pin_dir()`。
+**代码：** [place-and-route.py](../netlist2schematic/layout/place_and_route.py) 的 `Placement.pos_of()`、`pin_world()`、`pin_dir()`。
 
 候选0原网格间距为150；三个结构种子的初始横/纵间距分别为110/112、124/126、100/106。最终还会按实际朝向的符号包围盒、两边halo和通道数量检查下限，必要时扩开物理轴，不是无条件把大符号挤进固定100间距。
 
@@ -375,7 +375,7 @@ JSON用 `requested_passive_layout` 保存请求策略，`passive_layout_policy` 
 
 ## 7. 第五步：冻结布局，建立最终布线场景
 
-**代码：** [sa_routing.py](../sa_routing.py) 的 `final_route()`；[routing_rules.py](../routing_rules.py) 的 `RoutingOptions`、`build_scene()`、`Scene`。
+**代码：** [sa_routing.py](../netlist2schematic/routing/sa_routing.py) 的 `final_route()`；[routing_rules.py](../netlist2schematic/routing/routing_rules.py) 的 `RoutingOptions`、`build_scene()`、`Scene`。
 
 所谓“冻结”，是本次路由不再移动器件中心、改变逻辑层或翻转朝向。路由器使用这张布局的真实引脚坐标建立场景。
 
@@ -413,7 +413,7 @@ JSON用 `requested_passive_layout` 保存请求策略，`passive_layout_policy` 
 
 ## 8. 第六步：用正交图A*构造完整信号网
 
-**代码：** [orthogonal_router.py](../orthogonal_router.py) 的 `route_scene()`、`_route_net()`、`_find_path()`、`_axes()`。
+**代码：** [orthogonal_router.py](../netlist2schematic/routing/orthogonal_router.py) 的 `route_scene()`、`_route_net()`、`_find_path()`、`_axes()`。
 
 ### 8.1 压缩坐标图怎样建
 
@@ -486,7 +486,7 @@ A*的状态含“当前坐标”和“进入该位置的水平/竖直方向”�
 
 ### 9.1 为什么A*找到路还要验收
 
-**代码：** [sa_routing.py](../sa_routing.py) 的 `_verify()`、`routing_errors()`、`measure_routes()`；[routing_rules.py](../routing_rules.py) 的 `canonical_topology()`、`analyze_routes()`。
+**代码：** [sa_routing.py](../netlist2schematic/routing/sa_routing.py) 的 `_verify()`、`routing_errors()`、`measure_routes()`；[routing_rules.py](../netlist2schematic/routing/routing_rules.py) 的 `canonical_topology()`、`analyze_routes()`。
 
 搜索时检查的是一个个局部动作，验收检查的是最终拼起来的整张图。局部可走不等于所有端子都已接上，也不等于拼接后的分支和折角均合法。
 
@@ -509,7 +509,7 @@ A*的状态含“当前坐标”和“进入该位置的水平/竖直方向”�
 
 ### 9.2 最终候选用什么评分
 
-**代码：** [layout_quality.py](../layout_quality.py) 的 `evaluate_quality()`。
+**代码：** [layout_quality.py](../netlist2schematic/layout/layout_quality.py) 的 `evaluate_quality()`。
 
 它从真实线路重新计算，而不是直接相信SA的估计：
 
@@ -572,7 +572,7 @@ detour_factor >= 2.5
 
 ### 10.1 局部救援：先修接口，尽量保留已有路线
 
-**代码：** [local_rescue.py](../local_rescue.py) 的 `rescue_routing()`、`_anchors()`、`_goal_choices()`、`_route_local_net()`、`_transaction()`。
+**代码：** [local_rescue.py](../netlist2schematic/recovery/local_rescue.py) 的 `rescue_routing()`、`_anchors()`、`_goal_choices()`、`_route_local_net()`、`_transaction()`。
 
 普通路由失败时，保存的私有检查点包括：原始场景、已完成网络、失败网、待布队列、失败引脚、外围范围及路由参数。中途没有完成的网络不会冒充已完成网络。这些运行对象通过异常私有上下文传递，不写入JSON。
 
@@ -605,7 +605,7 @@ detour_factor >= 2.5
 
 ### 10.2 扩距重试：只把物理行列撑开
 
-**代码：** [spacing_retry.py](../spacing_retry.py) 的 `retry_spacing()`、`_axis()`、`_expanded_axis()`。
+**代码：** [spacing_retry.py](../netlist2schematic/recovery/spacing_retry.py) 的 `retry_spacing()`、`_axis()`、`_expanded_axis()`。
 
 局部救援失败后，复制**原正常阶段**最后实际失败候选，不使用救援中尝试过的临时路线或摆法。
 
@@ -622,7 +622,7 @@ detour_factor >= 2.5
 
 ### 10.3 总线后备：用空间换取更容易构造的连接
 
-**代码：** [fallback_bus.py](../fallback_bus.py) 的 `create_fallback()`、`_ports()`、`_lanes()`、`_signal_routes()`、`_power_connections()`。
+**代码：** [fallback_bus.py](../netlist2schematic/recovery/fallback_bus.py) 的 `create_fallback()`、`_ports()`、`_lanes()`、`_signal_routes()`、`_power_connections()`。
 
 这一步不运行SA，也不运行全局A*。它重新排布为较大的专用通道图：
 
@@ -667,7 +667,7 @@ detour_factor >= 2.5
 
 ## 11. 第九步：选定合法结果后，统一做安全简化
 
-**代码：** [simplify_routes.py](../simplify_routes.py) 负责调度、预算、验收和提交；[route_reattachment.py](../route_reattachment.py)、[route_patterns.py](../route_patterns.py)、[route_tracks.py](../route_tracks.py)只生成候选。
+**代码：** [simplify_routes.py](../netlist2schematic/postprocess/simplify_routes.py) 负责调度、预算、验收和提交；[route_reattachment.py](../netlist2schematic/postprocess/route_reattachment.py)、[route_patterns.py](../netlist2schematic/postprocess/route_patterns.py)、[route_tracks.py](../netlist2schematic/postprocess/route_tracks.py)只生成候选。
 
 这一阶段不运行SA或A*，不改变器件位置、固定出线和电源几何。它在已经完整合法的结果上作有限的局部几何替换。
 
@@ -758,7 +758,7 @@ track_compaction_refinement
 
 ## 12. 第十步：重新统计、保存并生成两种SVG
 
-**代码：** `run_flow._postprocess_routes()`、`_finish()`；[sa_render.py](../sa_render.py) 的 `render_svg()`、`segs_to_paths()`。
+**代码：** `run_flow._postprocess_routes()`、`_finish()`；[sa_render.py](../netlist2schematic/rendering/sa_render.py) 的 `render_svg()`、`segs_to_paths()`。
 
 1. 使用简化器交回的最新线路，重新计算最终 `metrics`及 `quality.score/details`。
 2. 保留 `quality.candidates`原候选比较记录，用 `candidate_metrics_stage: before_route_simplification`注明它描述的是简化前候选；不改写选中编号。
@@ -892,7 +892,7 @@ $flowResult.quality.details.per_net
 .\.venv\Scripts\python.exe .\run_flow.py --reroute-placement .\output\4\4-placement.json --out-dir .\output\4-rerouted
 ```
 
-**代码：** `run_flow.reroute_placement()`；[sa_saved.py](../sa_saved.py) 的 `load_placement()`、`saved_routing_options()`。
+**代码：** `run_flow.reroute_placement()`；[sa_saved.py](../netlist2schematic/common/sa_saved.py) 的 `load_placement()`、`saved_routing_options()`。
 
 恢复保存的row/col/orient、物理轴及路由规则，不重新做SA；旧JSON没有物理轴则按150网格恢复。默认不救援，可显式加 `--local-rescue auto`。不能启用扩距或总线重排，因为这项接口承诺保持坐标。
 
@@ -912,7 +912,7 @@ $flowResult.quality.details.per_net
 .\.venv\Scripts\python.exe .\render-clean.py .\output\4\4-placement.json .\output\4\4-redraw.svg
 ```
 
-**代码：** [render-clean.py](../render-clean.py) 的 `render()`。
+**代码：** [render-clean.py](../netlist2schematic/rendering/render_clean.py) 的 `render()`。
 
 含 `routes`的JSON会复验并绘制保存结果，不再简化。旧JSON若没有路线，可能会调用路由器重建；因此“重绘不A*”有“已有保存路线”这个前提。源网表、子电路、符号资源和必要本地include仍须可用，不能只复制SVG旁的JSON就假定完全自包含。
 
@@ -962,35 +962,35 @@ $flowResult.quality.details.per_net
 
 | 文件 | 核心职责/定位函数 |
 | --- | --- |
-| [run_flow.py](../run_flow.py) | `run()`总调度；`_normal_result()`选择布局分支；`_finish()`最终发布 |
-| [netlist_core.py](../netlist_core.py) | 统一器件解析、型号分类、源位置、`to_document()` |
-| [parse-netlist.py](../parse-netlist.py) | 绘图解析接口及只解析CLI |
-| [device_leveling.py](../device_leveling.py) | 有源导通图、SCC、最长路径层级、分层CLI |
-| [circuit_structures.py](../circuit_structures.py) | 新拓扑结构、角色、父子和归属 |
-| [vf2_match.py](../vf2_match.py) | 旧参考候选的MOS模板匹配 |
-| [place-layered.py](../place-layered.py) | 挂靠、行分配、旧分层SA、分层Placement类 |
-| [place-and-route.py](../place-and-route.py) | Placement基础、引脚坐标、旧pattern估价、符号绘制工具 |
-| [structured_placement.py](../structured_placement.py) | 结构种子、块动作、快速估价、温度标定及反馈候选 |
-| [passive_placement.py](../passive_placement.py) | 无源跨行移动、动态行恢复、串联/并联/反馈软评分 |
-| [symmetry_layout.py](../symmetry_layout.py) | 显式 `--symmetry-layout auto` 才启用：SA及反馈后的器件对称关系、有限规整事务和真实引脚残差；不调用SA/A* |
-| [aesthetic_flow.py](../aesthetic_flow.py) | 正常阶段300秒共享预算、真实候选评估、保存最佳结果 |
-| [layout_quality.py](../layout_quality.py) | 真实Q、逐网绕行、结构对齐/分散 |
-| [routing_rules.py](../routing_rules.py) | RoutingOptions、Scene、统一净区、规范拓扑、几何验收 |
-| [orthogonal_router.py](../orthogonal_router.py) | 压缩图、A*、逐网构树、拆网、失败检查点 |
-| [sa_routing.py](../sa_routing.py) | `final_route()`、原始引脚连通、完整验收、最终测量 |
-| [local_rescue.py](../local_rescue.py) | 失败后双端接口修复、小组事务及完整复验 |
-| [spacing_retry.py](../spacing_retry.py) | 只扩物理轴，一次全新最终路由 |
-| [fallback_bus.py](../fallback_bus.py) | 无SA/全局A*的确定性通道和总线构造 |
-| [simplify_routes.py](../simplify_routes.py) | 四阶段最终简化、预算预留、绕行排序、候选接受和回滚 |
-| [route_reattachment.py](../route_reattachment.py) | 生成单终端叶支路重接候选 |
-| [route_patterns.py](../route_patterns.py) | 生成通用三段式收紧候选 |
-| [route_tracks.py](../route_tracks.py) | 生成保留原路径段次序的内部轨道收紧候选 |
-| [sa_render.py](../sa_render.py) | 同一份路线输出两种SVG |
-| [sa_common.py](../sa_common.py) | 路径、资源、旧模块加载、JSON读写 |
-| [sa_geometry.py](../sa_geometry.py) | 从符号定义推导/校验各朝向几何 |
-| [sa_saved.py](../sa_saved.py) | 恢复保存布局、检查源哈希、读取保存规则 |
+| [run_flow.py](../netlist2schematic/flow/run_flow.py) | `run()`总调度；`_normal_result()`选择布局分支；`_finish()`最终发布 |
+| [netlist_core.py](../netlist2schematic/netlist/netlist_core.py) | 统一器件解析、型号分类、源位置、`to_document()` |
+| [parse-netlist.py](../netlist2schematic/netlist/parse_netlist.py) | 绘图解析接口及只解析CLI |
+| [device_leveling.py](../netlist2schematic/recognition/device_leveling.py) | 有源导通图、SCC、最长路径层级、分层CLI |
+| [circuit_structures.py](../netlist2schematic/recognition/circuit_structures.py) | 新拓扑结构、角色、父子和归属 |
+| [vf2_match.py](../netlist2schematic/recognition/vf2_match.py) | 旧参考候选的MOS模板匹配 |
+| [place-layered.py](../netlist2schematic/layout/place_layered.py) | 挂靠、行分配、旧分层SA、分层Placement类 |
+| [place-and-route.py](../netlist2schematic/layout/place_and_route.py) | Placement基础、引脚坐标、旧pattern估价、符号绘制工具 |
+| [structured_placement.py](../netlist2schematic/layout/structured_placement.py) | 结构种子、块动作、快速估价、温度标定及反馈候选 |
+| [passive_placement.py](../netlist2schematic/layout/passive_placement.py) | 无源跨行移动、动态行恢复、串联/并联/反馈软评分 |
+| [symmetry_layout.py](../netlist2schematic/plugins/symmetry/symmetry_layout.py) | 显式 `--symmetry-layout auto` 才启用：SA及反馈后的器件对称关系、有限规整事务和真实引脚残差；不调用SA/A* |
+| [aesthetic_flow.py](../netlist2schematic/flow/aesthetic_flow.py) | 正常阶段300秒共享预算、真实候选评估、保存最佳结果 |
+| [layout_quality.py](../netlist2schematic/layout/layout_quality.py) | 真实Q、逐网绕行、结构对齐/分散 |
+| [routing_rules.py](../netlist2schematic/routing/routing_rules.py) | RoutingOptions、Scene、统一净区、规范拓扑、几何验收 |
+| [orthogonal_router.py](../netlist2schematic/routing/orthogonal_router.py) | 压缩图、A*、逐网构树、拆网、失败检查点 |
+| [sa_routing.py](../netlist2schematic/routing/sa_routing.py) | `final_route()`、原始引脚连通、完整验收、最终测量 |
+| [local_rescue.py](../netlist2schematic/recovery/local_rescue.py) | 失败后双端接口修复、小组事务及完整复验 |
+| [spacing_retry.py](../netlist2schematic/recovery/spacing_retry.py) | 只扩物理轴，一次全新最终路由 |
+| [fallback_bus.py](../netlist2schematic/recovery/fallback_bus.py) | 无SA/全局A*的确定性通道和总线构造 |
+| [simplify_routes.py](../netlist2schematic/postprocess/simplify_routes.py) | 四阶段最终简化、预算预留、绕行排序、候选接受和回滚 |
+| [route_reattachment.py](../netlist2schematic/postprocess/route_reattachment.py) | 生成单终端叶支路重接候选 |
+| [route_patterns.py](../netlist2schematic/postprocess/route_patterns.py) | 生成通用三段式收紧候选 |
+| [route_tracks.py](../netlist2schematic/postprocess/route_tracks.py) | 生成保留原路径段次序的内部轨道收紧候选 |
+| [sa_render.py](../netlist2schematic/rendering/sa_render.py) | 同一份路线输出两种SVG |
+| [sa_common.py](../netlist2schematic/common/sa_common.py) | 路径、资源、旧模块加载、JSON读写 |
+| [sa_geometry.py](../netlist2schematic/common/sa_geometry.py) | 从符号定义推导/校验各朝向几何 |
+| [sa_saved.py](../netlist2schematic/common/sa_saved.py) | 恢复保存布局、检查源哈希、读取保存规则 |
 
-另有 [render-clean.py](../render-clean.py)作为独立重绘入口，它不是默认完整flow内部需要再启动的一步。
+另有 [render-clean.py](../netlist2schematic/rendering/render_clean.py)作为独立重绘入口，它不是默认完整flow内部需要再启动的一步。
 
 ### 17.1 非Python文件与目录
 

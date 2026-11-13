@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from structure_selection import select_structured_result
+from netlist2schematic.plugins.structure.structure_selection import select_structured_result
 
 
 def result(identifier, length=100, crossings=1, score=10, interleaving=0, order=0, span=1):
@@ -84,20 +84,20 @@ class StructureSelectionTests(unittest.TestCase):
 
 class StructurePublicInterfaceTests(unittest.TestCase):
     def test_invalid_policy_is_rejected_before_reading_netlist(self):
-        import run_flow
+        from netlist2schematic.flow import run_flow
         with self.assertRaisesRegex(ValueError,'structure_layout'):
             run_flow.run('absent.cir',structure_layout='wrong')
 
     def test_cli_forwards_opt_in_without_changing_symmetry_default(self):
-        import run_flow
-        with patch('run_flow.run') as run:
+        from netlist2schematic.flow import run_flow
+        with patch('netlist2schematic.flow.run_flow.run') as run:
             run_flow.main(['example.cir','--structure-layout','auto'])
         self.assertEqual('auto',run.call_args.kwargs['structure_layout'])
         self.assertEqual('off',run.call_args.kwargs['symmetry_layout'])
 
     def test_cli_default_is_off(self):
-        import run_flow
-        with patch('run_flow.run') as run:
+        from netlist2schematic.flow import run_flow
+        with patch('netlist2schematic.flow.run_flow.run') as run:
             run_flow.main(['example.cir'])
         self.assertEqual('off',run.call_args.kwargs['structure_layout'])
 

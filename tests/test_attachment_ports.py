@@ -8,9 +8,9 @@ from unittest.mock import Mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import attachment_integration as attachment
-from circuit_structures import analyze_structures
-from device_leveling import compute_levels
+from netlist2schematic.plugins.attachment import attachment_integration as attachment
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.recognition.device_leveling import compute_levels
 from tests.test_passive_placement import convert, mos, resistor, source
 
 

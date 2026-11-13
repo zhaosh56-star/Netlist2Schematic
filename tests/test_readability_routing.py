@@ -4,12 +4,12 @@ import time
 import unittest
 from unittest.mock import patch
 
-import readability_routing as feedback
-from readability_layout import measure_readability, readability_rank
-from orthogonal_router import RoutingFailure
-from routing_rules import RoutingOptions, build_scene
-from sa_routing import _verify
-import structured_placement as structured
+from netlist2schematic.plugins.readability import readability_routing as feedback
+from netlist2schematic.plugins.readability.readability_layout import measure_readability, readability_rank
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import RoutingOptions, build_scene
+from netlist2schematic.routing.sa_routing import _verify
+from netlist2schematic.layout import structured_placement as structured
 from tests.test_passive_placement import base_placement, resistor, mos
 
 PAR = structured.par
@@ -69,8 +69,8 @@ class ReadabilityFeedbackTests(unittest.TestCase):
     def test_pure_mos_long_branch_can_improve_without_inventing_organization_metrics(self):
         import json
         item = pure_mos_fixture()
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('A* forbidden')), \
-                patch('orthogonal_router._find_path', side_effect=AssertionError('A* forbidden')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* forbidden')), \
+                patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('A* forbidden')):
             result = call(item)
         self.assertIsNotNone(result)
         report = result[4]['layout_readability']['routing_feedback']
@@ -93,9 +93,9 @@ class ReadabilityFeedbackTests(unittest.TestCase):
     def test_supported_but_unmeasurable_plan_does_not_bypass_organization_guard(self):
         item = pure_mos_fixture()
         item[4]['layout_readability']['plan']['supported'] = True
-        with patch('readability_routing.measure_readability', return_value={
+        with patch('netlist2schematic.plugins.readability.readability_routing.measure_readability', return_value={
                 'supported': True, 'measurable': False, 'violations': None}), \
-                patch('readability_routing.build_scene', side_effect=AssertionError('must reject early')):
+                patch('netlist2schematic.plugins.readability.readability_routing.build_scene', side_effect=AssertionError('must reject early')):
             self.assertIsNone(call(item))
 
     def test_actual_long_free_branch_has_two_original_pin_groups(self):
@@ -128,8 +128,8 @@ class ReadabilityFeedbackTests(unittest.TestCase):
         item = fixture()
         pl, comps, nets, index, metadata, routed, scene = item
         original = deepcopy(pl)
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('A* forbidden')), \
-                patch('orthogonal_router._find_path', side_effect=AssertionError('A* forbidden')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* forbidden')), \
+                patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('A* forbidden')):
             result = call(item)
         self.assertIsNotNone(result)
         trial, new_comps, new_nets, new_index, meta = result
@@ -161,7 +161,7 @@ class ReadabilityFeedbackTests(unittest.TestCase):
     def test_static_rejection_rolls_back_every_trial(self):
         item = fixture(); before = deepcopy(item[0].__dict__)
         statistics = {}
-        with patch('readability_routing._static_safe', return_value=False):
+        with patch('netlist2schematic.plugins.readability.readability_routing._static_safe', return_value=False):
             self.assertIsNone(call(item, statistics=statistics))
         self.assertGreater(statistics['candidates'], 0)
         self.assertEqual(item[0].cell_of, before['cell_of'])
@@ -170,7 +170,7 @@ class ReadabilityFeedbackTests(unittest.TestCase):
 
     def test_hpwl_guard_is_measured_against_original_reference(self):
         item = fixture(); original = tuple(item[0].cell_of)
-        with patch('readability_routing._hpwl', side_effect=lambda p, pl, n, ix:
+        with patch('netlist2schematic.plugins.readability.readability_routing._hpwl', side_effect=lambda p, pl, n, ix:
                 100 if tuple(pl.cell_of) == original else 116):
             self.assertIsNone(call(item))
 
@@ -184,19 +184,19 @@ class ReadabilityFeedbackTests(unittest.TestCase):
             result['passive_supported'] = True
             return result
 
-        with patch('readability_routing.measure_readability', side_effect=measure):
+        with patch('netlist2schematic.plugins.readability.readability_routing.measure_readability', side_effect=measure):
             self.assertIsNone(call(item))
 
     def test_expired_deadline_does_not_start_scene_or_move_anything(self):
         item = fixture()
         statistics = {'candidates': 123}
-        with patch('readability_routing.build_scene', side_effect=AssertionError('expired')):
+        with patch('netlist2schematic.plugins.readability.readability_routing.build_scene', side_effect=AssertionError('expired')):
             self.assertIsNone(call(item, deadline=time.perf_counter()-1, statistics=statistics))
         self.assertEqual(0, statistics['candidates'])
 
     def test_candidate_limit_stops_without_spending_other_recovery_budgets(self):
         item = fixture()
-        with patch('readability_routing.MAX_TRIALS', 0):
+        with patch('netlist2schematic.plugins.readability.readability_routing.MAX_TRIALS', 0):
             self.assertIsNone(call(item))
 
     def test_unverified_route_and_nonfinite_deadline_are_rejected(self):
@@ -300,7 +300,7 @@ class ReadabilityFeedbackTests(unittest.TestCase):
             yield trial, {'kind': 'passive_neighbor_column', 'members': ['first']}
             raise RoutingFailure('timeout', {'reason': 'quality_time_budget'})
 
-        with patch('readability_routing._trials', side_effect=once):
+        with patch('netlist2schematic.plugins.readability.readability_routing._trials', side_effect=once):
             result = call(item)
         self.assertIsNotNone(result)
         report = result[4]['layout_readability']['routing_feedback']
@@ -323,8 +323,8 @@ class InitialEscapeCostTests(unittest.TestCase):
     def test_real_geometry_cost_is_diagnostic_when_organization_is_unknown(self):
         pl, comps, nets, index, plan = self.item()
         before = (deepcopy(pl.cell_of), deepcopy(pl.orient), pl.rng.getstate())
-        with patch('orthogonal_router._find_path', side_effect=AssertionError('A* forbidden')), \
-                patch('structured_placement._anneal', side_effect=AssertionError('SA forbidden')):
+        with patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('A* forbidden')), \
+                patch('netlist2schematic.layout.structured_placement._anneal', side_effect=AssertionError('SA forbidden')):
             estimate, audit = feedback.make_initializer_cost(PAR, pl, comps, nets, index, plan)
             self.assertIsNotNone(estimate)
             self.assertEqual(audit['before']['cost'], estimate(pl))
@@ -351,7 +351,7 @@ class InitialEscapeCostTests(unittest.TestCase):
     def test_exact_state_cache_does_not_charge_baseline_or_repeated_trials(self):
         pl, comps, nets, index, plan = self.item()
         estimate, audit = feedback.make_initializer_cost(PAR, pl, comps, nets, index, plan)
-        with patch('readability_routing.build_scene', side_effect=AssertionError('cached scene must not rebuild')):
+        with patch('netlist2schematic.plugins.readability.readability_routing.build_scene', side_effect=AssertionError('cached scene must not rebuild')):
             estimate(pl)
             estimate(deepcopy(pl))
         self.assertEqual(0, audit['trial_evaluations'])
@@ -403,15 +403,15 @@ class InitialEscapeCostTests(unittest.TestCase):
     def test_broken_supported_organization_cannot_use_a_zero_penalty(self):
         pl, comps, nets, index, plan = self.item()
         plan['supported'] = True
-        with patch('readability_routing.measure_readability', return_value={'measurable': False}), \
-                patch('readability_routing.build_scene', side_effect=AssertionError('reject before scene')):
+        with patch('netlist2schematic.plugins.readability.readability_routing.measure_readability', return_value={'measurable': False}), \
+                patch('netlist2schematic.plugins.readability.readability_routing.build_scene', side_effect=AssertionError('reject before scene')):
             estimate, audit = feedback.make_initializer_cost(PAR, pl, comps, nets, index, plan)
         self.assertIsNone(estimate)
         self.assertEqual('unknown_organization_measurement', audit['reason'])
 
     def test_expired_factory_skips_and_trial_timeout_never_caches_partial_score(self):
         pl, comps, nets, index, plan = self.item()
-        with patch('readability_routing.build_scene', side_effect=AssertionError('expired')):
+        with patch('netlist2schematic.plugins.readability.readability_routing.build_scene', side_effect=AssertionError('expired')):
             estimate, audit = feedback.make_initializer_cost(PAR, pl, comps, nets, index, plan,
                                                               deadline=time.perf_counter()-1)
         self.assertIsNone(estimate)
@@ -420,7 +420,7 @@ class InitialEscapeCostTests(unittest.TestCase):
         before = deepcopy(audit['before'])
         trial = deepcopy(pl)
         trial.column_x = [x+20 for x in trial.column_x]
-        with patch('readability_routing.escape_risk', side_effect=RoutingFailure('timeout', {'reason': 'quality_time_budget'})):
+        with patch('netlist2schematic.plugins.readability.readability_routing.escape_risk', side_effect=RoutingFailure('timeout', {'reason': 'quality_time_budget'})):
             with self.assertRaises(RoutingFailure):
                 estimate(trial)
         self.assertEqual(before, estimate.peek(pl))
@@ -431,7 +431,7 @@ class InitialEscapeCostTests(unittest.TestCase):
 
     def test_budget_counts_unique_completed_trials_separately_from_baseline(self):
         pl, comps, nets, index, plan = self.item()
-        with patch('readability_routing.INITIALIZER_TRIALS', 1):
+        with patch('netlist2schematic.plugins.readability.readability_routing.INITIALIZER_TRIALS', 1):
             estimate, audit = feedback.make_initializer_cost(PAR, pl, comps, nets, index, plan)
         self.assertEqual(1, audit['max_trials'])
         trial = deepcopy(pl)

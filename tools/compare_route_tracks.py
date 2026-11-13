@@ -52,26 +52,25 @@ def _resolve(path):
 
 
 def _code_hashes():
-    names = ('simplify_routes.py', 'route_tracks.py', 'route_patterns.py',
-             'route_reattachment.py', 'sa_routing.py', 'routing_rules.py',
-             'run_flow.py', 'sa_saved.py', 'sa_render.py', 'symbol-geometry.json')
-    return {str(ROOT / name): _sha(ROOT / name) for name in names}
+    from netlist2schematic.common.sa_common import engine_source_files
+    paths = engine_source_files(root=ROOT) + [ROOT / 'symbol-geometry.json']
+    return {str(path): _sha(path) for path in paths}
 
 
 def _no_search(stack):
-    from sa_common import load_local
+    from netlist2schematic.common.sa_common import load_local
     par = load_local('place_and_route', 'place-and-route.py')
-    names = ('orthogonal_router.route_scene', 'orthogonal_router._find_path',
-             'run_flow.final_route', 'run_flow._normal_result',
-             'run_flow._try_local_rescue', 'structured_placement._anneal',
-             'fallback_bus.create_fallback')
+    names = ('netlist2schematic.routing.orthogonal_router.route_scene', 'netlist2schematic.routing.orthogonal_router._find_path',
+             'netlist2schematic.flow.run_flow.final_route', 'netlist2schematic.flow.run_flow._normal_result',
+             'netlist2schematic.flow.run_flow._try_local_rescue', 'netlist2schematic.layout.structured_placement._anneal',
+             'netlist2schematic.recovery.fallback_bus.create_fallback')
     for name in names:
         stack.enter_context(patch(name, side_effect=AssertionError(f'Unexpected search: {name}')))
     stack.enter_context(patch.object(par, 'sa', side_effect=AssertionError('Unexpected baseline SA')))
 
 
 def execute(label, source, destination, seconds):
-    import run_flow
+    from netlist2schematic.flow import run_flow
     from compare_passive_layouts import _source_files, _verify_saved
 
     source = _resolve(source)

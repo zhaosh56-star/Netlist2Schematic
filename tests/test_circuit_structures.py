@@ -11,8 +11,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from circuit_structures import analyze_structures, structure_owners
-from netlist_core import SNK_ALIASES, SRC_ALIASES, parse_netlist
+from netlist2schematic.recognition.circuit_structures import analyze_structures, structure_owners
+from netlist2schematic.netlist.netlist_core import SNK_ALIASES, SRC_ALIASES, parse_netlist
 
 FIXTURES = ROOT / 'tests' / 'fixtures' / 'aesthetic-baseline'
 

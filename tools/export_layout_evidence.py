@@ -28,7 +28,8 @@ def _sha(path):
 
 
 def _code_snapshot():
-    paths = list(ROOT.glob('*.py')) + [Path(__file__).resolve(), ROOT / 'symbol-geometry.json']
+    from netlist2schematic.common.sa_common import engine_source_files
+    paths = engine_source_files(root=ROOT) + [Path(__file__).resolve(), ROOT / 'symbol-geometry.json']
     return {str(p): _sha(p) for p in sorted(paths)}
 
 
@@ -85,9 +86,9 @@ def _historic_index():
 def _bridge_evidence(devices, comps, index, relations):
     # Pure graph/row planning supplies existing strict R/L path evidence. No
     # placement object is initialized and none of these rows are drawn/applied.
-    from branch_levels import plan_branch_rows
-    from device_leveling import compute_levels
-    from sa_common import load_local
+    from netlist2schematic.plugins.layout_shared.branch_levels import plan_branch_rows
+    from netlist2schematic.recognition.device_leveling import compute_levels
+    from netlist2schematic.common.sa_common import load_local
     legacy = load_local('recognition_gallery_layered', 'place-layered.py')
     levels = compute_levels(devices)
     conduction = {net for dev in devices.values() if dev['cls'] in ('MOS', 'BJT')
@@ -103,11 +104,11 @@ def _bridge_evidence(devices, comps, index, relations):
 
 def _recognize(case):
     import compare_symmetry_layouts as common
-    from circuit_structures import analyze_structures
-    from layout_evidence import build_layout_evidence, extend_branch_evidence
-    from layout_relations import build_layout_relations
-    from netlist_core import NetlistError, parse_netlist, to_document
-    from presentation import prepare_presentation
+    from netlist2schematic.recognition.circuit_structures import analyze_structures
+    from netlist2schematic.plugins.layout_shared.layout_evidence import build_layout_evidence, extend_branch_evidence
+    from netlist2schematic.plugins.layout_shared.layout_relations import build_layout_relations
+    from netlist2schematic.netlist.netlist_core import NetlistError, parse_netlist, to_document
+    from netlist2schematic.rendering.presentation import prepare_presentation
 
     source = common._resolve(case['netlist'])
     record = {**case, 'source_netlist': str(source)}

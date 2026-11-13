@@ -13,11 +13,11 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from netlist_core import to_document
-from orthogonal_router import RoutingFailure
-import placement_preflight as preflight
-from routing_rules import RoutingOptions, build_scene
-from sa_common import load_local
+from netlist2schematic.netlist.netlist_core import to_document
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.plugins.preflight import placement_preflight as preflight
+from netlist2schematic.routing.routing_rules import RoutingOptions, build_scene
+from netlist2schematic.common.sa_common import load_local
 
 PAR = load_local('preflight_test_geometry', 'place-and-route.py')
 
@@ -134,7 +134,7 @@ class PlacementPreflightTests(unittest.TestCase):
     def test_a_static_safe_input_is_identical_and_never_copied_for_optimization(self):
         case = fixture(safe=True)
         original = deepcopy(case[0].__dict__)
-        with patch('placement_preflight.deepcopy', side_effect=AssertionError('safe input optimized')):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight.deepcopy', side_effect=AssertionError('safe input optimized')):
             changed, report = self.repair(case)
         self.assertIs(changed, case[0])
         self.assertEqual(original, changed.__dict__)
@@ -154,7 +154,7 @@ class PlacementPreflightTests(unittest.TestCase):
         nets = {n: [(name, pin) for name, pin in members if name == 'active']
                 for n, members in nets.items()}
         nets = {n: members for n, members in nets.items() if members}
-        with patch('placement_preflight._static_safe', return_value=False):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', return_value=False):
             changed, report = self.repair((pl, pl.comps, nets, {'active': 0}))
         self.assertIs(pl, changed)
         self.assertFalse(report['applied'])
@@ -182,8 +182,8 @@ class PlacementPreflightTests(unittest.TestCase):
             return trial.cell_of[1] == forbidden
         # Keep this synthetic oracle's opaque failure count constant: this test
         # checks forbidden cells, rather than a geometry-improving partial move.
-        with patch('placement_preflight._static_safe', side_effect=oracle), \
-                patch('placement_preflight._static_faults', return_value={
+        with patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', side_effect=oracle), \
+                patch('netlist2schematic.plugins.preflight.placement_preflight._static_faults', return_value={
                     'count': 1, 'hard': set(), 'violations': []}):
             changed, report = self.repair(case)
         self.assertIs(changed, pl)
@@ -198,8 +198,8 @@ class PlacementPreflightTests(unittest.TestCase):
                     return 100.0 if trial is case[0] else estimate
                 def oracle(par, trial, *args):
                     return trial is not case[0]
-                with patch('placement_preflight._wire_estimate', side_effect=wire), \
-                        patch('placement_preflight._static_safe', side_effect=oracle):
+                with patch('netlist2schematic.plugins.preflight.placement_preflight._wire_estimate', side_effect=wire), \
+                        patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', side_effect=oracle):
                     changed, report = self.repair(case)
                 self.assertEqual(expected, report['applied'])
                 self.assertAlmostEqual(115, report['estimated_hpwl_limit'])
@@ -221,7 +221,7 @@ class PlacementPreflightTests(unittest.TestCase):
     def test_all_rejected_trials_return_the_original_without_partial_changes(self):
         case = fixture()
         before = deepcopy(case[0].__dict__)
-        with patch('placement_preflight._static_safe', return_value=False):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', return_value=False):
             changed, report = self.repair(case)
         self.assertIs(changed, case[0])
         self.assertEqual(before, changed.__dict__)
@@ -231,8 +231,8 @@ class PlacementPreflightTests(unittest.TestCase):
 
     def test_proposal_limit_is_finite_even_for_rejected_states(self):
         case = fixture()
-        with patch('placement_preflight._static_safe', return_value=False), \
-                patch('placement_preflight._static_faults', return_value={
+        with patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', return_value=False), \
+                patch('netlist2schematic.plugins.preflight.placement_preflight._static_faults', return_value={
                     'count': 1, 'hard': set(), 'violations': []}):
             changed, report = self.repair(case, max_trials=2)
         self.assertIs(changed, case[0])
@@ -287,7 +287,7 @@ class PlacementPreflightTests(unittest.TestCase):
             changed = sum(trial.orient[i] != case[0].orient[i] or trial.cell_of[i] != case[0].cell_of[i]
                           for i in range(len(case[1])))
             return 100. if not changed else 110. if changed == 1 else 120.
-        with patch('placement_preflight._wire_estimate', side_effect=estimate):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight._wire_estimate', side_effect=estimate):
             changed, report = self.repair(case)
         self.assertIs(changed, case[0])
         self.assertEqual(changed.__dict__, before)
@@ -314,8 +314,8 @@ class PlacementPreflightTests(unittest.TestCase):
         pl.comp_at = {cell: i for i, cell in enumerate(pl.cell_of)}
         def score(par, trial, *args):
             return {'count': 4 if trial is pl else 3, 'hard': set(), 'violations': []}
-        with patch('placement_preflight._static_safe', return_value=False), \
-                patch('placement_preflight._static_faults', side_effect=score):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', return_value=False), \
+                patch('netlist2schematic.plugins.preflight.placement_preflight._static_faults', side_effect=score):
             changed, report = self.repair(case, max_trials=64)
         self.assertIs(changed, pl)
         self.assertEqual(report['partial_improvements'], 1)
@@ -339,8 +339,8 @@ class PlacementPreflightTests(unittest.TestCase):
         def score(par, trial, *args):
             return {'count': 4, 'hard': {('old_marker', 1)}, 'violations': []} if trial is case[0] else {
                 'count': 1, 'hard': {('new_body_overlap', 0, 1)}, 'violations': []}
-        with patch('placement_preflight._static_safe', return_value=False), \
-                patch('placement_preflight._static_faults', side_effect=score):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', return_value=False), \
+                patch('netlist2schematic.plugins.preflight.placement_preflight._static_faults', side_effect=score):
             changed, report = self.repair(case)
         self.assertIs(changed, case[0])
         self.assertFalse(report['applied'])
@@ -359,8 +359,8 @@ class PlacementPreflightTests(unittest.TestCase):
                 clock.now += 2
                 raise RoutingFailure('spent', {'reason': 'quality_time_budget'})
             return oracle(par, trial, *args)
-        with patch('placement_preflight.perf_counter', side_effect=lambda: clock.now), \
-                patch('placement_preflight._static_safe', side_effect=timed):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight.perf_counter', side_effect=lambda: clock.now), \
+                patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', side_effect=timed):
             changed, report = self.repair(case)
         self.assertIs(changed, case[0])
         self.assertEqual(before, changed.__dict__)
@@ -377,8 +377,8 @@ class PlacementPreflightTests(unittest.TestCase):
                 return False
             clock.now += 2
             return True
-        with patch('placement_preflight.perf_counter', side_effect=lambda: clock.now), \
-                patch('placement_preflight._static_safe', side_effect=oracle):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight.perf_counter', side_effect=lambda: clock.now), \
+                patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', side_effect=oracle):
             changed, report = self.repair(case)
         self.assertIs(changed, case[0])
         self.assertEqual(report['stop_reason'], 'time_budget')
@@ -388,7 +388,7 @@ class PlacementPreflightTests(unittest.TestCase):
     def test_zero_budget_and_expired_deadline_never_start_geometry_work(self):
         for options, reason in (({'seconds': 0}, 'zero_budget'), ({'deadline': perf_counter()-1}, 'time_budget')):
             with self.subTest(options=options), \
-                    patch('placement_preflight._static_safe', side_effect=AssertionError('budget spent')):
+                    patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', side_effect=AssertionError('budget spent')):
                 case = fixture()
                 changed, report = self.repair(case, **options)
             self.assertIs(changed, case[0])
@@ -403,8 +403,8 @@ class PlacementPreflightTests(unittest.TestCase):
                 return False
             clock.now += 2
             raise RoutingFailure('time exhausted', {'reason': 'quality_time_budget'})
-        with patch('placement_preflight.perf_counter', side_effect=lambda: clock.now), \
-                patch('placement_preflight._static_safe', side_effect=oracle):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight.perf_counter', side_effect=lambda: clock.now), \
+                patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', side_effect=oracle):
             changed, report = self.repair(case)
         self.assertIs(changed, case[0])
         self.assertEqual('time_budget', report['stop_reason'])
@@ -412,14 +412,14 @@ class PlacementPreflightTests(unittest.TestCase):
         self.assertEqual([], report['actions'])
 
     def test_non_budget_routing_error_is_not_silently_labeled_timeout(self):
-        with patch('placement_preflight._static_safe', side_effect=RoutingFailure('other failure', {'reason': 'no_path'})):
+        with patch('netlist2schematic.plugins.preflight.placement_preflight._static_safe', side_effect=RoutingFailure('other failure', {'reason': 'no_path'})):
             with self.assertRaisesRegex(RoutingFailure, 'other failure'):
                 self.repair(fixture())
 
     def test_repair_never_calls_sa_or_astar(self):
-        with patch('sa_routing.final_route', side_effect=AssertionError('unexpected routing')), \
-                patch('orthogonal_router._find_path', side_effect=AssertionError('unexpected A*')), \
-                patch('structured_placement._anneal', side_effect=AssertionError('unexpected SA')):
+        with patch('netlist2schematic.routing.sa_routing.final_route', side_effect=AssertionError('unexpected routing')), \
+                patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('unexpected A*')), \
+                patch('netlist2schematic.layout.structured_placement._anneal', side_effect=AssertionError('unexpected SA')):
             changed, report = self.repair(fixture())
         self.assertTrue(report['applied'])
 

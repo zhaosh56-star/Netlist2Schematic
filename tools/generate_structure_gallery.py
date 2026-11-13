@@ -24,18 +24,18 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from circuit_structures import _LABELS, analyze_structures
-from netlist_core import parse_netlist, to_document
-from routing_rules import RoutingOptions, build_scene
-from sa_common import configure_resources, load_local, read_json, resource_root, write_json
-from sa_geometry import validate_geometry
-from sa_render import render_svg
-from sa_routing import RoutingValidationError, final_route, validate_final_routes
-from orthogonal_router import RoutingFailure
-from simplify_routes import _covers_fixed, simplify_routes
+from netlist2schematic.recognition.circuit_structures import _LABELS, analyze_structures
+from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
+from netlist2schematic.routing.routing_rules import RoutingOptions, build_scene
+from netlist2schematic.common.sa_common import configure_resources, load_local, read_json, resource_root, source_path, write_json
+from netlist2schematic.common.sa_geometry import validate_geometry
+from netlist2schematic.rendering.sa_render import render_svg
+from netlist2schematic.routing.sa_routing import RoutingValidationError, final_route, validate_final_routes
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.postprocess.simplify_routes import _covers_fixed, simplify_routes
 from structure_gallery_cases import CASES
-import device_leveling as leveling
-import vf2_match
+from netlist2schematic.recognition import device_leveling as leveling
+from netlist2schematic.recognition import vf2_match
 
 SVG = 'http://www.w3.org/2000/svg'
 ET.register_namespace('', SVG)
@@ -93,7 +93,7 @@ def route(case, par, comps, nets, index, records, options, seconds, cache):
             checkpoint = getattr(exc, '_rescue_context', None)
             if checkpoint is None:
                 continue
-            from local_rescue import rescue_routing
+            from netlist2schematic.recovery.local_rescue import rescue_routing
             context = (pl, comps, nets, index, {'structs': records, 'candidate_id': 'teaching'})
             try:
                 *context, result = rescue_routing(context, checkpoint,
@@ -345,7 +345,7 @@ def main(argv=None):
                 'structured_kind_count': len(modern), 'all_types_covered': complete,
                 'expected_structured_kinds': sorted(_LABELS),
                 'expected_legacy_kinds': sorted(vf2_match.TEMPLATES),
-                'recognizer_sha256': {name: sha256((ROOT / name).read_bytes()).hexdigest()
+                'recognizer_sha256': {name: sha256(source_path(name, root=ROOT).read_bytes()).hexdigest()
                                       for name in ('circuit_structures.py', 'vf2_match.py')},
                 'examples': rows, 'generation_errors': errors}
     write_json(output / 'manifest.json', manifest)

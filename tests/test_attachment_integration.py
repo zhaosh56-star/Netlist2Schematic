@@ -9,11 +9,11 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import attachment_integration as integration
-import structured_placement as structured
-from circuit_structures import analyze_structures
-from device_leveling import compute_levels
-from netlist_core import parse_netlist, to_document
+from netlist2schematic.plugins.attachment import attachment_integration as integration
+from netlist2schematic.layout import structured_placement as structured
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.recognition.device_leveling import compute_levels
+from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
 from tests.test_passive_placement import convert, mos, resistor, source
 
 
@@ -198,7 +198,7 @@ class AttachmentIntegrationTests(unittest.TestCase):
         for filename, expected in cases:
             with self.subTest(filename=filename):
                 d, original, comps, nets, index, plan = real_seed(filename)
-                with patch('orthogonal_router._find_path', side_effect=AssertionError('A* in initializer')):
+                with patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('A* in initializer')):
                     result, report = integration.initialize_attachments(original, d, comps, nets, index, plan)
                 self.assertTrue(report['applied'])
                 self.assertGreater(report['candidate_trials'], 0)

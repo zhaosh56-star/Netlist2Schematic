@@ -1,12 +1,12 @@
 # SA Python 布局与布线
 
 这套工具把 SPICE 结构网表转换为布局 JSON、彩色 SVG 和黑白 SVG。Python
-脚本位于项目根目录，`analog-canvas-main` 提供随仓库保留的符号定义和验收样例。
+命令入口保留在项目根目录，实际实现分类位于 `netlist2schematic/`；完整对应表见[目录说明](project-layout.md)。`analog-canvas-main` 提供随仓库保留的符号定义和验收样例。
 本地 `archive/` 如有原始 TXT 或实验记录，仅用于归档，不是运行依赖，也不进入 Git。
 无需启动网页编辑器，也无需安装 Node.js、pnpm 或仿真器。
 
 日常命令见 [README](../README.md)，全部文件的职责和保留范围见[项目目录说明](project-layout.md)。
-当前1194项主项目完整回归通过；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)，缩线预算预留见[v6说明](route-scheduling-v6.md)，按链轮转见[v7说明](track-fairness-v7.md)，交叉净区预筛见[v8说明](candidate-clearance-v8.md)，可选自动预算见[预算说明与对照](auto-simplify-budget.md)。下文各历史版本的测试数量与实测数字保留当时口径。
+目录整理前的算法版本通过1194项完整回归；本轮目录整理通过199项针对性回归，未重跑完整集合；可选结构布局仍默认关闭，完整数据集与RLC专项的实际收益和未达标项见[分阶段实测](structure-layout-results.md)，缩线预算预留见[v6说明](route-scheduling-v6.md)，按链轮转见[v7说明](track-fairness-v7.md)，交叉净区预筛见[v8说明](candidate-clearance-v8.md)，可选自动预算见[预算说明与对照](auto-simplify-budget.md)。下文各历史版本的测试数量与实测数字保留当时口径。
 
 本轮另加两个独立实验入口：`--readability-layout auto` 组织无源、局部源和失效间距；`--route-tradeoff balanced` 在完整几何验收下允许少量稀疏交叉换取明显缩线。默认仍为 `off` 和 `strict`，不改变日常命令的原算法。边界、执行顺序、模块及实际未达标项见[可读性改进说明](readability-improvement.md)。本说明下文“线长、交叉、折角不增加”描述的是默认严格缩线策略。
 
@@ -438,8 +438,8 @@ v4最初只将图7主图更新，其余样例当时仅作只读回归。此后�
 
 ```powershell
 .\.venv\Scripts\python.exe .\parse-netlist.py .\examples\mixed-devices.cir
-.\.venv\Scripts\python.exe .\device_leveling.py .\examples\mixed-devices.cir
-.\.venv\Scripts\python.exe .\vf2_match.py .\analog-canvas-main\fixtures\simulation-acceptance\ota-5t.spi --cell ota_5t
+.\.venv\Scripts\python.exe -m netlist2schematic.recognition.device_leveling .\examples\mixed-devices.cir
+.\.venv\Scripts\python.exe -m netlist2schematic.recognition.vf2_match .\analog-canvas-main\fixtures\simulation-acceptance\ota-5t.spi --cell ota_5t
 .\.venv\Scripts\python.exe .\place-layered.py .\examples\mixed-devices.cir --iterations 500 --out-dir .\output\layered-demo
 .\.venv\Scripts\python.exe .\place-and-route.py .\examples\mixed-devices.cir --iterations 500 --out-dir .\output\baseline-demo
 .\.venv\Scripts\python.exe .\render-clean.py .\output\3\3-placement.json .\output\3\3-redraw.svg

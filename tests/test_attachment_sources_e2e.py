@@ -8,12 +8,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import attachment_integration as integration
-from attachment_sources import measure_source_groups, source_group_trials
-from circuit_structures import analyze_structures
-from device_leveling import compute_levels
-from netlist_core import parse_netlist, to_document
-import structured_placement as structured
+from netlist2schematic.plugins.attachment import attachment_integration as integration
+from netlist2schematic.plugins.attachment.attachment_sources import measure_source_groups, source_group_trials
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.recognition.device_leveling import compute_levels
+from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
+from netlist2schematic.layout import structured_placement as structured
 from tests.test_passive_placement import convert, mos, resistor, source
 
 
@@ -84,7 +84,7 @@ class AttachmentSourceIntegrationTests(unittest.TestCase):
         pl, comps, nets, index, _ = convert(devices,
             dict(a=(1, 1), b=(1, 6), r=(0, 0), c=(0, 7)), blocks=[['a', 'b']])
         outputs = []
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('initializer/SA called A*')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('initializer/SA called A*')):
             for policy in ('passive', 'all'):
                 plan = plan_for(devices, pl, comps, nets, index, policy)
                 self.assertEqual(len(plan.get('source_groups', ())), 0)
@@ -102,7 +102,7 @@ class AttachmentSourceIntegrationTests(unittest.TestCase):
             frozen, nodes = state(original), deepcopy([c['nodes'] for c in comps])
             before = integration.measure_attachments(original, comps, index, plan)
             budget = integration.new_attachment_budget()
-            with patch('orthogonal_router.route_scene', side_effect=AssertionError('source initializer called A*')):
+            with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('source initializer called A*')):
                 result, report = integration.initialize_attachments(original, devices, comps, nets,
                     index, plan, budget=budget)
             self.assertTrue(report['source_applied'])

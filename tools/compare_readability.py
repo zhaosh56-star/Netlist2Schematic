@@ -23,8 +23,8 @@ sys.path[:0] = [str(ROOT), str(ROOT/'tools')]
 import compare_region_layouts as region
 import compare_symmetry_layouts as common
 from compare_passive_layouts import VERIFY_LOCK
-from netlist_core import NetlistError
-from sa_common import load_local, read_json, write_json
+from netlist2schematic.netlist.netlist_core import NetlistError
+from netlist2schematic.common.sa_common import load_local, read_json, write_json
 
 FORMAT = 'readability-comparison-v1'
 POLICIES = ('off', 'auto')
@@ -84,10 +84,10 @@ def command_for(signature, directory):
 
 
 def build_measurement_plan(source, cell, comps, nets, index):
-    from circuit_structures import analyze_structures
-    from device_leveling import compute_levels
-    from netlist_core import parse_netlist
-    from readability_layout import build_readability_plan
+    from netlist2schematic.recognition.circuit_structures import analyze_structures
+    from netlist2schematic.recognition.device_leveling import compute_levels
+    from netlist2schematic.netlist.netlist_core import parse_netlist
+    from netlist2schematic.plugins.readability.readability_layout import build_readability_plan
     devices = parse_netlist(source, cell=cell)
     structs, levels = analyze_structures(devices), compute_levels(devices)
     legacy = load_local('place_layered', 'place-layered.py')
@@ -135,7 +135,7 @@ def tradeoff_audit(data, source_data=None):
 
 
 def verify(path, signature):
-    from sa_saved import load_placement
+    from netlist2schematic.common.sa_saved import load_placement
     result = region.verify(path, signature)
     data = read_json(path)
     result['candidate_records'] = actual_candidates(data)
@@ -147,7 +147,7 @@ def verify(path, signature):
     result['layout_readability'] = deepcopy(data.get('layout_readability'))
     result['readability_measurement'] = None
     if signature['parameters']['stage'] >= 2:
-        from readability_layout import measure_readability
+        from netlist2schematic.plugins.readability.readability_layout import measure_readability
         with VERIFY_LOCK:
             _, source, par, pl, comps, nets, index = load_placement(path)
             plan = build_measurement_plan(source, signature['cell'], comps, nets, index)
@@ -155,7 +155,7 @@ def verify(path, signature):
             result['readability_measurement_plan'] = plan
             result['readability_plan_signature'] = common._digest(plan)
             if signature['parameters']['stage'] >= 3:
-                from readability_refinement import measure_refinements
+                from netlist2schematic.plugins.readability.readability_refinement import measure_refinements
                 result['refinement_measurement'] = measure_refinements(
                     par, pl, comps, nets, index, plan, phase=min(signature['parameters']['stage'], 4))
     return result

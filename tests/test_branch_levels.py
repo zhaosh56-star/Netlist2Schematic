@@ -10,9 +10,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from branch_levels import plan_branch_rows
-from device_leveling import compute_levels
-from netlist_core import to_document
+from netlist2schematic.plugins.layout_shared.branch_levels import plan_branch_rows
+from netlist2schematic.recognition.device_leveling import compute_levels
+from netlist2schematic.netlist.netlist_core import to_document
 
 
 def mos(d, s, g='gate', kind='NMOS'):
@@ -493,7 +493,7 @@ class BranchLevelTests(unittest.TestCase):
         rows = [1, 1, 1]
         relations = [same_row('upper', 'lower')]
         original = deepcopy((devices, levels, rows, relations, comps, index))
-        with patch('sa_routing.final_route', side_effect=AssertionError('unexpected router')):
+        with patch('netlist2schematic.routing.sa_routing.final_route', side_effect=AssertionError('unexpected router')):
             _, report = plan_branch_rows(devices, levels, rows, relations, comps, index)
         self.assertEqual((devices, levels, rows, relations, comps, index), original)
         self.assertEqual(report['original_device_levels'], levels['device_levels'])

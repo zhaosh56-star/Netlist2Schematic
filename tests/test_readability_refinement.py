@@ -9,12 +9,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import readability_refinement as refine
-from routing_rules import RoutingOptions
-import structured_placement as structured
+from netlist2schematic.plugins.readability import readability_refinement as refine
+from netlist2schematic.routing.routing_rules import RoutingOptions
+from netlist2schematic.layout import structured_placement as structured
 from tests.test_passive_placement import base_placement, make_flexible, mos, source, resistor
-from readability_banks import measure_bank_outlet
-from readability_layout import build_readability_plan
+from netlist2schematic.plugins.readability.readability_banks import measure_bank_outlet
+from netlist2schematic.plugins.readability.readability_layout import build_readability_plan
 
 PAR = structured.par
 
@@ -82,7 +82,7 @@ class SourceRefinementTests(unittest.TestCase):
     def test_tail_moves_near_actual_pair_with_real_static_check_and_no_astar(self):
         pl, comps, nets, index = tail_fixture()
         old = deepcopy(pl)
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('A* in source refinement')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in source refinement')):
             result, meta = refine.refine_readability(PAR, pl, comps, nets, index, metadata(), phase=3)
         report = meta['layout_readability']['refinement']
         self.assertGreater(report['accepted'], 0)
@@ -132,9 +132,9 @@ class SourceRefinementTests(unittest.TestCase):
             pl, comps, nets, index = tail_fixture()
             original = list(pl.cell_of), list(pl.orient), list(pl.row_y), list(pl.column_x)
             if guard == 'static':
-                context = patch('readability_refinement._static_safe', return_value=False)
+                context = patch('netlist2schematic.plugins.readability.readability_refinement._static_safe', return_value=False)
             else:
-                context = patch('readability_refinement._hpwl', side_effect=lambda p, t, n, ix:
+                context = patch('netlist2schematic.plugins.readability.readability_refinement._hpwl', side_effect=lambda p, t, n, ix:
                     100 if t.cell_of == original[0] and t.orient == original[1] else 200)
             with context:
                 result, meta = refine.refine_readability(PAR, pl, comps, nets, index, metadata())
@@ -171,7 +171,7 @@ class SourceRefinementTests(unittest.TestCase):
         def passive(current, *args):
             return dict(violations=0 if current.cell_of == initial else 1,
                         shape_error=0., pin_axis_error=0., owner_locality=0.)
-        with patch('readability_refinement._passive_measurement', side_effect=passive):
+        with patch('netlist2schematic.plugins.readability.readability_refinement._passive_measurement', side_effect=passive):
             result, meta = refine.refine_readability(PAR, pl, comps, nets, index, metadata())
         report = meta['layout_readability']['refinement']
         self.assertGreater(report['passive_rejections'], 0)
@@ -275,7 +275,7 @@ class CompactionTests(unittest.TestCase):
         plan = {'supported': True, 'series_axes': [{'pins': [['a', 'D'], ['b', 'S']]}], 'patterns': []}
         measured = dict(passive_supported=True, measurable=True, violations=0,
                         shape_error=0., pin_axis_error=2., owner_locality=None)
-        with patch('readability_layout.measure_readability', return_value=measured) as callback:
+        with patch('netlist2schematic.plugins.readability.readability_layout.measure_readability', return_value=measured) as callback:
             result = refine._passive_measurement(pl, comps, index, plan)
         callback.assert_called_once()
         self.assertEqual(result['pin_axis_error'], 2.)
@@ -411,7 +411,7 @@ class CompactionApplicabilityTests(unittest.TestCase):
             self.assertEqual(result.orient[i], original.orient[i])
         # Same-plan selection may reward the source improvement, but changing
         # only this drawing's empty area must not change its final rank.
-        from readability_selection import organization_rank
+        from netlist2schematic.plugins.readability.readability_selection import organization_rank
         selected = dict(phase=4, plan={}, metrics={}, refinement_metrics=deepcopy(report['after']))
         rank = organization_rank(selected)
         selected['refinement_metrics']['void'] += 100
@@ -419,7 +419,7 @@ class CompactionApplicabilityTests(unittest.TestCase):
         self.assertEqual(organization_rank(selected), rank)
 
     def test_actual_fvf_inner_band_and_lna_rl_still_qualify(self):
-        from netlist_core import parse_netlist, to_document
+        from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
         paths = [ROOT/'test_data/11-15/self-adaptive-current-mirror-buffer-fvf-ldo.cir',
                  ROOT/'test_data/11-15/lna-with-degeneration.cir']
         for path in paths:
@@ -463,7 +463,7 @@ class BankOutletRefinementTests(unittest.TestCase):
         before = measure_bank_outlet(pl, comps, index, plan)
         self.assertEqual(before['count'], 2)
         self.assertGreater(before['error'], 0)
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('A* in bank refinement')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in bank refinement')):
             result, meta = refine.refine_readability(PAR, pl, comps, nets, index, data, phase=4)
         report = meta['layout_readability']['refinement']
         after = measure_bank_outlet(result, comps, index, plan)
@@ -488,7 +488,7 @@ class BankOutletRefinementTests(unittest.TestCase):
 
     def test_phase_three_does_not_measure_or_reposition_load_outlets(self):
         pl, comps, nets, index, data = self.fixture()
-        with patch('readability_banks.measure_bank_outlet', side_effect=AssertionError('bank feature in phase3')):
+        with patch('netlist2schematic.plugins.readability.readability_banks.measure_bank_outlet', side_effect=AssertionError('bank feature in phase3')):
             result, meta = refine.refine_readability(PAR, pl, comps, nets, index, data, phase=3)
             measured = refine.measure_refinements(PAR, pl, comps, nets, index, data, phase=3)
         self.assertIsNone(measured['bank_outlet_error'])
@@ -507,7 +507,7 @@ class BankOutletRefinementTests(unittest.TestCase):
     def test_unknown_bank_geometry_is_not_a_zero_outlet_penalty(self):
         pl, comps, nets, index, data = self.fixture()
         missing = dict(count=1, planned_count=2, measurable=False, error=None, records=[], skipped=[])
-        with patch('readability_banks.measure_bank_outlet', return_value=missing):
+        with patch('netlist2schematic.plugins.readability.readability_banks.measure_bank_outlet', return_value=missing):
             measured = refine.measure_refinements(PAR, pl, comps, nets, index, data, phase=4)
         self.assertIsNone(measured['bank_outlet_error'])
         self.assertFalse(measured['bank_outlet_measurable'])

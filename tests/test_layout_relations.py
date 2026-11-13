@@ -9,9 +9,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from circuit_structures import analyze_structures
-from layout_relations import build_layout_relations, measure_layout_relations, placement_blocks
-from netlist_core import parse_netlist, to_document
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.plugins.layout_shared.layout_relations import build_layout_relations, measure_layout_relations, placement_blocks
+from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
 from tests.test_passive_placement import base_placement, mos, source
 
 

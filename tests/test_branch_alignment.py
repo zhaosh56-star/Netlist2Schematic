@@ -12,11 +12,11 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import branch_alignment as align
-from netlist_core import to_document
-from orthogonal_router import RoutingFailure
-from routing_rules import RoutingOptions
-from sa_common import load_local
+from netlist2schematic.plugins.layout_shared import branch_alignment as align
+from netlist2schematic.netlist.netlist_core import to_document
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import RoutingOptions
+from netlist2schematic.common.sa_common import load_local
 
 PAR = load_local('branch_alignment_test_symbols', 'place-and-route.py')
 
@@ -117,7 +117,7 @@ class BranchAlignmentTests(unittest.TestCase):
         def estimate(par,pl,nets,index):
             changed=(pl.orient!=original.orient or pl.offset_x!=original.offset_x)
             return 121. if changed else 110.
-        with patch('branch_alignment._hpwl',side_effect=estimate):
+        with patch('netlist2schematic.plugins.layout_shared.branch_alignment._hpwl',side_effect=estimate):
             improved,normal=self.regularize(case)
             retained,shared=self.regularize(case,hpwl_reference=100.)
         self.assertGreater(normal['branch_alignment']['accepted'],0)
@@ -484,7 +484,7 @@ class BranchAlignmentTests(unittest.TestCase):
         self.assertGreater(data['branch_alignment']['after']['tail_error'], 4)
 
     def test_foreign_power_marker_blocks_a_move_without_foreign_body_overlap(self):
-        from routing_rules import build_scene
+        from netlist2schematic.routing.routing_rules import build_scene
 
         devices = {'a': mos('oa', 'ina', 'tail'), 'b': mos('ob', 'inb', 'tail'),
                    'supply': dict(cls='ISRC', type='I', p='tail', n='0'),
@@ -646,9 +646,9 @@ class BranchAlignmentTests(unittest.TestCase):
         self.assertEqual(0, report['branch_alignment']['accepted'])
 
     def test_no_sa_or_astar_runs_during_alignment(self):
-        with patch('sa_routing.final_route', side_effect=AssertionError('unexpected routing')), \
-                patch('orthogonal_router._find_path', side_effect=AssertionError('unexpected A*')), \
-                patch('structured_placement._anneal', side_effect=AssertionError('unexpected SA')):
+        with patch('netlist2schematic.routing.sa_routing.final_route', side_effect=AssertionError('unexpected routing')), \
+                patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('unexpected A*')), \
+                patch('netlist2schematic.layout.structured_placement._anneal', side_effect=AssertionError('unexpected SA')):
             changed, data = self.regularize(fixture())
         self.assertGreater(data['branch_alignment']['accepted'], 0)
 
@@ -665,8 +665,8 @@ class BranchAlignmentTests(unittest.TestCase):
         def expire(*args):
             clock.now = 102.
             raise RoutingFailure('deadline reached', {'reason': 'quality_time_budget'})
-        with patch('branch_alignment.perf_counter', side_effect=lambda: clock.now), \
-                patch('branch_alignment._static_safe', side_effect=expire):
+        with patch('netlist2schematic.plugins.layout_shared.branch_alignment.perf_counter', side_effect=lambda: clock.now), \
+                patch('netlist2schematic.plugins.layout_shared.branch_alignment._static_safe', side_effect=expire):
             changed, data = self.regularize(case)
         self.assertEqual(case[0].offset_x, changed.offset_x)
         self.assertEqual('time_budget', data['branch_alignment']['stop_reason'])
@@ -681,10 +681,10 @@ class BranchAlignmentTests(unittest.TestCase):
             return {'hard_error': 10-pl.offset_x[0], 'input_access_errors': 0, 'attachment_score': 0}
         def estimate(par, pl, nets, index):
             return 100+pl.offset_x[0]*5
-        with patch('branch_alignment._proposals', side_effect=proposals), \
-                patch('branch_alignment._measure', side_effect=score), \
-                patch('branch_alignment._hpwl', side_effect=estimate), \
-                patch('branch_alignment._static_safe', return_value=True):
+        with patch('netlist2schematic.plugins.layout_shared.branch_alignment._proposals', side_effect=proposals), \
+                patch('netlist2schematic.plugins.layout_shared.branch_alignment._measure', side_effect=score), \
+                patch('netlist2schematic.plugins.layout_shared.branch_alignment._hpwl', side_effect=estimate), \
+                patch('netlist2schematic.plugins.layout_shared.branch_alignment._static_safe', return_value=True):
             changed, data = self.regularize(case)
         self.assertEqual(2, changed.offset_x[0])
         self.assertEqual(100, data['branch_alignment']['estimated_hpwl_before'])

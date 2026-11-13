@@ -4,11 +4,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import route_tradeoff as policy
-import simplify_routes as shortcuts
-from orthogonal_router import RoutingFailure
-from routing_rules import Pin, RoutingOptions, Scene, canonical_topology, intersection
-from sa_routing import _verify
+from netlist2schematic.postprocess import route_tradeoff as policy
+from netlist2schematic.postprocess import simplify_routes as shortcuts
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import Pin, RoutingOptions, Scene, canonical_topology, intersection
+from netlist2schematic.routing.sa_routing import _verify
 from tests.test_simplify_routes import case, run_case
 
 
@@ -160,7 +160,7 @@ class TradeoffIntegrationTests(unittest.TestCase):
     def test_strict_is_default_and_preserves_rng_without_new_crossing_scan(self):
         fixture = case()
         state = random.getstate()
-        with patch('simplify_routes.crossing_identities', side_effect=AssertionError('strict scan')):
+        with patch('netlist2schematic.postprocess.simplify_routes.crossing_identities', side_effect=AssertionError('strict scan')):
             default = run_case(fixture)
             explicit = run_case(fixture, tradeoff='strict')
         self.assertEqual(default[:3], explicit[:3])
@@ -169,11 +169,11 @@ class TradeoffIntegrationTests(unittest.TestCase):
 
     def test_real_geometry_accepts_large_sparse_crossing_gain_only_when_opted_in(self):
         fixture = crossing_case()
-        with patch('simplify_routes._shortcut_candidates', side_effect=straight_candidate), \
-                patch('simplify_routes.reattachment_candidates', return_value=iter(())), \
-                patch('simplify_routes._three_segment_candidates', return_value=iter(())), \
-                patch('simplify_routes._track_compaction_candidates', return_value=iter(())), \
-                patch('orthogonal_router._find_path', side_effect=AssertionError('A* forbidden')):
+        with patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', side_effect=straight_candidate), \
+                patch('netlist2schematic.postprocess.simplify_routes.reattachment_candidates', return_value=iter(())), \
+                patch('netlist2schematic.postprocess.simplify_routes._three_segment_candidates', return_value=iter(())), \
+                patch('netlist2schematic.postprocess.simplify_routes._track_compaction_candidates', return_value=iter(())), \
+                patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('A* forbidden')):
             strict = run_case(fixture, tradeoff='strict')
             balanced = run_case(fixture, tradeoff='balanced')
         self.assertEqual(fixture[4][1], strict[1])
@@ -194,10 +194,10 @@ class TradeoffIntegrationTests(unittest.TestCase):
         bad = {'net': 'a', 'segments': [((0, 0), (20, 0)), ((20, 0), (20, 100)),
             ((20, 100), (480, 100)), ((480, 100), (480, 0)), ((480, 0), (500, 0))],
             'old_chain_length': 860, 'new_chain_length': 660}
-        with patch('simplify_routes._shortcut_candidates', return_value=iter([bad])), \
-                patch('simplify_routes.reattachment_candidates', return_value=iter(())), \
-                patch('simplify_routes._three_segment_candidates', return_value=iter(())), \
-                patch('simplify_routes._track_compaction_candidates', return_value=iter(())):
+        with patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', return_value=iter([bad])), \
+                patch('netlist2schematic.postprocess.simplify_routes.reattachment_candidates', return_value=iter(())), \
+                patch('netlist2schematic.postprocess.simplify_routes._three_segment_candidates', return_value=iter(())), \
+                patch('netlist2schematic.postprocess.simplify_routes._track_compaction_candidates', return_value=iter(())):
             result = run_case(fixture, tradeoff='balanced')
         self.assertEqual(fixture[4], result[:3])
         self.assertGreater(result[3]['candidate_counts']['geometry_rejected'], 0)
@@ -205,8 +205,8 @@ class TradeoffIntegrationTests(unittest.TestCase):
 
     def test_tradeoff_timeout_discards_fully_routed_but_unfinished_trial(self):
         fixture = crossing_case()
-        with patch('simplify_routes._shortcut_candidates', side_effect=straight_candidate), \
-                patch('simplify_routes.evaluate_tradeoff', side_effect=RoutingFailure(
+        with patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', side_effect=straight_candidate), \
+                patch('netlist2schematic.postprocess.simplify_routes.evaluate_tradeoff', side_effect=RoutingFailure(
                     'expired', {'reason': 'quality_time_budget', 'stage': 'tradeoff'})):
             result = run_case(fixture, tradeoff='balanced')
         self.assertEqual(fixture[4], result[:3])
@@ -216,7 +216,7 @@ class TradeoffIntegrationTests(unittest.TestCase):
 
     def test_zero_budget_and_invalid_policy(self):
         fixture = case()
-        with patch('simplify_routes.build_scene', side_effect=AssertionError('disabled')):
+        with patch('netlist2schematic.postprocess.simplify_routes.build_scene', side_effect=AssertionError('disabled')):
             result = run_case(fixture, tradeoff='balanced', seconds=0)
         self.assertEqual(fixture[4], result[:3])
         self.assertEqual(2, result[3]['tradeoff']['remaining_crossings'])

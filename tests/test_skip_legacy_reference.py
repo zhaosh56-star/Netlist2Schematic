@@ -10,10 +10,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import aesthetic_flow
-from orthogonal_router import RoutingFailure
-import run_flow
-import structured_placement as structured
+from netlist2schematic.flow import aesthetic_flow
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.flow import run_flow
+from netlist2schematic.layout import structured_placement as structured
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,8 +78,8 @@ class SkipLegacyGeneratorTests(unittest.TestCase):
             with self.subTest(candidate_id=requested), \
                     patch.object(structured.legacy, 'create_placement',
                                  side_effect=AssertionError('structured replay ran legacy SA')), \
-                    patch('aesthetic_flow.final_route', return_value=route_result()) as routed, \
-                    patch('layout_quality.evaluate_quality', return_value={'score': 1., 'per_net': {}}), \
+                    patch('netlist2schematic.flow.aesthetic_flow.final_route', return_value=route_result()) as routed, \
+                    patch('netlist2schematic.layout.layout_quality.evaluate_quality', return_value={'score': 1., 'per_net': {}}), \
                     contextlib.redirect_stdout(io.StringIO()):
                 result = aesthetic_flow.select_layout(self.source, iterations=3, seed=43,
                                                       candidate_id=requested)
@@ -93,9 +93,9 @@ class SkipLegacyGeneratorTests(unittest.TestCase):
     def test_explicit_zero_replay_runs_only_legacy_sa_and_one_final_route(self):
         original = structured.legacy.create_placement
         with patch.object(structured.legacy, 'create_placement', wraps=original) as legacy, \
-                patch('structured_placement._anneal', side_effect=AssertionError('zero ran new SA')), \
-                patch('aesthetic_flow.final_route', return_value=route_result()) as routed, \
-                patch('layout_quality.evaluate_quality', return_value={'score': 1., 'per_net': {}}), \
+                patch('netlist2schematic.layout.structured_placement._anneal', side_effect=AssertionError('zero ran new SA')), \
+                patch('netlist2schematic.flow.aesthetic_flow.final_route', return_value=route_result()) as routed, \
+                patch('netlist2schematic.layout.layout_quality.evaluate_quality', return_value={'score': 1., 'per_net': {}}), \
                 contextlib.redirect_stdout(io.StringIO()):
             result = aesthetic_flow.select_layout(self.source, candidate_id='0', iterations=7, seed=43)
         self.assertEqual(1, legacy.call_count)
@@ -108,9 +108,9 @@ class SkipLegacyGeneratorTests(unittest.TestCase):
 
 class StructuredOnlySelectionTests(unittest.TestCase):
     def select(self, items, routing, **kwargs):
-        with patch('structured_placement.create_candidates', return_value=iter(items)) as generated, \
-                patch('aesthetic_flow.final_route', side_effect=routing) as routed, \
-                patch('layout_quality.evaluate_quality', side_effect=quality), \
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter(items)) as generated, \
+                patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=routing) as routed, \
+                patch('netlist2schematic.layout.layout_quality.evaluate_quality', side_effect=quality), \
                 contextlib.redirect_stdout(io.StringIO()):
             result = aesthetic_flow.select_layout('unused.cir', **kwargs)
         return result, routed, generated
@@ -130,10 +130,10 @@ class StructuredOnlySelectionTests(unittest.TestCase):
             observed.append(args[2].identifier)
             return route_result()
 
-        with patch('structured_placement.create_candidates', return_value=iter([candidate(i) for i in (1, 2, 3)])), \
-                patch('structured_placement.feedback_candidate', return_value=tuple(proposal)) as feedback, \
-                patch('aesthetic_flow.final_route', side_effect=routing), \
-                patch('layout_quality.evaluate_quality', side_effect=scored), \
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter([candidate(i) for i in (1, 2, 3)])), \
+                patch('netlist2schematic.layout.structured_placement.feedback_candidate', return_value=tuple(proposal)) as feedback, \
+                patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=routing), \
+                patch('netlist2schematic.layout.layout_quality.evaluate_quality', side_effect=scored), \
                 contextlib.redirect_stdout(io.StringIO()):
             result = aesthetic_flow.select_layout('unused.cir')
         self.assertEqual([1, 2, 99], observed)
@@ -155,7 +155,7 @@ class StructuredOnlySelectionTests(unittest.TestCase):
                 raise RoutingFailure('budget reached', {'reason': 'quality_time_budget'})
             return route_result()
 
-        with patch('aesthetic_flow.perf_counter', side_effect=lambda: clock.now):
+        with patch('netlist2schematic.flow.aesthetic_flow.perf_counter', side_effect=lambda: clock.now):
             result, routed, generated = self.select([candidate(i) for i in (1, 2, 3)], routing)
         self.assertEqual(400., generated.call_args.kwargs['deadline'])
         self.assertFalse(generated.call_args.kwargs['include_legacy'])
@@ -195,13 +195,13 @@ class StructuredOnlySelectionTests(unittest.TestCase):
         def finish(data, *args, **kwargs):
             return deepcopy(data)
 
-        with patch('structured_placement.create_candidates', return_value=iter([candidate(i) for i in (1, 2, 3)])), \
-                patch('aesthetic_flow.final_route', side_effect=[blocked, route_result(),
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter([candidate(i) for i in (1, 2, 3)])), \
+                patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=[blocked, route_result(),
                     RoutingFailure('last blocked', {'reason': 'no_path'})]), \
-                patch('layout_quality.evaluate_quality', side_effect=quality), \
-                patch('run_flow._try_local_rescue', side_effect=AssertionError('early recovery')) as rescued, \
-                patch('run_flow._bus_result', side_effect=AssertionError('unnecessary fallback')), \
-                patch('run_flow._finish', side_effect=finish), \
+                patch('netlist2schematic.layout.layout_quality.evaluate_quality', side_effect=quality), \
+                patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('early recovery')) as rescued, \
+                patch('netlist2schematic.flow.run_flow._bus_result', side_effect=AssertionError('unnecessary fallback')), \
+                patch('netlist2schematic.flow.run_flow._finish', side_effect=finish), \
                 contextlib.redirect_stdout(io.StringIO()):
             data = run_flow.run(source, iterations=0, out_dir=root / 'result')
         rescued.assert_not_called()

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import aesthetic_flow
-from orthogonal_router import RoutingFailure
+from netlist2schematic.flow import aesthetic_flow
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
 
 
 class Placement:
@@ -42,9 +42,9 @@ class ReservedFlowTests(unittest.TestCase):
         self.clock = SimpleNamespace(now=100.0)
 
     def invoke(self, items, routing, **kwargs):
-        with patch('structured_placement.create_candidates', return_value=iter(items)) as producer, \
-                patch('aesthetic_flow.final_route', side_effect=routing) as router, \
-                patch('aesthetic_flow.perf_counter', side_effect=lambda: self.clock.now), \
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter(items)) as producer, \
+                patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=routing) as router, \
+                patch('netlist2schematic.flow.aesthetic_flow.perf_counter', side_effect=lambda: self.clock.now), \
                 redirect_stdout(io.StringIO()):
             output = aesthetic_flow.select_layout('unused.cir', iterations=0, **kwargs)
         return output, router, producer
@@ -241,8 +241,8 @@ class ReservedFlowTests(unittest.TestCase):
             if placement.identifier == 2:
                 self.clock.now = 360.
             return placement, metadata
-        with patch('symmetry_layout.regularize_symmetry', side_effect=regularize) as adjust, \
-                patch('symmetry_layout.report_symmetry', return_value={'current': {'relation_count': 0}}):
+        with patch('netlist2schematic.plugins.symmetry.symmetry_layout.regularize_symmetry', side_effect=regularize) as adjust, \
+                patch('netlist2schematic.plugins.symmetry.symmetry_layout.report_symmetry', return_value={'current': {'relation_count': 0}}):
             result, router, _ = self.invoke([candidate(i) for i in (1, 2, 3)], [valid()] * 2,
                 candidate_budget='reserved', symmetry_layout='auto')
         self.assertEqual([c.args[2].identifier for c in router.call_args_list], [1, 3])
@@ -252,7 +252,7 @@ class ReservedFlowTests(unittest.TestCase):
 
     def test_invalid_policy_fails_before_any_generation_or_routing(self):
         for value in ('off', 'fair', '', None, 1):
-            with self.subTest(value=value), patch('structured_placement.create_candidates') as producer:
+            with self.subTest(value=value), patch('netlist2schematic.layout.structured_placement.create_candidates') as producer:
                 with self.assertRaisesRegex(ValueError, 'candidate_budget'):
                     aesthetic_flow.select_layout('unused.cir', candidate_budget=value)
                 producer.assert_not_called()

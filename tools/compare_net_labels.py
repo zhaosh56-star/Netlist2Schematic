@@ -118,9 +118,9 @@ def _source_files(cases):
 
 
 def _code_files():
-    from sa_common import configure_resources, resource_root
+    from netlist2schematic.common.sa_common import configure_resources, engine_source_files, resource_root
     configure_resources()
-    files = set(ROOT.glob('*.py'))
+    files = set(engine_source_files(root=ROOT))
     files.add(Path(__file__).resolve())
     files.add(ROOT / 'symbol-geometry.json')
     files.update((resource_root() / 'packages/components/definitions').glob('*.json'))
@@ -133,13 +133,13 @@ def _changed(frozen):
 
 
 def _no_search(stack):
-    from sa_common import load_local
+    from netlist2schematic.common.sa_common import load_local
     par = load_local('place_and_route', 'place-and-route.py')
-    for name in ('orthogonal_router.route_scene', 'orthogonal_router._find_path',
-                 'sa_routing.final_route', 'run_flow.final_route',
-                 'run_flow._normal_result', 'run_flow._try_local_rescue',
-                 'structured_placement._anneal', 'fallback_bus.create_fallback',
-                 'simplify_routes.simplify_routes'):
+    for name in ('netlist2schematic.routing.orthogonal_router.route_scene', 'netlist2schematic.routing.orthogonal_router._find_path',
+                 'netlist2schematic.routing.sa_routing.final_route', 'netlist2schematic.flow.run_flow.final_route',
+                 'netlist2schematic.flow.run_flow._normal_result', 'netlist2schematic.flow.run_flow._try_local_rescue',
+                 'netlist2schematic.layout.structured_placement._anneal', 'netlist2schematic.recovery.fallback_bus.create_fallback',
+                 'netlist2schematic.postprocess.simplify_routes.simplify_routes'):
         stack.enter_context(patch(name, side_effect=AssertionError('Unexpected optimization: ' + name)))
     stack.enter_context(patch.object(par, 'sa', side_effect=AssertionError('Unexpected baseline SA')))
 
@@ -151,7 +151,7 @@ def _wire_paths(path):
 
 
 def execute(case, destination, seconds, frozen, code):
-    import net_labels
+    from netlist2schematic.plugins.net_labels import net_labels
     source = _resolve(case['placement_json'])
     original = _read(source)
     original_hash = _sha(source)

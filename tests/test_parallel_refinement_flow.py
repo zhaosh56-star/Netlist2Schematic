@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import aesthetic_flow
-import structured_placement
+from netlist2schematic.flow import aesthetic_flow
+from netlist2schematic.layout import structured_placement
 
 PARALLEL_SOURCE = '''.subckt main vdd
 Mleft la lb 0 0 nmos
@@ -31,7 +31,7 @@ class ParallelRefinementFlowTests(unittest.TestCase):
         calls = []
         hpwl = []
         def parallel(par, pl, comps, nets, index, metadata, **kwargs):
-            from branch_alignment import _hpwl
+            from netlist2schematic.plugins.layout_shared.branch_alignment import _hpwl
             hpwl.append(_hpwl(par, pl, nets, index))
             calls.append(('parallel', kwargs))
             metadata = deepcopy(metadata)
@@ -45,11 +45,11 @@ class ParallelRefinementFlowTests(unittest.TestCase):
             path.write_text(PARALLEL_SOURCE, encoding='utf-8')
             candidates = list(structured_placement.create_candidates(path, cell='main', iterations=30,
                               structure_layout='auto', structure_phase=3))
-            with patch('structured_placement.create_candidates', return_value=iter(candidates)), \
-                 patch('attachment_placement.refine_parallel_attachments', side_effect=parallel), \
-                 patch('branch_alignment.regularize_branch_layout', side_effect=branch), \
-                 patch('aesthetic_flow.final_route', side_effect=self.route), \
-                 patch('layout_quality.evaluate_quality', return_value={'score': 1., 'per_net': {}}):
+            with patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter(candidates)), \
+                 patch('netlist2schematic.plugins.layout_shared.attachment_placement.refine_parallel_attachments', side_effect=parallel), \
+                 patch('netlist2schematic.plugins.layout_shared.branch_alignment.regularize_branch_layout', side_effect=branch), \
+                 patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=self.route), \
+                 patch('netlist2schematic.layout.layout_quality.evaluate_quality', return_value={'score': 1., 'per_net': {}}):
                 aesthetic_flow.select_layout(path, cell='main', iterations=30, structure_layout='auto')
         self.assertEqual([name for name, _ in calls], ['parallel', 'branch', 'parallel', 'branch'])
         for i in (0, 2):
@@ -67,10 +67,10 @@ class ParallelRefinementFlowTests(unittest.TestCase):
             def branch(par, pl, comps, nets, index, metadata, **kwargs):
                 calls.append(kwargs)
                 return pl, metadata
-            with patch('attachment_placement.refine_parallel_attachments', side_effect=AssertionError('no parallel bank')), \
-                 patch('branch_alignment.regularize_branch_layout', side_effect=branch), \
-                 patch('aesthetic_flow.final_route', side_effect=self.route), \
-                 patch('layout_quality.evaluate_quality', return_value={'score': 1., 'per_net': {}}):
+            with patch('netlist2schematic.plugins.layout_shared.attachment_placement.refine_parallel_attachments', side_effect=AssertionError('no parallel bank')), \
+                 patch('netlist2schematic.plugins.layout_shared.branch_alignment.regularize_branch_layout', side_effect=branch), \
+                 patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=self.route), \
+                 patch('netlist2schematic.layout.layout_quality.evaluate_quality', return_value={'score': 1., 'per_net': {}}):
                 aesthetic_flow.select_layout(path, iterations=30, structure_layout='auto')
             self.assertEqual(len(calls), 2)
             self.assertTrue(all('seconds' not in call and 'max_candidates' not in call

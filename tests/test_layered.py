@@ -6,7 +6,7 @@ import random
 import tempfile
 import unittest
 
-from sa_common import load_local
+from netlist2schematic.common.sa_common import load_local
 
 layered = load_local('place_layered', 'place-layered.py')
 

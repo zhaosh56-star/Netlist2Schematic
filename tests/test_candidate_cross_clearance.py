@@ -6,10 +6,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import simplify_routes as shortcuts
-from orthogonal_router import RoutingFailure
-from routing_rules import EPS, Pin, RoutingOptions, Scene, analyze_routes, canonical_topology
-from sa_routing import _verify
+from netlist2schematic.postprocess import simplify_routes as shortcuts
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import EPS, Pin, RoutingOptions, Scene, analyze_routes, canonical_topology
+from netlist2schematic.routing.sa_routing import _verify
 from test_simplify_routes import case
 
 
@@ -197,10 +197,10 @@ def integration_case(*, movable_foreign=False):
 class UnifiedCrossScreenIntegrationTests(unittest.TestCase):
     def run_generators(self, fixture, generators, verify=None):
         with ExitStack() as stack:
-            stack.enter_context(patch('simplify_routes.build_scene', return_value=fixture[5]))
+            stack.enter_context(patch('netlist2schematic.postprocess.simplify_routes.build_scene', return_value=fixture[5]))
             for name, generator in zip(GENERATORS, generators):
-                stack.enter_context(patch('simplify_routes.' + name, side_effect=generator))
-            verifier = stack.enter_context(patch('simplify_routes._verify',
+                stack.enter_context(patch('netlist2schematic.postprocess.simplify_routes.' + name, side_effect=generator))
+            verifier = stack.enter_context(patch('netlist2schematic.postprocess.simplify_routes._verify',
                                                  wraps=_verify if verify is None else verify))
             result = shortcuts.simplify_routes(*fixture[:4], fixture[4])
         return result, verifier.call_count

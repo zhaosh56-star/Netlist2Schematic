@@ -10,11 +10,11 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import attachment_integration as integration
-from circuit_structures import analyze_structures
-from device_leveling import compute_levels
-from orthogonal_router import RoutingFailure
-from passive_placement import passive_diagnostics
+from netlist2schematic.plugins.attachment import attachment_integration as integration
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.recognition.device_leveling import compute_levels
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.layout.passive_placement import passive_diagnostics
 from tests.test_passive_placement import convert, mos, resistor, source
 
 
@@ -61,9 +61,9 @@ class AttachmentIntegrationReviewTests(unittest.TestCase):
         self.assertEqual(report['estimate_basis'], 'same_attachment_objective')
 
     def test_inserted_slot_measurements_survive_real_json_coordinate_restore(self):
-        from attachment_selection import measure_candidate
-        from run_flow import _saved_positions
-        from sa_saved import load_placement
+        from netlist2schematic.plugins.attachment.attachment_selection import measure_candidate
+        from netlist2schematic.flow.run_flow import _saved_positions
+        from netlist2schematic.common.sa_saved import load_placement
         trial, comps, _, index, plan, bridge = inserted_row_fixture()
         live = measure_candidate(trial, comps, index, {'candidate_id': 2}, plan)
         self.assertEqual(live['layout_attachments']['metrics']['embedded_members'], len(bridge['members']))
@@ -86,7 +86,7 @@ class AttachmentIntegrationReviewTests(unittest.TestCase):
             self.assertEqual(restored.rng.getstate(), rng)
 
     def test_saved_slot_rows_are_invalidated_when_participating_host_row_changes(self):
-        from attachment_selection import measure_candidate
+        from netlist2schematic.plugins.attachment.attachment_selection import measure_candidate
         trial, comps, _, index, plan, bridge = inserted_row_fixture()
         metadata = measure_candidate(trial, comps, index, {'candidate_id': 2}, plan)
         restored = deepcopy(trial)
@@ -100,7 +100,7 @@ class AttachmentIntegrationReviewTests(unittest.TestCase):
         self.assertFalse(hasattr(restored, 'attachment_junction_rows'))
 
     def test_common_all_plan_keeps_only_identical_passive_slot_evidence(self):
-        from attachment_selection import measure_candidate
+        from netlist2schematic.plugins.attachment.attachment_selection import measure_candidate
         trial, comps, _, index, plan, bridge = inserted_row_fixture()
         metadata = measure_candidate(trial, comps, index, {'candidate_id': 2}, plan)
         restored = deepcopy(trial)
@@ -147,7 +147,7 @@ class AttachmentIntegrationReviewTests(unittest.TestCase):
         # Exercise the real attachment static wrapper. Only the lower scene
         # validation and its clock are controlled, as for a real deadline.
         with patch.object(integration, 'perf_counter', side_effect=lambda: clock[0]), \
-             patch('symmetry_layout._static_safe', side_effect=expire_during_scene_validation) as check:
+             patch('netlist2schematic.plugins.symmetry.symmetry_layout._static_safe', side_effect=expire_during_scene_validation) as check:
             result, report = integration.initialize_attachments(original, devices, comps, nets,
                 index, plan, budget=budget)
         self.assertGreater(check.call_count, 0)

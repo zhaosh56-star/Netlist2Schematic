@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import run_flow
-from readability_selection import feedback_compatible, organization_rank, select_readable_result
+from netlist2schematic.flow import run_flow
+from netlist2schematic.plugins.readability.readability_selection import feedback_compatible, organization_rank, select_readable_result
 
 
 def result(identifier, score, violations, length=1000, crossings=0, signature='same'):
@@ -71,10 +71,10 @@ class ReadabilityFlowTests(unittest.TestCase):
             'violations': None, 'shape_error': None, 'pin_axis_error': None}}))
 
     def test_reference_candidate_random_stream_is_unchanged(self):
-        import structured_placement as s
+        from netlist2schematic.layout import structured_placement as s
         source = Path(__file__).resolve().parents[1]/'examples/1.cir'
         old = list(s.create_candidates(source, iterations=30, seed=7))
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('SA called A*')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('SA called A*')):
             new = list(s.create_candidates(source, iterations=30, seed=7,
                                            readability_layout='auto', readability_phase=2))
         a, b = old[0], new[0]

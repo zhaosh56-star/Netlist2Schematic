@@ -18,13 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from circuit_structures import analyze_structures
-from layout_quality import evaluate_quality
-from netlist_core import parse_netlist
-from sa_common import read_json, write_json
-from sa_render import render_svg
-from sa_routing import validate_final_routes
-from sa_saved import load_placement, saved_routing_options
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.layout.layout_quality import evaluate_quality
+from netlist2schematic.netlist.netlist_core import parse_netlist
+from netlist2schematic.common.sa_common import read_json, write_json
+from netlist2schematic.rendering.sa_render import render_svg
+from netlist2schematic.routing.sa_routing import validate_final_routes
+from netlist2schematic.common.sa_saved import load_placement, saved_routing_options
 
 
 def topology_signature(devices):

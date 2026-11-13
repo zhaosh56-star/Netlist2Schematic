@@ -5,10 +5,10 @@ from time import perf_counter
 import unittest
 from unittest.mock import patch
 
-from orthogonal_router import RoutingFailure
-from routing_rules import build_scene
-from sa_common import load_local
-from sa_routing import RoutingValidationError, validate_final_routes
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import build_scene
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.routing.sa_routing import RoutingValidationError, validate_final_routes
 
 
 def circuit(count=1):
@@ -45,7 +45,7 @@ class ExplicitPowerConnectionTests(unittest.TestCase):
         fixture = circuit()
         par, placement, _, nets, index = fixture
         before = deepcopy(placement.power_connections)
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('validation must not route')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('validation must not route')):
             routed, metrics, validation = self.validate(fixture)
         self.assertEqual([], routed)
         self.assertTrue(validation['valid'])
@@ -179,7 +179,7 @@ class ExplicitPowerConnectionTests(unittest.TestCase):
     def test_signal_cannot_cross_an_explicit_power_lead(self):
         par, placement, _, nets, index = circuit()
         scene = build_scene(par, nets, placement, index)
-        from routing_rules import analyze_routes
+        from netlist2schematic.routing.routing_rules import analyze_routes
         report = analyze_routes([('signal',[((-100,-80),(100,-80))])], scene)
         self.assertTrue(any(v['kind'] in ('crossing_clearance', 'fixed_stub_clearance')
                             for v in report['violations']))

@@ -16,11 +16,11 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from circuit_structures import analyze_structures
-from netlist_core import parse_netlist, to_document
-from routing_rules import RoutingOptions
-import structured_placement as structured
-import symmetry_layout as symmetry
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
+from netlist2schematic.routing.routing_rules import RoutingOptions
+from netlist2schematic.layout import structured_placement as structured
+from netlist2schematic.plugins.symmetry import symmetry_layout as symmetry
 
 
 def mos(d, g, s, kind='NMOS'):
@@ -246,8 +246,8 @@ RP vdd a 1k
 .end
 '''
         script = '''import contextlib,io,json,sys
-import structured_placement as st
-from symmetry_layout import regularize_symmetry
+from netlist2schematic.layout import structured_placement as st
+from netlist2schematic.plugins.symmetry.symmetry_layout import regularize_symmetry
 with contextlib.redirect_stdout(io.StringIO()):
  for p,c,n,x,m in st.create_candidates(sys.argv[1],iterations=300,seed=20261029,deadline=None):
   if m['candidate_id']==2:break
@@ -269,7 +269,7 @@ print(json.dumps({'cells':p.cell_of,'orient':p.orient,'after':m['layout_symmetry
     def test_regularization_improves_without_sa_astar_or_input_mutation(self):
         pl, comps, nets, index, metadata = fixture()
         frozen = deepcopy((pl.cell_of, pl.orient, pl.column_x, pl.row_y, metadata))
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* called')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* called')):
             with mock.patch.object(structured, '_anneal', side_effect=AssertionError('SA called')):
                 result, updated = symmetry.regularize_symmetry(
                     structured.par, pl, comps, nets, index, metadata)

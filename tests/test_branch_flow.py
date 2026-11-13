@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import structured_placement as structured
-from device_leveling import compute_levels
-from netlist_core import parse_netlist
+from netlist2schematic.layout import structured_placement as structured
+from netlist2schematic.recognition.device_leveling import compute_levels
+from netlist2schematic.netlist.netlist_core import parse_netlist
 
 LNA='''
 .model N nmos
@@ -50,7 +50,7 @@ class BranchRowIntegrationTests(unittest.TestCase):
             self.assertNotIn('branch_row_plan',b[4])
 
     def test_off_never_invokes_branch_solver(self):
-        with patch('branch_levels.plan_branch_rows',side_effect=AssertionError('off branch solver')):
+        with patch('netlist2schematic.plugins.layout_shared.branch_levels.plan_branch_rows',side_effect=AssertionError('off branch solver')):
             self.candidates(LNA,structure_layout='off')
 
     def test_original_reference_matches_all_rollout_phases(self):

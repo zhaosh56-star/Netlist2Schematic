@@ -7,8 +7,8 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-import run_flow
-from sa_common import load_local
+from netlist2schematic.flow import run_flow
+from netlist2schematic.common.sa_common import load_local
 
 
 def signal_paths(path):
@@ -28,8 +28,8 @@ class PresentationFlowTests(unittest.TestCase):
                 old=run_flow.run(source,cell='dut',structure_layout='auto',candidate_id='2',
                     iterations=120,quality_seconds=30,out_dir=folder/'old',simplify_seconds=.05)
             saved=folder/'old/pair-dut-placement.json'; original=saved.read_bytes()
-            with patch('orthogonal_router.route_scene',side_effect=AssertionError('styling called A*')), \
-                 patch('structured_placement.create_candidates',side_effect=AssertionError('styling relayout')),redirect_stdout(StringIO()):
+            with patch('netlist2schematic.routing.orthogonal_router.route_scene',side_effect=AssertionError('styling called A*')), \
+                 patch('netlist2schematic.layout.structured_placement.create_candidates',side_effect=AssertionError('styling relayout')),redirect_stdout(StringIO()):
                 new=run_flow.simplify_placement(saved,out_dir=folder/'new',simplify_routes='off',presentation='clean')
             self.assertEqual(original,saved.read_bytes())
             self.assertEqual(old['placement'],new['placement'])
@@ -48,12 +48,12 @@ class PresentationFlowTests(unittest.TestCase):
             self.assertEqual(clean.read_bytes(),(folder/'redraw.svg').read_bytes())
 
     def test_cli_default_remains_original_and_explicit_new_options_are_forwarded(self):
-        with patch('run_flow.run') as execute:
+        with patch('netlist2schematic.flow.run_flow.run') as execute:
             run_flow.main(['example.cir'])
         self.assertEqual('legacy',execute.call_args.kwargs['presentation'])
         self.assertEqual('off',execute.call_args.kwargs['port_preflight'])
         self.assertEqual('sequential',execute.call_args.kwargs['candidate_budget'])
-        with patch('run_flow.run') as execute:
+        with patch('netlist2schematic.flow.run_flow.run') as execute:
             run_flow.main(['example.cir','--presentation','clean','--port-preflight','repair',
                            '--candidate-budget','reserved'])
         self.assertEqual('clean',execute.call_args.kwargs['presentation'])

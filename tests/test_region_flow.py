@@ -8,9 +8,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import aesthetic_flow
-import run_flow
-from orthogonal_router import RoutingFailure
+from netlist2schematic.flow import aesthetic_flow
+from netlist2schematic.flow import run_flow
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
 from test_aesthetic_flow import candidate, route_result
 
 
@@ -31,7 +31,7 @@ def region_candidate(identifier, *, signature=None):
 class RegionInterfaceTests(unittest.TestCase):
     def test_off_default_and_auto_forwarded(self):
         for arguments, expected in (([], 'off'), (['--region-layout', 'auto'], 'auto')):
-            with self.subTest(expected=expected), patch('run_flow.run') as run:
+            with self.subTest(expected=expected), patch('netlist2schematic.flow.run_flow.run') as run:
                 run_flow.main(['input.cir', *arguments])
             self.assertEqual(expected, run.call_args.kwargs['region_layout'])
             self.assertEqual('off', run.call_args.kwargs['structure_layout'])
@@ -50,15 +50,15 @@ class RegionInterfaceTests(unittest.TestCase):
         for flag in ('--reroute-placement', '--simplify-placement'):
             with self.subTest(flag=flag), redirect_stdout(io.StringIO()), \
                  patch('sys.stderr', new=io.StringIO()), \
-                 patch('run_flow.reroute_placement') as reroute, \
-                 patch('run_flow.simplify_placement') as simplify:
+                 patch('netlist2schematic.flow.run_flow.reroute_placement') as reroute, \
+                 patch('netlist2schematic.flow.run_flow.simplify_placement') as simplify:
                 with self.assertRaises(SystemExit):
                     run_flow.main([flag, 'saved.json', '--region-layout', 'auto'])
                 reroute.assert_not_called()
                 simplify.assert_not_called()
 
     def test_selector_rejects_conflict_before_generation(self):
-        with patch('structured_placement.create_candidates') as producer:
+        with patch('netlist2schematic.layout.structured_placement.create_candidates') as producer:
             with self.assertRaisesRegex(ValueError, 'region_layout'):
                 aesthetic_flow.select_layout('unused', region_layout='auto', structure_layout='auto')
             producer.assert_not_called()
@@ -90,13 +90,13 @@ class RegionFlowTests(unittest.TestCase):
             return min(results, key=lambda row: row[0]), {'policy': 'region-layout-v1'}
 
         with ExitStack() as stack:
-            stack.enter_context(patch('structured_placement.create_candidates', return_value=iter(items)))
-            self.feedback_mock = stack.enter_context(patch('structured_placement.feedback_candidate',
+            stack.enter_context(patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter(items)))
+            self.feedback_mock = stack.enter_context(patch('netlist2schematic.layout.structured_placement.feedback_candidate',
                                                            side_effect=feedback))
-            stack.enter_context(patch('region_layout.measure_regions', side_effect=measure))
-            self.selection_mock = stack.enter_context(patch('region_layout.select_region_result', side_effect=choose))
-            stack.enter_context(patch('aesthetic_flow.final_route', side_effect=route))
-            stack.enter_context(patch('layout_quality.evaluate_quality', side_effect=quality))
+            stack.enter_context(patch('netlist2schematic.plugins.region.region_layout.measure_regions', side_effect=measure))
+            self.selection_mock = stack.enter_context(patch('netlist2schematic.plugins.region.region_layout.select_region_result', side_effect=choose))
+            stack.enter_context(patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=route))
+            stack.enter_context(patch('netlist2schematic.layout.layout_quality.evaluate_quality', side_effect=quality))
             stack.enter_context(redirect_stdout(io.StringIO()))
             return aesthetic_flow.select_layout('unused.cir', region_layout='auto', iterations=0, **kwargs)
 
@@ -165,9 +165,9 @@ class RegionFlowTests(unittest.TestCase):
 
 class RegionSavedCoordinatesTests(unittest.TestCase):
     def test_saved_modes_only_remeasure_saved_plan_and_keep_positions(self):
-        from netlist_core import parse_netlist
-        from region_layout import build_region_plan
-        from sa_common import load_local
+        from netlist2schematic.netlist.netlist_core import parse_netlist
+        from netlist2schematic.plugins.region.region_layout import build_region_plan
+        from netlist2schematic.common.sa_common import load_local
         with tempfile.TemporaryDirectory(prefix='region-saved-') as folder:
             root = Path(folder)
             source = root/'rc.cir'
@@ -182,8 +182,8 @@ class RegionSavedCoordinatesTests(unittest.TestCase):
                 'metrics': {'deliberately_stale': True}}
             original.write_text(json.dumps(data), encoding='utf8')
             saved_bytes = original.read_bytes()
-            with patch('region_layout.build_region_plan', side_effect=AssertionError('saved input replanned')), \
-                 patch('structured_placement.create_candidates', side_effect=AssertionError('saved input relayout')), \
+            with patch('netlist2schematic.plugins.region.region_layout.build_region_plan', side_effect=AssertionError('saved input replanned')), \
+                 patch('netlist2schematic.layout.structured_placement.create_candidates', side_effect=AssertionError('saved input relayout')), \
                  redirect_stdout(io.StringIO()):
                 run_flow.simplify_placement(original, out_dir=root/'simplified', simplify_seconds=0)
                 run_flow.reroute_placement(original, out_dir=root/'rerouted', simplify_seconds=0)

@@ -9,10 +9,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import aesthetic_flow
-import run_flow
-from sa_common import load_local
-import structured_placement as structured
+from netlist2schematic.flow import aesthetic_flow
+from netlist2schematic.flow import run_flow
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.layout import structured_placement as structured
 
 
 class PassiveFlowTests(unittest.TestCase):
@@ -33,12 +33,12 @@ class PassiveFlowTests(unittest.TestCase):
     def test_cli_defaults_and_fixed_policy_are_forwarded(self):
         for value in ('flexible', 'fixed'):
             argv = [str(self.source)] + ([] if value == 'flexible' else ['--passive-layout', value])
-            with patch('run_flow.run') as run:
+            with patch('netlist2schematic.flow.run_flow.run') as run:
                 self.assertEqual(run_flow.main(argv), 0)
             self.assertEqual(run.call_args.kwargs['passive_layout'], value)
 
     def test_policy_validation_happens_before_layout(self):
-        with patch('run_flow._normal_result', side_effect=AssertionError('invalid policy reached layout')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=AssertionError('invalid policy reached layout')):
             with self.assertRaisesRegex(ValueError, 'passive_layout'):
                 run_flow.run(self.source, passive_layout='invalid')
         with self.assertRaisesRegex(ValueError, 'passive_layout'):
@@ -47,7 +47,7 @@ class PassiveFlowTests(unittest.TestCase):
             next(structured.create_candidates('unused.cir', passive_layout='invalid'))
 
     def test_normal_dispatch_forwards_policy(self):
-        with patch('aesthetic_flow.select_layout', return_value='sentinel') as select:
+        with patch('netlist2schematic.flow.aesthetic_flow.select_layout', return_value='sentinel') as select:
             result = run_flow._normal_result(self.source, None, 'layered', 'structured',
                 None, 0, 17, 10, None, None, passive_layout='fixed')
         self.assertEqual(result, 'sentinel')
@@ -70,7 +70,7 @@ class PassiveFlowTests(unittest.TestCase):
         data = self.generate()
         saved = self.root / 'flexible/passive-placement.json'
         renderer = load_local('passive_flow_renderer', 'render-clean.py')
-        with patch('structured_placement.create_candidates', side_effect=AssertionError('saved input relayout')), \
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', side_effect=AssertionError('saved input relayout')), \
                 contextlib.redirect_stdout(io.StringIO()):
             rerouted = run_flow.reroute_placement(saved, out_dir=self.root / 'rerouted')
             simplified = run_flow.simplify_placement(saved, out_dir=self.root / 'simplified')

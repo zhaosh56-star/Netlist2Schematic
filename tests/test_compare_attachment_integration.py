@@ -34,6 +34,34 @@ def record(value):
 
 
 class AttachmentComparisonTests(unittest.TestCase):
+    def test_runtime_snapshot_includes_packaged_implementations_and_manifest(self):
+        from netlist2schematic.common.sa_common import source_path
+        snapshot = comparison.common._snapshot()
+        for path in (source_path('routing_rules.py'), source_path('attachment_integration.py'),
+                     comparison.ROOT / 'run_flow.py',
+                     comparison.ROOT / 'netlist2schematic/source_map.json'):
+            self.assertIn(str(path.resolve()), snapshot)
+
+    def test_historical_audit_cannot_ignore_packaged_code_behind_an_entrypoint(self):
+        from netlist2schematic.common.sa_common import source_path
+        entry = str(comparison.ROOT / 'run_flow.py')
+        actual = str(source_path('routing_rules.py'))
+        code = {entry: 'entry-sha', actual: 'implementation-sha'}
+        stale = {'passed': True, 'cases': [{'case': 'x'}], 'current_files': {entry: 'entry-sha'}}
+        with patch.object(comparison, 'read_json', return_value=stale):
+            with self.assertRaisesRegex(ValueError, 'current frozen root engine'):
+                comparison.load_compatible_off(Path('old-report.json'), Path('audit.json'), code)
+
+    def test_net_label_runtime_hashes_resolve_actual_plugin_code(self):
+        from hashlib import sha256
+        from netlist2schematic.common.sa_common import source_path
+        from netlist2schematic.plugins.net_labels import net_labels
+        hashes = net_labels._runtime_hashes()
+        self.assertEqual(set(hashes), {'net_labels.py', 'net_label_core.py',
+                                      'net_label_validation.py', 'sa_render.py'})
+        for filename, digest in hashes.items():
+            self.assertEqual(digest, sha256(source_path(filename).read_bytes()).hexdigest())
+
     def test_all_three_policies_use_identical_strict_budgets(self):
         p = parameters(); p['candidate_id'] = '2'
         for policy in comparison.POLICIES:
@@ -126,7 +154,7 @@ class AttachmentComparisonTests(unittest.TestCase):
             comparison.checked_payload({'spent': 12, 'distance': None}))
 
     def test_independent_verification_restores_equivalent_saved_display_slots(self):
-        from attachment_selection import measure_candidate
+        from netlist2schematic.plugins.attachment.attachment_selection import measure_candidate
         from tests.test_attachment_integration_review import inserted_row_fixture
         trial, comps, nets, index, plan, bridge = inserted_row_fixture()
         saved = measure_candidate(trial, comps, index, {'candidate_id': 2}, plan)
@@ -140,7 +168,7 @@ class AttachmentComparisonTests(unittest.TestCase):
         with patch.object(comparison.region, 'verify', return_value={'valid': True}), \
                 patch.object(comparison, 'read_json', return_value=saved), \
                 patch.object(comparison, 'build_measurement_plan', return_value=common_plan), \
-                patch('sa_saved.load_placement', return_value=(saved, Path('source.cir'), None, restored, comps, nets, index)):
+                patch('netlist2schematic.common.sa_saved.load_placement', return_value=(saved, Path('source.cir'), None, restored, comps, nets, index)):
             result = comparison.verify(Path('saved.json'), signature)
         self.assertEqual(len(bridge['members']), result['attachment_measurement']['embedded_members'])
         self.assertEqual('independent-all-plan', result['attachment_measurement_context']['placement_slot_contract']['plan_signature'])

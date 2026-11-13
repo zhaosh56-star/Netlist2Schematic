@@ -7,7 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from readability_banks import measure_bank_outlet
+from netlist2schematic.plugins.readability.readability_banks import measure_bank_outlet
 
 
 class Pins:

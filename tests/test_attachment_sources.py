@@ -10,10 +10,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from attachment_sources import (build_source_groups, measure_source_groups,
+from netlist2schematic.plugins.attachment.attachment_sources import (build_source_groups, measure_source_groups,
                                 source_chain_errors, source_group_anchor, source_group_states,
                                 source_group_trials)
-from netlist_core import parse_netlist, to_document
+from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
 from tests.test_passive_placement import convert, mos, resistor, source
 
 
@@ -204,7 +204,7 @@ class SourceGroupCandidateTests(unittest.TestCase):
         pl, comps, nets, index, model = self.tail()
         original = freeze(pl)
         before = measure_source_groups(pl, comps, nets, index, model)
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('source helper called A*')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('source helper called A*')):
             trials = list(source_group_trials(pl, comps, nets, index, model, max_candidates=24))
         self.assertTrue(trials)
         self.assertLessEqual(len(trials), 24)
@@ -339,7 +339,7 @@ class SourceGroupCandidateTests(unittest.TestCase):
         pl.offset_x[index['i']] = 8.0
         original = freeze(pl)
         for budget in (0, 1, 8, 17):
-            with patch('attachment_sources.deepcopy', side_effect=AssertionError('SA state helper cloned')):
+            with patch('netlist2schematic.plugins.attachment.attachment_sources.deepcopy', side_effect=AssertionError('SA state helper cloned')):
                 states = list(source_group_states(pl, comps, nets, index, model, max_candidates=budget))
             clones = [(trial.cell_of, trial.orient, action) for trial, action
                       in source_group_trials(pl, comps, nets, index, model, max_candidates=budget)]

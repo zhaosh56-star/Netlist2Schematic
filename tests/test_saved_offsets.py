@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from sa_common import load_local
-from sa_saved import load_placement
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.common.sa_saved import load_placement
 
 
 class SavedOffsetTests(unittest.TestCase):
@@ -42,7 +42,7 @@ class SavedOffsetTests(unittest.TestCase):
             with self.subTest(value=value),self.assertRaises(ValueError):self.load()
 
     def test_spacing_enlarges_only_axes_preserving_local_dx(self):
-        import spacing_retry
+        from netlist2schematic.recovery import spacing_retry
         self.data['placement']['R1']['dx']=20
         _,_,_,pl,comps,nets,index=self.load()
         before=deepcopy({key:value for key,value in pl.__dict__.items() if key!='rng'})
@@ -52,7 +52,7 @@ class SavedOffsetTests(unittest.TestCase):
             self.assertEqual((120,100),trial.pos_of(index['R1']))
             self.assertEqual((250,250),trial.pos_of(index['R2']))
             return [],{'wirelength':0,'crossings':0,'bends':0},{'valid':True}
-        with patch('spacing_retry.final_route',side_effect=route),patch('spacing_retry.evaluate_quality',return_value={'score':0}):
+        with patch('netlist2schematic.recovery.spacing_retry.final_route',side_effect=route),patch('netlist2schematic.recovery.spacing_retry.evaluate_quality',return_value={'score':0}):
             result=spacing_retry.retry_spacing((pl,comps,nets,index,{}),scale=1.5)
         self.assertEqual(before,{key:value for key,value in pl.__dict__.items() if key!='rng'})
         self.assertEqual(rng_before,pl.rng.getstate())

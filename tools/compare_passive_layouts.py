@@ -28,15 +28,16 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from circuit_structures import analyze_structures
-from device_leveling import compute_levels
-from layout_quality import evaluate_quality
-from netlist_core import parse_netlist
-from routing_rules import build_scene
-from sa_common import configure_resources, load_local, read_json, resource_root, write_json
-from sa_routing import validate_final_routes
-from sa_saved import load_placement, saved_routing_options
-from simplify_routes import _covers_fixed
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.recognition.device_leveling import compute_levels
+from netlist2schematic.layout.layout_quality import evaluate_quality
+from netlist2schematic.netlist.netlist_core import parse_netlist
+from netlist2schematic.routing.routing_rules import build_scene
+from netlist2schematic.common.sa_common import (configure_resources, engine_source_files,
+                                               load_local, read_json, resource_root, write_json)
+from netlist2schematic.routing.sa_routing import validate_final_routes
+from netlist2schematic.common.sa_saved import load_placement, saved_routing_options
+from netlist2schematic.postprocess.simplify_routes import _covers_fixed
 
 FORMAT = 'passive-layout-comparison-v1'
 VERIFY_LOCK = Lock()
@@ -127,7 +128,7 @@ def _provenance(case):
 
 def _code_snapshot():
     configure_resources()
-    paths = list(ROOT.glob('*.py')) + [ROOT / 'symbol-geometry.json',
+    paths = engine_source_files(root=ROOT) + [ROOT / 'symbol-geometry.json',
             ROOT / 'requirements.txt', Path(__file__).resolve()]
     paths += list((resource_root() / 'packages/components/definitions').glob('*.json'))
     return {str(path.resolve()): _sha(path) for path in sorted(set(paths))}

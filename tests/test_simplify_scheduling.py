@@ -7,9 +7,9 @@ from math import ceil
 import unittest
 from unittest.mock import patch
 
-import simplify_routes as shortcuts
-from routing_rules import Pin, Scene, check_deadline
-from sa_routing import _verify
+from netlist2schematic.postprocess import simplify_routes as shortcuts
+from netlist2schematic.routing.routing_rules import Pin, Scene, check_deadline
+from netlist2schematic.routing.sa_routing import _verify
 from test_simplify_routes import case, run_case
 
 
@@ -40,12 +40,12 @@ def empty(*args):
 def run_with(fixture, generators, *, clock=None, verify=None, seconds=5):
     with ExitStack() as stack:
         for name, generator in zip(GENERATORS, generators):
-            stack.enter_context(patch('simplify_routes.' + name, side_effect=generator))
+            stack.enter_context(patch('netlist2schematic.postprocess.simplify_routes.' + name, side_effect=generator))
         if clock is not None:
-            stack.enter_context(patch('simplify_routes.perf_counter', new=clock))
-            stack.enter_context(patch('routing_rules.perf_counter', new=clock))
+            stack.enter_context(patch('netlist2schematic.postprocess.simplify_routes.perf_counter', new=clock))
+            stack.enter_context(patch('netlist2schematic.routing.routing_rules.perf_counter', new=clock))
         if verify is not None:
-            stack.enter_context(patch('simplify_routes._verify', side_effect=verify))
+            stack.enter_context(patch('netlist2schematic.postprocess.simplify_routes._verify', side_effect=verify))
         return run_case(fixture, seconds=seconds)
 
 
@@ -248,7 +248,7 @@ class ReservedSchedulingTests(unittest.TestCase):
 
     def test_zero_seconds_skips_scene_building_and_all_operations(self):
         fixture = case()
-        with patch('simplify_routes.build_scene',
+        with patch('netlist2schematic.postprocess.simplify_routes.build_scene',
                    side_effect=AssertionError('disabled simplification must not build a scene')):
             result = shortcuts.simplify_routes(*fixture[:4], fixture[4], seconds=0)
         self.assertEqual(fixture[4], result[:3])
@@ -350,7 +350,7 @@ class ReservedSchedulingTests(unittest.TestCase):
                     yield {'net': 'a', 'segments': arch(50 + number * 100 + count)}
             return generate
 
-        with patch('simplify_routes.MAX_CANDIDATES', 5):
+        with patch('netlist2schematic.postprocess.simplify_routes.MAX_CANDIDATES', 5):
             result = run_with(fixture, [proposal(i) for i in range(4)], clock=Clock())
         self.assert_safe(fixture, result)
         self.assertEqual([2, 3, 4, 5],

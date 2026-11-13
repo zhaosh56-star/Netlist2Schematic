@@ -9,10 +9,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-import run_flow
-from routing_rules import RoutingOptions
-from sa_common import load_local
-from sa_saved import saved_routing_options
+from netlist2schematic.flow import run_flow
+from netlist2schematic.routing.routing_rules import RoutingOptions
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.common.sa_saved import saved_routing_options
 
 
 class SavedPolicyTests(unittest.TestCase):

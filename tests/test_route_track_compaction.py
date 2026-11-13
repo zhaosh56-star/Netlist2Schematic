@@ -12,10 +12,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from orthogonal_router import RoutingFailure
-from routing_rules import Pin, RoutingOptions, Scene, canonical_topology, intersection
-from sa_routing import _verify
-import simplify_routes as shortcuts
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import Pin, RoutingOptions, Scene, canonical_topology, intersection
+from netlist2schematic.routing.sa_routing import _verify
+from netlist2schematic.postprocess import simplify_routes as shortcuts
 
 
 def track_case(*, turns=0, mirror=False, shift=(0, 0), rename=False,
@@ -111,9 +111,9 @@ def track_case(*, turns=0, mirror=False, shift=(0, 0), rename=False,
 
 
 def simplify(case, **kwargs):
-    with patch('simplify_routes.build_scene', return_value=case[5]), \
-            patch('orthogonal_router._find_path', side_effect=AssertionError('A* in compaction')), \
-            patch('orthogonal_router.route_scene', side_effect=AssertionError('global rerouting')):
+    with patch('netlist2schematic.postprocess.simplify_routes.build_scene', return_value=case[5]), \
+            patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('A* in compaction')), \
+            patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('global rerouting')):
         return shortcuts.simplify_routes(*case[:4], case[4], seconds=kwargs.pop('seconds', 5), **kwargs)
 
 
@@ -138,7 +138,7 @@ class TrackCompactionTests(unittest.TestCase):
     def test_four_leg_chain_tightens_without_removing_required_bends(self):
         fixture = track_case()
         original = deepcopy(fixture[4])
-        with patch('simplify_routes._track_compaction_candidates', return_value=iter(())):
+        with patch('netlist2schematic.postprocess.simplify_routes._track_compaction_candidates', return_value=iter(())):
             previous = simplify(fixture)
         self.assertEqual(original[0], previous[0], 'the existing v4 templates cannot tighten this shape')
         routed, metrics, report = self.assert_safe(fixture, simplify(fixture))
@@ -180,7 +180,7 @@ class TrackCompactionTests(unittest.TestCase):
         self.assertEqual(0, report['operations']['track_compaction']['accepted'])
 
     def test_generated_moves_preserve_fixed_exits_and_have_bounded_work(self):
-        from route_tracks import MAX_TRACK_CANDIDATES_PER_CHAIN, track_compaction_candidates
+        from netlist2schematic.postprocess.route_tracks import MAX_TRACK_CANDIDATES_PER_CHAIN, track_compaction_candidates
         fixture = track_case()
         fixture[5].body_rects = []
         chains = shortcuts._chains(fixture[5], fixture[4][0])
@@ -214,7 +214,7 @@ class TrackCompactionTests(unittest.TestCase):
         self.assertLess(metrics['wirelength'], fixture[4][1]['wirelength'])
         self.assertEqual(fixture[4][1]['bends'], metrics['bends'])
         self.assertEqual(1, metrics['crossings'])
-        with patch('simplify_routes._track_compaction_candidates',
+        with patch('netlist2schematic.postprocess.simplify_routes._track_compaction_candidates',
                    return_value=iter([{'net': fixture[6], 'segments': candidate}])):
             result = simplify(fixture)
         self.assert_safe(fixture, result)
@@ -242,8 +242,8 @@ class TrackCompactionTests(unittest.TestCase):
             clock['now'] += 6
             raise RoutingFailure('track deadline', {'reason': 'quality_time_budget'})
 
-        with patch('route_tracks.check_deadline', side_effect=expired), \
-                patch('simplify_routes.perf_counter', side_effect=lambda: clock['now']):
+        with patch('netlist2schematic.postprocess.route_tracks.check_deadline', side_effect=expired), \
+                patch('netlist2schematic.postprocess.simplify_routes.perf_counter', side_effect=lambda: clock['now']):
             result = simplify(fixture)
         self.assert_safe(fixture, result)
         self.assertEqual(fixture[4][0], result[0])
@@ -281,11 +281,11 @@ class TrackPhaseOrderTests(unittest.TestCase):
                 self.assertEqual(140, length, 'new stage must see the complete v4 result')
                 yield {'net': 'a', 'segments': arch(10)}
 
-        with patch('simplify_routes.build_scene', return_value=fixture[5]), \
-                patch('simplify_routes._shortcut_candidates', side_effect=chain), \
-                patch('simplify_routes.reattachment_candidates', side_effect=leaves), \
-                patch('simplify_routes._three_segment_candidates', side_effect=patterns), \
-                patch('simplify_routes._track_compaction_candidates', side_effect=tracks):
+        with patch('netlist2schematic.postprocess.simplify_routes.build_scene', return_value=fixture[5]), \
+                patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', side_effect=chain), \
+                patch('netlist2schematic.postprocess.simplify_routes.reattachment_candidates', side_effect=leaves), \
+                patch('netlist2schematic.postprocess.simplify_routes._three_segment_candidates', side_effect=patterns), \
+                patch('netlist2schematic.postprocess.simplify_routes._track_compaction_candidates', side_effect=tracks):
             result = shortcuts.simplify_routes(*fixture[:4], fixture[4])
         _verify(*fixture[:4], result[0], fixture[5])
         self.assertEqual(140, result[3]['v4_metrics']['wirelength'])
@@ -300,12 +300,12 @@ class TrackPhaseOrderTests(unittest.TestCase):
 
     def test_existing_budget_cannot_be_reset_to_force_new_tracks(self):
         fixture = track_case()
-        with patch('simplify_routes.MAX_CANDIDATES', 0), \
-                patch('simplify_routes._track_compaction_candidates',
+        with patch('netlist2schematic.postprocess.simplify_routes.MAX_CANDIDATES', 0), \
+                patch('netlist2schematic.postprocess.simplify_routes._track_compaction_candidates',
                       side_effect=AssertionError('new stage must share the exhausted budget')):
             # A candidate in a preceding phase exhausts the common budget.
             proposal = {'net': fixture[6], 'segments': dict(fixture[4][0])[fixture[6]]}
-            with patch('simplify_routes._shortcut_candidates', return_value=iter([proposal])):
+            with patch('netlist2schematic.postprocess.simplify_routes._shortcut_candidates', return_value=iter([proposal])):
                 result = simplify(fixture)
         self.assert_safe_for_budget(fixture, result)
         self.assertEqual('candidate_budget', result[3]['stop_reason'])

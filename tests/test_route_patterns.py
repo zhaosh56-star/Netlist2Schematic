@@ -11,10 +11,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from orthogonal_router import RoutingFailure
-from routing_rules import Pin, RoutingOptions, Scene, canonical_topology, intersection
-from sa_routing import RoutingValidationError, _verify
-import simplify_routes as shortcuts
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import Pin, RoutingOptions, Scene, canonical_topology, intersection
+from netlist2schematic.routing.sa_routing import RoutingValidationError, _verify
+from netlist2schematic.postprocess import simplify_routes as shortcuts
 
 
 def pattern_case(*, turns=0, mirror=False, shift=(0, 0), rename=False,
@@ -97,15 +97,15 @@ def pattern_case(*, turns=0, mirror=False, shift=(0, 0), rename=False,
 
 
 def simplify(case, **kwargs):
-    with patch('simplify_routes.build_scene', return_value=case[5]), \
-            patch('orthogonal_router._find_path', side_effect=AssertionError('A*')), \
-            patch('orthogonal_router.route_scene', side_effect=AssertionError('global router')):
+    with patch('netlist2schematic.postprocess.simplify_routes.build_scene', return_value=case[5]), \
+            patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('A*')), \
+            patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('global router')):
         return shortcuts.simplify_routes(*case[:4], case[4], seconds=kwargs.pop('seconds', 5), **kwargs)
 
 
 class ThreeSegmentPatternTests(unittest.TestCase):
     def test_source_and_target_exits_cannot_reverse_along_their_fixed_stubs(self):
-        from route_patterns import three_segment_candidates
+        from netlist2schematic.postprocess.route_patterns import three_segment_candidates
         # This deliberately has no symbol bodies: full geometry validation can
         # otherwise accept a path which retraces a fixed stub and leaves its
         # artificial escape as a protected, unused tail.
@@ -142,7 +142,7 @@ class ThreeSegmentPatternTests(unittest.TestCase):
                 self.assert_safe(case, simplify(case))
 
     def test_a_single_bend_free_chain_does_not_trigger_three_segment_candidates(self):
-        from route_patterns import three_segment_candidates
+        from netlist2schematic.postprocess.route_patterns import three_segment_candidates
         par = pattern_case()[0]
         points = [(0, 0), (100, 180)]
         pins = [Pin('signal', i, 'P', points[i], escape, (1, 0))
@@ -236,7 +236,7 @@ class ThreeSegmentPatternTests(unittest.TestCase):
     def test_pattern_generation_expiry_retains_the_last_complete_incumbent(self):
         case = pattern_case()
         expired = RoutingFailure('expired pattern budget', {'reason': 'quality_time_budget'})
-        with patch('route_patterns.check_deadline', side_effect=expired):
+        with patch('netlist2schematic.postprocess.route_patterns.check_deadline', side_effect=expired):
             result = simplify(case)
         self.assert_safe(case, result)
         self.assertEqual(case[4][0], result[0])
@@ -245,7 +245,7 @@ class ThreeSegmentPatternTests(unittest.TestCase):
 
     def test_expiry_after_pattern_acceptance_keeps_the_improvement(self):
         case = pattern_case()
-        from route_patterns import three_segment_candidates as actual
+        from netlist2schematic.postprocess.route_patterns import three_segment_candidates as actual
         calls = 0
 
         def patterns(*args, **kwargs):
@@ -255,7 +255,7 @@ class ThreeSegmentPatternTests(unittest.TestCase):
                 raise RoutingFailure('expired after accepted pattern', {'reason': 'quality_time_budget'})
             yield from actual(*args, **kwargs)
 
-        with patch('simplify_routes.three_segment_candidates', side_effect=patterns):
+        with patch('netlist2schematic.postprocess.simplify_routes.three_segment_candidates', side_effect=patterns):
             result = simplify(case)
         self.assert_safe(case, result)
         self.assertLess(result[1]['wirelength'], case[4][1]['wirelength'])

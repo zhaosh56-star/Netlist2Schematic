@@ -8,7 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from region_layout import (build_region_plan, measure_regions, region_rank,
+from netlist2schematic.plugins.region.region_layout import (build_region_plan, measure_regions, region_rank,
                            select_region_result)
 
 

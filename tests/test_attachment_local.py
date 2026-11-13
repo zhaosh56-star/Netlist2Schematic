@@ -9,8 +9,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from attachment_local import enum_local_attachment_trials
-from readability_layout import measure_readability
+from netlist2schematic.plugins.attachment.attachment_local import enum_local_attachment_trials
+from netlist2schematic.plugins.readability.readability_layout import measure_readability
 from tests.test_attachment_ports import installed, pin_for
 from tests.test_passive_placement import mos, resistor, source
 
@@ -35,7 +35,7 @@ class LocalAttachmentTests(unittest.TestCase):
         for mirror in (False, True):
             pl, comps, nets, index, plan, group = chain_fixture(mirror)
             original = snapshot(pl)
-            with patch('orthogonal_router.route_scene', side_effect=AssertionError('local helper called A*')):
+            with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('local helper called A*')):
                 trials = list(enum_local_attachment_trials(pl, comps, index, plan, group))
             self.assertTrue(trials)
             self.assertLessEqual(len(trials), 40)
@@ -132,9 +132,9 @@ class LocalAttachmentTests(unittest.TestCase):
         self.assertEqual(list(enum_local_attachment_trials(pl, comps, index, plan, group)), [])
 
     def test_ground_shunt_prefers_outside_its_proven_bridge_and_real_marker_is_safe(self):
-        from routing_rules import RoutingOptions
-        from structured_placement import par
-        from symmetry_layout import _static_safe
+        from netlist2schematic.routing.routing_rules import RoutingOptions
+        from netlist2schematic.layout.structured_placement import par
+        from netlist2schematic.plugins.symmetry.symmetry_layout import _static_safe
         devices = dict(a=mos('left', 'ga'), b=mos('right', 'gb'),
             r=resistor('left', 'mid0'), c=resistor('mid0', 'mid1', 'C'),
             l=resistor('mid1', 'right', 'L'), shunt=resistor('left', '0', 'C'))
@@ -150,11 +150,11 @@ class LocalAttachmentTests(unittest.TestCase):
     @unittest.skipUnless((ROOT/'test_data/11-15/cross-coupled.cir').is_file(),
                          'optional data12 source fixture is unavailable')
     def test_production_data12_has_local_shunt_trial_with_safe_real_power_marker(self):
-        import attachment_integration as integration
-        import structured_placement as structured
-        from netlist_core import parse_netlist, to_document
-        from routing_rules import RoutingOptions
-        from symmetry_layout import _static_safe
+        from netlist2schematic.plugins.attachment import attachment_integration as integration
+        from netlist2schematic.layout import structured_placement as structured
+        from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
+        from netlist2schematic.routing.routing_rules import RoutingOptions
+        from netlist2schematic.plugins.symmetry.symmetry_layout import _static_safe
         devices = parse_netlist(ROOT/'test_data/11-15/cross-coupled.cir', cell='dut')
         structs = structured._structures(devices)
         document = to_document(devices)
@@ -193,7 +193,7 @@ class LocalAttachmentTests(unittest.TestCase):
                            and len(group['owner_junctions']) == 1
                            and set(group['owner_junctions']).intersection(bridge['owner_junctions'])]
                 found = False
-                with patch('orthogonal_router.route_scene', side_effect=AssertionError('static test called A*')):
+                with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('static test called A*')):
                     for shunt in related:
                         for trial, _ in enum_local_attachment_trials(slot, comps, index, plan, shunt):
                             if trial.valid_state() and _static_safe(structured.par, trial, nets, index,

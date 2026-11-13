@@ -12,8 +12,8 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sa_common import load_local
-from sa_routing import (final_route, measure_routes, normalize_routes,
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.routing.sa_routing import (final_route, measure_routes, normalize_routes,
                         normalize_segments, routing_errors)
 
 par = load_local('place_and_route', 'place-and-route.py')
@@ -118,7 +118,7 @@ class FinalRouteTests(unittest.TestCase):
         self.assertEqual(0, metrics['overlap'])
 
     def test_metrics_describe_accepted_final_geometry(self):
-        with patch('orthogonal_router.route_scene', return_value=(self.route, {})):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', return_value=(self.route, {})):
             routed, metrics, validation = final_route(par, self.nets, self.placement, self.indices)
         self.assertEqual(336, metrics['wirelength'])
         self.assertEqual(2, metrics['bends'])
@@ -126,12 +126,12 @@ class FinalRouteTests(unittest.TestCase):
         self.assertTrue(validation['valid'])
 
     def test_invalid_initial_route_is_not_reported_as_success(self):
-        with patch('orthogonal_router.route_scene', return_value=([('n', [])], {})):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', return_value=([('n', [])], {})):
             with self.assertRaisesRegex(ValueError, 'failed validation'):
                 final_route(par, self.nets, self.placement, self.indices)
 
     def test_power_nets_are_not_passed_to_router(self):
-        with patch('orthogonal_router.route_scene', return_value=(self.route, {})) as route:
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', return_value=(self.route, {})) as route:
             final_route(par, self.nets, self.placement, self.indices)
         self.assertEqual({'n'}, set(route.call_args.args[0].pins))
 

@@ -10,10 +10,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from circuit_structures import analyze_structures
-from device_leveling import compute_levels
-from netlist_core import to_document
-from readability_layout import (build_readability_plan, junction_point,
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.recognition.device_leveling import compute_levels
+from netlist2schematic.netlist.netlist_core import to_document
+from netlist2schematic.plugins.readability.readability_layout import (build_readability_plan, junction_point,
     has_strong_passive_plan, measure_readability, prepare_readability_placement,
     readability_rank, score_readability)
 from tests.test_passive_placement import convert, mos, resistor, source
@@ -297,7 +297,7 @@ class ReadabilityPreparationTests(unittest.TestCase):
     def test_seed_is_bounded_improves_common_estimate_and_keeps_flexible_motion(self):
         devices, pl, comps, nets, index, plan = bank_fixture()
         frozen = deepcopy((pl.cell_of, pl.orient, pl.row_y, pl.column_x, pl.blocks, pl.rng.getstate()))
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* in initializer')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in initializer')):
             result, report = prepare_readability_placement(pl, devices, comps, nets, index, plan)
         self.assertTrue(report['applied'])
         self.assertLessEqual(report['trials'], 128)
@@ -337,7 +337,7 @@ class ReadabilityPreparationTests(unittest.TestCase):
         pl, comps, nets, index, structs = convert(devices, dict(a=(1, 1), b=(1, 3), i=(3, 6)))
         plan = build_readability_plan(devices, comps, nets, index, structs, compute_levels(devices), pl.row_of)
         original = snapshot(pl)
-        with mock.patch('readability_layout._targets', side_effect=AssertionError('weak initializer moved')):
+        with mock.patch('netlist2schematic.plugins.readability.readability_layout._targets', side_effect=AssertionError('weak initializer moved')):
             result, report = prepare_readability_placement(pl, devices, comps, nets, index, plan,
                 seconds=0, max_trials=0, estimate=lambda _: self.fail('weak initializer estimated'))
         self.assertEqual(snapshot(pl), original)
@@ -384,7 +384,7 @@ class ReadabilityPreparationTests(unittest.TestCase):
             def __call__(self):
                 self.ticks += 1
                 return 0.0 if self.ticks < 40 else 2.0
-        with mock.patch('readability_layout.perf_counter', side_effect=Timer()):
+        with mock.patch('netlist2schematic.plugins.readability.readability_layout.perf_counter', side_effect=Timer()):
             result, report = prepare_readability_placement(pl, devices, comps, nets, index, plan)
         self.assertIs(result, pl)
         self.assertEqual(snapshot(pl), original)
@@ -394,7 +394,7 @@ class ReadabilityPreparationTests(unittest.TestCase):
 
 class WeakReadabilityFlowTests(unittest.TestCase):
     def test_real_single_capacitor_preserves_initialization_sa_random_stream_and_freedom(self):
-        import structured_placement as structured
+        from netlist2schematic.layout import structured_placement as structured
         source_path = ROOT / 'examples/3.cir'  # Eleven MOS devices and one output load capacitor.
         real_anneal = structured._anneal
 
@@ -413,10 +413,10 @@ class WeakReadabilityFlowTests(unittest.TestCase):
         for iterations in (0, 600):
             with self.subTest(iterations=iterations):
                 old, old_seeds = run('off', iterations)
-                with mock.patch('readability_routing.make_initializer_cost', side_effect=AssertionError('weak routing estimator')), \
-                     mock.patch('readability_layout._targets', side_effect=AssertionError('weak targets')), \
-                     mock.patch('readability_layout.score_readability', side_effect=AssertionError('weak SA score')), \
-                     mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('unexpected A*')):
+                with mock.patch('netlist2schematic.plugins.readability.readability_routing.make_initializer_cost', side_effect=AssertionError('weak routing estimator')), \
+                     mock.patch('netlist2schematic.plugins.readability.readability_layout._targets', side_effect=AssertionError('weak targets')), \
+                     mock.patch('netlist2schematic.plugins.readability.readability_layout.score_readability', side_effect=AssertionError('weak SA score')), \
+                     mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('unexpected A*')):
                     new, new_seeds = run('auto', iterations)
                 self.assertEqual(old_seeds, new_seeds)
                 for reference, measured in zip(old, new):

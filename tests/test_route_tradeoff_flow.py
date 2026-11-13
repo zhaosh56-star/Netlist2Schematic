@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import run_flow
+from netlist2schematic.flow import run_flow
 
 
 class RouteTradeoffFlowTests(unittest.TestCase):
@@ -26,8 +26,8 @@ class RouteTradeoffFlowTests(unittest.TestCase):
 
     def test_balanced_saved_mode_skips_search_and_preserves_devices(self):
         before = self.saved.read_bytes()
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('A*')), \
-                patch('run_flow._normal_result', side_effect=AssertionError('SA')), \
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A*')), \
+                patch('netlist2schematic.flow.run_flow._normal_result', side_effect=AssertionError('SA')), \
                 redirect_stdout(io.StringIO()):
             new = run_flow.simplify_placement(self.saved, out_dir=self.root/'balanced',
                                              route_tradeoff='balanced')
@@ -38,17 +38,17 @@ class RouteTradeoffFlowTests(unittest.TestCase):
         self.assertEqual(self.saved.read_bytes(), before)
 
     def test_replay_requires_same_tradeoff(self):
-        from simplify_routes import simplify_routes
+        from netlist2schematic.postprocess.simplify_routes import simplify_routes
         with redirect_stdout(io.StringIO()):
             first = run_flow.simplify_placement(self.saved, out_dir=self.root/'first',
                                                route_tradeoff='balanced')
         saved = self.root/'first/rc-placement.json'
-        with patch('simplify_routes.simplify_routes', side_effect=AssertionError('replay')), \
+        with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=AssertionError('replay')), \
                 redirect_stdout(io.StringIO()):
             replay = run_flow.simplify_placement(saved, out_dir=self.root/'replay',
                                                 route_tradeoff='balanced')
         self.assertTrue(replay['route_simplification']['verified_saved_replay'])
-        with patch('simplify_routes.simplify_routes', wraps=simplify_routes) as simplify, \
+        with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', wraps=simplify_routes) as simplify, \
                 redirect_stdout(io.StringIO()):
             strict = run_flow.simplify_placement(saved, out_dir=self.root/'strict')
         self.assertEqual(simplify.call_count, 1)

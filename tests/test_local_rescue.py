@@ -15,9 +15,9 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import local_rescue
-from orthogonal_router import RoutingFailure, _route_net
-from routing_rules import Pin, RoutingOptions, Scene, analyze_routes, on_segment
+from netlist2schematic.recovery import local_rescue
+from netlist2schematic.routing.orthogonal_router import RoutingFailure, _route_net
+from netlist2schematic.routing.routing_rules import Pin, RoutingOptions, Scene, analyze_routes, on_segment
 
 
 def statistics():
@@ -87,7 +87,7 @@ class PortContinuationTests(unittest.TestCase):
 
     def test_goal_preflight_does_not_count_points_outside_graph_axes(self):
         scene, occupied = scene_for()
-        with patch('local_rescue._axes', return_value=([0, 10], [0, 20])):
+        with patch('netlist2schematic.recovery.local_rescue._axes', return_value=([0, 10], [0, 20])):
             safe, _ = local_rescue._safe_goals(scene, 'a', [((8, 0), (8, 20))],
                                                occupied, 80, perf_counter()+10)
         self.assertFalse(safe)
@@ -95,7 +95,7 @@ class PortContinuationTests(unittest.TestCase):
     def test_unrouted_fixed_stubs_are_not_completed_foreign_routes(self):
         scene, occupied = scene_for()
         scene.fixed_segments['b'] = occupied['b']
-        with patch('local_rescue.analyze_routes', wraps=analyze_routes) as analyze:
+        with patch('netlist2schematic.recovery.local_rescue.analyze_routes', wraps=analyze_routes) as analyze:
             local_rescue._tree_score(scene, 'a', [((0, 0), (18, 0))], occupied,
                                       perf_counter()+10)
         self.assertNotIn('b', dict(analyze.call_args.args[0]))
@@ -141,7 +141,7 @@ class PortContinuationTests(unittest.TestCase):
     def test_no_safe_goal_does_not_launch_a_star(self):
         scene, occupied = scene_for()
         scene.body_rects = [(0, (-10, -10, 16, 10)), (7, (19, -1, 150, 1))]
-        with patch('local_rescue._find_path') as search:
+        with patch('netlist2schematic.recovery.local_rescue._find_path') as search:
             result, _, _, failure = local_rescue._route_local_net(
                 scene, 'a', occupied, 80, statistics(), perf_counter()+10, report())
         self.assertIsNone(result)
@@ -203,11 +203,11 @@ class CheckpointTests(unittest.TestCase):
                            'branch': None, 'options': self.scene.options}
 
     def patches(self):
-        return (patch('local_rescue.load_local', return_value=SimpleNamespace()),
-                patch('local_rescue.build_scene', return_value=deepcopy(self.scene)),
-                patch('local_rescue._verify', side_effect=lambda *args, **kw:
+        return (patch('netlist2schematic.recovery.local_rescue.load_local', return_value=SimpleNamespace()),
+                patch('netlist2schematic.recovery.local_rescue.build_scene', return_value=deepcopy(self.scene)),
+                patch('netlist2schematic.recovery.local_rescue._verify', side_effect=lambda *args, **kw:
                       (args[4], {'wirelength': 1}, {'power_connections_checked': 0})),
-                patch('local_rescue.evaluate_quality', return_value={'score': 1}))
+                patch('netlist2schematic.recovery.local_rescue.evaluate_quality', return_value={'score': 1}))
 
     def test_transaction_rolls_back_newly_completed_net_and_uses_new_queries(self):
         seen = []
@@ -223,7 +223,7 @@ class CheckpointTests(unittest.TestCase):
         original = deepcopy(self.context)
         checkpoint = deepcopy(self.checkpoint)
         p1, p2, p3, p4 = self.patches()
-        with p1, p2, p3, p4, patch('local_rescue._route_local_net', side_effect=route):
+        with p1, p2, p3, p4, patch('netlist2schematic.recovery.local_rescue._route_local_net', side_effect=route):
             result = local_rescue.rescue_routing(self.context, self.checkpoint)
         self.assertEqual(original, self.context)
         self.assertEqual(checkpoint, self.checkpoint)
@@ -240,8 +240,8 @@ class CheckpointTests(unittest.TestCase):
     def test_frozen_scene_mismatch_is_input_error_not_recovery_success(self):
         mismatched = deepcopy(self.scene)
         mismatched.bounds = (-1, -1, 101, 101)
-        with patch('local_rescue.load_local'), \
-                patch('local_rescue.build_scene', return_value=mismatched):
+        with patch('netlist2schematic.recovery.local_rescue.load_local'), \
+                patch('netlist2schematic.recovery.local_rescue.build_scene', return_value=mismatched):
             with self.assertRaisesRegex(ValueError, 'does not match'):
                 local_rescue.rescue_routing(self.context, self.checkpoint)
 
@@ -262,8 +262,8 @@ class CheckpointTests(unittest.TestCase):
 
         p1, p2, p3, p4 = self.patches()
         with p1, p2, p3, p4, \
-                patch('local_rescue._transaction', side_effect=transaction), \
-                patch('local_rescue._interface_count', return_value=0):
+                patch('netlist2schematic.recovery.local_rescue._transaction', side_effect=transaction), \
+                patch('netlist2schematic.recovery.local_rescue._interface_count', return_value=0):
             result = local_rescue.rescue_routing(self.context, self.checkpoint)
         self.assertEqual(3, len(calls))
         self.assertEqual('b', result[4]['local_rescue']['transactions'][2]['failed_net'])
@@ -272,16 +272,16 @@ class CheckpointTests(unittest.TestCase):
     def test_failed_final_validation_never_returns_partial_success(self):
         p1, p2, p3, p4 = self.patches()
         with p1, p2, p3, p4, \
-                patch('local_rescue._transaction', return_value=({'a': [], 'b': [], 'c': []}, None)), \
-                patch('local_rescue._verify', side_effect=RoutingFailure('bad', {'reason': 'bad'})):
+                patch('netlist2schematic.recovery.local_rescue._transaction', return_value=({'a': [], 'b': [], 'c': []}, None)), \
+                patch('netlist2schematic.recovery.local_rescue._verify', side_effect=RoutingFailure('bad', {'reason': 'bad'})):
             with self.assertRaises(RoutingFailure) as caught:
                 local_rescue.rescue_routing(self.context, self.checkpoint)
         self.assertEqual('failed', caught.exception.diagnostics['local_rescue']['status'])
         json.dumps(caught.exception.diagnostics, allow_nan=False)
 
     def test_custom_options_cannot_replace_checkpoint_geometry_contract(self):
-        with patch('local_rescue.load_local'), \
-                patch('local_rescue.build_scene', return_value=replace(self.scene,
+        with patch('netlist2schematic.recovery.local_rescue.load_local'), \
+                patch('netlist2schematic.recovery.local_rescue.build_scene', return_value=replace(self.scene,
                       options=RoutingOptions(cross_clearance=24))):
             with self.assertRaisesRegex(ValueError, 'does not match'):
                 local_rescue.rescue_routing(self.context, self.checkpoint,
@@ -296,13 +296,13 @@ class CheckpointTests(unittest.TestCase):
             return {'a': [], 'b': [], 'c': []}, None
 
         with p1, p2, p3 as verify, p4, \
-                patch('local_rescue._transaction', side_effect=transaction):
+                patch('netlist2schematic.recovery.local_rescue._transaction', side_effect=transaction):
             local_rescue.rescue_routing(self.context, self.checkpoint, seconds=3)
         self.assertEqual(deadlines[0], verify.call_args.kwargs['deadline'])
 
     def test_scene_construction_budget_failure_is_reported_as_local_rescue(self):
-        with patch('local_rescue.load_local'), \
-                patch('local_rescue.build_scene', side_effect=RoutingFailure(
+        with patch('netlist2schematic.recovery.local_rescue.load_local'), \
+                patch('netlist2schematic.recovery.local_rescue.build_scene', side_effect=RoutingFailure(
                       'scene timeout', {'reason': 'quality_time_budget', 'stage': 'scene'})):
             with self.assertRaises(RoutingFailure) as caught:
                 local_rescue.rescue_routing(self.context, self.checkpoint)

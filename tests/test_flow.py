@@ -16,8 +16,8 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sa_common import load_local
-import run_flow
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.flow import run_flow
 
 
 class FlowTests(unittest.TestCase):

@@ -2,8 +2,8 @@
 from time import perf_counter
 import unittest
 
-from local_rescue import _route_local_net
-from routing_rules import (Pin, RoutingOptions, Scene, analyze_routes,
+from netlist2schematic.recovery.local_rescue import _route_local_net
+from netlist2schematic.routing.routing_rules import (Pin, RoutingOptions, Scene, analyze_routes,
                            canonical_topology, on_segment)
 
 

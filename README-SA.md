@@ -4,6 +4,8 @@
 
 日常运行与安装命令见 [README.md](README.md)。各脚本和资源的用途见 [docs/project-layout.md](docs/project-layout.md)。
 
+当前实现位于 `netlist2schematic/`：`flow/`、`common/`、`netlist/`、`recognition/`、`layout/`、`routing/`、`recovery/`、`postprocess/`、`rendering/` 按主流程职责分类；`plugins/` 保存可选增强及共享关系。根目录保留六个兼容命令入口，旧文件名对应的新路径见 [source_map.json](netlist2schematic/source_map.json)。本地交付包收在 `dist/`，手工笔记收在 `notes/`，日常命令和实验默认值保持原样。
+
 ```powershell
 Set-Location D:\gongzuo
 .\.venv\Scripts\python.exe .\run_flow.py .\examples\3.cir

@@ -21,8 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'tools')]
 import compare_symmetry_layouts as common
 from compare_passive_layouts import VERIFY_LOCK, _wire_paths
-from sa_common import read_json, write_json, load_local
-from netlist_core import NetlistError
+from netlist2schematic.common.sa_common import read_json, write_json, load_local
+from netlist2schematic.netlist.netlist_core import NetlistError
 
 FORMAT = 'structure-layout-comparison-v1'
 
@@ -39,7 +39,7 @@ def _comparison_evidence(source, cell, devices, structs, comps, nets, metadata, 
                 or not isinstance(saved.get('relations'), list)):
             raise ValueError('Saved layout_evidence must contain structures and relations lists')
         return deepcopy(saved)
-    from layout_intent import build_intent
+    from netlist2schematic.plugins.layout_shared.layout_intent import build_intent
     index = {component['id']: number for number, component in enumerate(comps)}
     evidence, _ = build_intent(source, cell, devices, structs, comps, nets, index, phase=phase)
     return evidence
@@ -90,8 +90,8 @@ def _detour_summary(quality):
 
 
 def _measure_comparison(source, cell, par, pl, comps, nets, index, devices, structs, metadata, phase):
-    from layout_relations import build_layout_relations
-    from structure_selection import prepare_branch_context, measure_structure
+    from netlist2schematic.plugins.layout_shared.layout_relations import build_layout_relations
+    from netlist2schematic.plugins.structure.structure_selection import prepare_branch_context, measure_structure
     evidence = _comparison_evidence(source, cell, devices, structs, comps, nets, metadata, phase=phase)
     context = deepcopy(metadata)
     context['layout_evidence'] = evidence
@@ -136,13 +136,13 @@ def verify_row_plan(data, pl, index, active):
 
 
 def verify(path, signature):
-    from circuit_structures import analyze_structures
-    from layout_quality import evaluate_quality
-    from netlist_core import parse_netlist
-    from routing_rules import build_scene
-    from sa_routing import validate_final_routes
-    from sa_saved import load_placement, saved_routing_options
-    from simplify_routes import _covers_fixed
+    from netlist2schematic.recognition.circuit_structures import analyze_structures
+    from netlist2schematic.layout.layout_quality import evaluate_quality
+    from netlist2schematic.netlist.netlist_core import parse_netlist
+    from netlist2schematic.routing.routing_rules import build_scene
+    from netlist2schematic.routing.sa_routing import validate_final_routes
+    from netlist2schematic.common.sa_saved import load_placement, saved_routing_options
+    from netlist2schematic.postprocess.simplify_routes import _covers_fixed
     with VERIFY_LOCK:
         data, source, par, pl, comps, nets, index = load_placement(path)
         if str(source) != signature['source_netlist'] or data.get('source_cell') != signature['cell']:

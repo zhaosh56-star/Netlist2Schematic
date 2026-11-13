@@ -10,11 +10,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import run_flow
-from orthogonal_router import RoutingFailure
-from routing_rules import RoutingOptions
-from sa_common import load_local
-from sa_saved import load_placement
+from netlist2schematic.flow import run_flow
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import RoutingOptions
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.common.sa_saved import load_placement
 
 
 class RecoveryFlowTests(unittest.TestCase):
@@ -51,10 +51,10 @@ class RecoveryFlowTests(unittest.TestCase):
                 ('small-layered.svg', 'small-clean.svg', 'small-placement.json')}
 
     def test_normal_success_never_attempts_either_recovery(self):
-        with patch('run_flow._normal_result', return_value=deepcopy(self.normal)), \
-                patch('run_flow._try_local_rescue', side_effect=AssertionError('extra rescue')), \
-                patch('spacing_retry.retry_spacing', side_effect=AssertionError('extra spacing')), \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('extra bus')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', return_value=deepcopy(self.normal)), \
+                patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('extra rescue')), \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('extra spacing')), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('extra bus')):
             data = self.generate()
         self.assertEqual('normal', data['routing_stage'])
         self.assertEqual(['normal'], [s['stage'] for s in data['recovery']['stages']])
@@ -63,9 +63,9 @@ class RecoveryFlowTests(unittest.TestCase):
     def test_spacing_success_is_used_without_running_bus(self):
         result = deepcopy(self.normal)
         result[4]['routing_stage'] = 'spacing_retry'
-        with patch('run_flow._normal_result', side_effect=self.failure()), \
-                patch('spacing_retry.retry_spacing', return_value=result) as retry, \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('extra bus')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()), \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', return_value=result) as retry, \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('extra bus')):
             data = self.generate(spacing_scale=1.75, spacing_seconds=7)
         self.assertEqual('spacing_retry', data['routing_stage'])
         self.assertEqual(1, retry.call_count)
@@ -76,10 +76,10 @@ class RecoveryFlowTests(unittest.TestCase):
 
     def test_local_rescue_success_preserves_layout_and_skips_later_stages(self):
         result = deepcopy(self.normal)
-        with patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
-                patch('local_rescue.rescue_routing', return_value=result) as rescue, \
-                patch('spacing_retry.retry_spacing', side_effect=AssertionError('extra spacing')), \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('extra bus')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                patch('netlist2schematic.recovery.local_rescue.rescue_routing', return_value=result) as rescue, \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('extra spacing')), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('extra bus')):
             data = self.generate(rescue_seconds=7)
         self.assertEqual(1, rescue.call_count)
         self.assertEqual(7, rescue.call_args.kwargs['seconds'])
@@ -95,10 +95,10 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(self.original, self.source.read_bytes())
 
     def test_explicit_local_rescue_works_with_fallback_off(self):
-        with patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
-                patch('local_rescue.rescue_routing', return_value=deepcopy(self.normal)) as rescue, \
-                patch('spacing_retry.retry_spacing', side_effect=AssertionError('disabled')), \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('disabled')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                patch('netlist2schematic.recovery.local_rescue.rescue_routing', return_value=deepcopy(self.normal)) as rescue, \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('disabled')), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('disabled')):
             data = self.generate(fallback='off', local_rescue='auto')
         self.assertEqual(1, rescue.call_count)
         self.assertEqual('local_rescue', data['routing_stage'])
@@ -114,9 +114,9 @@ class RecoveryFlowTests(unittest.TestCase):
             checkpoint.clear()
             raise RoutingFailure('still blocked', {'reason': 'no_safe_goal'})
 
-        with patch('run_flow._normal_result', side_effect=failure), \
-                patch('local_rescue.rescue_routing', side_effect=failed_rescue), \
-                patch('spacing_retry.retry_spacing', return_value=deepcopy(self.normal)) as spacing:
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=failure), \
+                patch('netlist2schematic.recovery.local_rescue.rescue_routing', side_effect=failed_rescue), \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', return_value=deepcopy(self.normal)) as spacing:
             data = self.generate(rescue_seconds=4, spacing_seconds=9)
         self.assertEqual(original_cells, spacing.call_args.args[0][0].cell_of)
         self.assertNotIn('uncommitted', spacing.call_args.args[0][4])
@@ -129,9 +129,9 @@ class RecoveryFlowTests(unittest.TestCase):
     def test_zero_or_disabled_local_rescue_never_calls_it(self):
         for kwargs in ({'rescue_seconds': 0}, {'local_rescue': 'off'}):
             with self.subTest(kwargs=kwargs), \
-                    patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
-                    patch('local_rescue.rescue_routing', side_effect=AssertionError('disabled')), \
-                    patch('spacing_retry.retry_spacing', return_value=deepcopy(self.normal)):
+                    patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                    patch('netlist2schematic.recovery.local_rescue.rescue_routing', side_effect=AssertionError('disabled')), \
+                    patch('netlist2schematic.recovery.spacing_retry.retry_spacing', return_value=deepcopy(self.normal)):
                 data = self.generate(**kwargs)
             self.assertEqual('disabled', data['recovery']['stages'][1]['reason'])
 
@@ -140,17 +140,17 @@ class RecoveryFlowTests(unittest.TestCase):
             self.source.write_bytes(self.original + b'* changed during rescue\n')
             raise RoutingFailure('still blocked', {'reason': 'no_path'})
 
-        with patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
-                patch('local_rescue.rescue_routing', side_effect=edit), \
-                patch('spacing_retry.retry_spacing', side_effect=AssertionError('changed source')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                patch('netlist2schematic.recovery.local_rescue.rescue_routing', side_effect=edit), \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('changed source')):
             with self.assertRaisesRegex(ValueError, 'Source netlist changed'):
                 self.generate()
 
     def test_invalid_power_schema_does_not_enter_recovery(self):
         failure = run_flow.RoutingValidationError('invalid saved power', {'reason': 'power_connections'})
-        with patch('run_flow._normal_result', side_effect=failure), \
-                patch('run_flow._try_local_rescue', side_effect=AssertionError('invalid input')), \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('invalid input')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=failure), \
+                patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('invalid input')), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('invalid input')):
             with self.assertRaises(run_flow.RoutingValidationError):
                 self.generate()
 
@@ -158,15 +158,15 @@ class RecoveryFlowTests(unittest.TestCase):
         for kwargs in ({'local_rescue': 'unknown'}, {'rescue_seconds': -1},
                        {'rescue_seconds': float('nan')}, {'rescue_seconds': True}):
             with self.subTest(kwargs=kwargs), \
-                    patch('run_flow._normal_result', side_effect=AssertionError('invalid options')):
+                    patch('netlist2schematic.flow.run_flow._normal_result', side_effect=AssertionError('invalid options')):
                 with self.assertRaises(ValueError):
                     self.generate(**kwargs)
 
     def test_local_only_failure_preserves_success_artifacts_and_both_diagnostics(self):
         self.generate(fallback='only')
         previous = self.artifacts()
-        with patch('run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
-                patch('local_rescue.rescue_routing', side_effect=RoutingFailure(
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
+                patch('netlist2schematic.recovery.local_rescue.rescue_routing', side_effect=RoutingFailure(
                     'no safe port', {'reason': 'no_safe_goal'})):
             with self.assertRaises(RoutingFailure):
                 self.generate(fallback='off', local_rescue='auto')
@@ -176,8 +176,8 @@ class RecoveryFlowTests(unittest.TestCase):
                          [s['stage'] for s in diagnostic['diagnostics']['stages']])
 
     def test_failed_normal_and_spacing_use_verified_bus_and_keep_diagnostics(self):
-        with patch('run_flow._normal_result', side_effect=self.failure()), \
-                patch('spacing_retry.retry_spacing', side_effect=RoutingFailure(
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()), \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=RoutingFailure(
                     'spacing blocked', {'reason': 'no_path', 'net': 'output'})) as retry:
             data = self.generate()
         self.assertEqual(1, retry.call_count)
@@ -190,26 +190,26 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(self.original, self.source.read_bytes())
 
     def test_no_attempted_layout_skips_spacing(self):
-        with patch('run_flow._normal_result', side_effect=self.failure(context=False)), \
-                patch('spacing_retry.retry_spacing', side_effect=AssertionError('no layout')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(context=False)), \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('no layout')):
             data = self.generate()
         self.assertEqual('no_attempted_layout', data['recovery']['stages'][1]['reason'])
         self.assertEqual('no_attempted_layout', data['recovery']['stages'][2]['reason'])
         self.assertEqual('bus_fallback', data['routing_stage'])
 
     def test_zero_spacing_budget_skips_retry(self):
-        with patch('run_flow._normal_result', side_effect=self.failure()), \
-                patch('spacing_retry.retry_spacing', side_effect=AssertionError('disabled')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()), \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('disabled')):
             data = self.generate(spacing_seconds=0)
         self.assertEqual('disabled', data['recovery']['stages'][2]['reason'])
 
     def test_only_skips_normal_and_spacing_and_uses_separate_bus_deadline(self):
-        import fallback_bus
+        from netlist2schematic.recovery import fallback_bus
         actual = fallback_bus.create_fallback
-        with patch('run_flow._normal_result', side_effect=AssertionError('normal called')), \
-                patch('run_flow._try_local_rescue', side_effect=AssertionError('rescue called')), \
-                patch('spacing_retry.retry_spacing', side_effect=AssertionError('spacing called')), \
-                patch('fallback_bus.create_fallback', wraps=actual) as bus:
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=AssertionError('normal called')), \
+                patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('rescue called')), \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('spacing called')), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', wraps=actual) as bus:
             data = self.generate(fallback='only', quality_seconds=.001, fallback_seconds=10)
         self.assertEqual(1, bus.call_count)
         self.assertGreater(bus.call_args.kwargs['deadline'], 0)
@@ -220,8 +220,8 @@ class RecoveryFlowTests(unittest.TestCase):
     def test_off_preserves_failure_and_previous_success_files(self):
         self.generate(fallback='only')
         originals = self.artifacts()
-        with patch('run_flow._normal_result', side_effect=self.failure()), \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('disabled')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('disabled')):
             with self.assertRaises(RoutingFailure):
                 self.generate(fallback='off')
         self.assertEqual(originals, self.artifacts())
@@ -229,7 +229,7 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual('time_budget', diagnostic['diagnostics']['reason'])
 
     def test_candidate_replay_defaults_to_off_but_explicit_auto_recovers(self):
-        with patch('run_flow._normal_result', side_effect=self.failure(context=False)):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(context=False)):
             with self.assertRaises(RoutingFailure):
                 self.generate(candidate_id='1')
             data = self.generate(candidate_id='1', fallback='auto')
@@ -237,8 +237,8 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertFalse((self.destination / 'routing-diagnostics.json').exists())
 
     def test_nonrouting_error_does_not_start_recovery(self):
-        with patch('run_flow._normal_result', side_effect=ValueError('invalid symbol resources')), \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('masked error')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=ValueError('invalid symbol resources')), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('masked error')):
             with self.assertRaisesRegex(ValueError, 'invalid symbol'):
                 self.generate()
         self.assertFalse(self.destination.exists())
@@ -247,8 +247,8 @@ class RecoveryFlowTests(unittest.TestCase):
         def change_source(*args, **kwargs):
             self.source.write_bytes(self.original + b'* edited while running\r\n')
             raise self.failure()
-        with patch('run_flow._normal_result', side_effect=change_source), \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('changed source')):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=change_source), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('changed source')):
             with self.assertRaisesRegex(ValueError, 'Source netlist changed'):
                 self.generate()
         self.assertFalse(self.destination.exists())
@@ -256,9 +256,9 @@ class RecoveryFlowTests(unittest.TestCase):
     def test_all_stages_failed_preserve_previous_success_and_record_all_reasons(self):
         self.generate(fallback='only')
         originals = self.artifacts()
-        with patch('run_flow._normal_result', side_effect=self.failure()), \
-                patch('spacing_retry.retry_spacing', side_effect=RoutingFailure('spacing', {'reason': 'no_path'})), \
-                patch('fallback_bus.create_fallback', side_effect=RoutingFailure('bus timeout', {'reason': 'quality_time_budget'})):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()), \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=RoutingFailure('spacing', {'reason': 'no_path'})), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=RoutingFailure('bus timeout', {'reason': 'quality_time_budget'})):
             with self.assertRaises(RoutingFailure):
                 self.generate()
         self.assertEqual(originals, self.artifacts())
@@ -272,7 +272,7 @@ class RecoveryFlowTests(unittest.TestCase):
         data = self.generate(fallback='only')
         saved = self.destination / 'small-placement.json'
         renderer = load_local('render_clean', 'render-clean.py')
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('A* in saved bus')), \
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in saved bus')), \
                 contextlib.redirect_stdout(io.StringIO()):
             renderer.render(saved, self.directory / 'independent.svg')
             repeated = run_flow.reroute_placement(saved, out_dir=self.directory / 'rerouted')
@@ -342,7 +342,7 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(2, error.exception.code)
 
     def test_fixed_reroute_can_explicitly_rescue_without_relayout(self):
-        with patch('run_flow._normal_result', return_value=deepcopy(self.normal)):
+        with patch('netlist2schematic.flow.run_flow._normal_result', return_value=deepcopy(self.normal)):
             saved_data = self.generate(fallback='off')
         saved = self.destination / 'small-placement.json'
         failure = self.failure(checkpoint=True)
@@ -350,10 +350,10 @@ class RecoveryFlowTests(unittest.TestCase):
         def rescued(context, checkpoint, **kwargs):
             return (*deepcopy(context), deepcopy(self.normal[5]))
 
-        with patch('run_flow.final_route', side_effect=failure), \
-                patch('local_rescue.rescue_routing', side_effect=rescued) as rescue, \
-                patch('spacing_retry.retry_spacing', side_effect=AssertionError('fixed coordinates')), \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('fixed coordinates')), \
+        with patch('netlist2schematic.flow.run_flow.final_route', side_effect=failure), \
+                patch('netlist2schematic.recovery.local_rescue.rescue_routing', side_effect=rescued) as rescue, \
+                patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('fixed coordinates')), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('fixed coordinates')), \
                 contextlib.redirect_stdout(io.StringIO()):
             data = run_flow.reroute_placement(saved, out_dir=self.directory / 'rerouted',
                                                local_rescue='auto', rescue_seconds=8)
@@ -364,21 +364,21 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(self.original, self.source.read_bytes())
 
     def test_saved_reroute_defaults_to_no_recovery(self):
-        with patch('run_flow._normal_result', return_value=deepcopy(self.normal)):
+        with patch('netlist2schematic.flow.run_flow._normal_result', return_value=deepcopy(self.normal)):
             self.generate(fallback='off')
         saved = self.destination / 'small-placement.json'
-        with patch('run_flow.final_route', side_effect=self.failure(checkpoint=True)), \
-                patch('run_flow._try_local_rescue', side_effect=AssertionError('default disabled')), \
+        with patch('netlist2schematic.flow.run_flow.final_route', side_effect=self.failure(checkpoint=True)), \
+                patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('default disabled')), \
                 self.assertRaises(RoutingFailure):
             run_flow.reroute_placement(saved, out_dir=self.directory / 'rerouted')
 
     def test_cli_routes_rescue_options_for_saved_and_new_input(self):
-        with patch('run_flow.run') as run:
+        with patch('netlist2schematic.flow.run_flow.run') as run:
             run_flow.main([str(self.source), '--local-rescue', 'auto', '--rescue-seconds', '5',
                            '--fallback', 'off'])
         self.assertEqual('auto', run.call_args.kwargs['local_rescue'])
         self.assertEqual(5, run.call_args.kwargs['rescue_seconds'])
-        with patch('run_flow.reroute_placement') as reroute:
+        with patch('netlist2schematic.flow.run_flow.reroute_placement') as reroute:
             run_flow.main(['--reroute-placement', 'saved.json', '--local-rescue', 'auto',
                            '--rescue-seconds', '9'])
         self.assertEqual('auto', reroute.call_args.kwargs['local_rescue'])

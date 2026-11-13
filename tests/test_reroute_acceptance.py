@@ -17,9 +17,9 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sa_common import load_local
-from sa_saved import load_placement
-import run_flow
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.common.sa_saved import load_placement
+from netlist2schematic.flow import run_flow
 
 NS = {'svg': 'http://www.w3.org/2000/svg'}
 
@@ -163,7 +163,7 @@ class RerouteAcceptanceTests(unittest.TestCase):
                 for net, members in nets.items() if not par.power_marker_sym(net)}
         crosses = independent_foreign_checks(saved['routes'], pins)
         self.assertEqual(len(crosses), saved['metrics']['crossings'])
-        from routing_rules import build_scene, analyze_routes
+        from netlist2schematic.routing.routing_rules import build_scene, analyze_routes
         scene = build_scene(par, nets, placement, index)
         inspection = analyze_routes(list(saved['routes'].items()), scene)
         self.assertEqual([], inspection['violations'])
@@ -193,7 +193,7 @@ class RerouteAcceptanceTests(unittest.TestCase):
         self.assertFalse(output.exists())
 
     def test_budget_failure_reports_diagnostic_and_preserves_success_files(self):
-        from orthogonal_router import RoutingFailure
+        from netlist2schematic.routing.orthogonal_router import RoutingFailure
         destination = self.directory / 'existing'
         destination.mkdir()
         originals = {}
@@ -202,7 +202,7 @@ class RerouteAcceptanceTests(unittest.TestCase):
             (destination / name).write_bytes(originals[name])
         failure = RoutingFailure('Search budget exhausted', {
             'reason': 'max_expansions', 'net': 'f2', 'budget': 1, 'blocking_nets': ['f3']})
-        with patch('orthogonal_router.route_scene', side_effect=failure):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=failure):
             with self.assertRaisesRegex(ValueError, 'budget'):
                 run_flow.reroute_placement(self.saved_input('2'), out_dir=destination)
         for name, content in originals.items():
@@ -219,8 +219,8 @@ class RerouteAcceptanceTests(unittest.TestCase):
         self.assertNotEqual(0, both.returncode)
 
     def test_real_search_node_budget_is_enforced(self):
-        from orthogonal_router import route_scene, RoutingFailure
-        from routing_rules import build_scene, RoutingOptions
+        from netlist2schematic.routing.orthogonal_router import route_scene, RoutingFailure
+        from netlist2schematic.routing.routing_rules import build_scene, RoutingOptions
         _, _, par, placement, _, nets, index = load_placement(self.saved_input('2'))
         scene = build_scene(par, nets, placement, index, options=RoutingOptions(max_nodes=1))
         with self.assertRaises(RoutingFailure) as failure:
@@ -233,7 +233,7 @@ class RerouteAcceptanceTests(unittest.TestCase):
         protected = self.directory / 'routing-diagnostics.json'
         source.rename(protected)
         original = protected.read_bytes()
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('Search should not start')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('Search should not start')):
             with self.assertRaises(ValueError):
                 run_flow.reroute_placement(protected, out_dir=self.directory)
         self.assertEqual(original, protected.read_bytes())
@@ -245,7 +245,7 @@ class RerouteAcceptanceTests(unittest.TestCase):
         protected = destination / 'routing-diagnostics.json'
         original = b'{"notes":"This belongs to the user"}\n'
         protected.write_bytes(original)
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('Search should not start')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('Search should not start')):
             with self.assertRaises(ValueError):
                 run_flow.reroute_placement(source, out_dir=destination)
         self.assertEqual(original, protected.read_bytes())
@@ -254,7 +254,7 @@ class RerouteAcceptanceTests(unittest.TestCase):
         destination = self.directory / 'invalid-candidate'
         # Connected-network geometry is intentionally absent; the validator's
         # internal topology sets must not leak into the JSON error envelope.
-        with patch('orthogonal_router.route_scene', return_value=([('f2', [])], {})):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', return_value=([('f2', [])], {})):
             with self.assertRaisesRegex(ValueError, 'failed validation'):
                 run_flow.reroute_placement(self.saved_input('2'), out_dir=destination)
         data = json.loads((destination / 'routing-diagnostics.json').read_text(encoding='utf8'))
@@ -265,7 +265,7 @@ class RerouteAcceptanceTests(unittest.TestCase):
     def test_sa_estimator_does_not_call_final_astar(self):
         layered = load_local('place_layered', 'place-layered.py')
         with contextlib.redirect_stdout(io.StringIO()), \
-                patch('orthogonal_router.route_scene', side_effect=AssertionError('A* entered SA')):
+                patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* entered SA')):
             placement, comps, _, _, _ = layered.create_placement(
                 ROOT / 'examples/3.cir', iterations=3, seed=123)
         self.assertEqual(len(comps), len(set(placement.cell_of)))

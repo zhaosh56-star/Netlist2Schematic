@@ -25,8 +25,8 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'tools')]
 import compare_region_layouts as region
 import compare_symmetry_layouts as common
 from compare_passive_layouts import VERIFY_LOCK
-from netlist_core import NetlistError
-from sa_common import load_local, read_json, write_json
+from netlist2schematic.netlist.netlist_core import NetlistError
+from netlist2schematic.common.sa_common import load_local, read_json, write_json
 
 FORMAT = 'attachment-integration-comparison-v1'
 POLICIES = ('off', 'passive', 'all')
@@ -80,10 +80,10 @@ def command_for(signature, directory):
 
 def build_measurement_plan(source, cell, comps, nets, index, policy):
     """Identify once from original rows; measure every contender by this plan."""
-    from attachment_integration import build_attachment_plan
-    from circuit_structures import analyze_structures
-    from device_leveling import compute_levels
-    from netlist_core import parse_netlist
+    from netlist2schematic.plugins.attachment.attachment_integration import build_attachment_plan
+    from netlist2schematic.recognition.circuit_structures import analyze_structures
+    from netlist2schematic.recognition.device_leveling import compute_levels
+    from netlist2schematic.netlist.netlist_core import parse_netlist
     devices = parse_netlist(source, cell=cell)
     structs, levels = analyze_structures(devices), compute_levels(devices)
     legacy = load_local('place_layered', 'place-layered.py')
@@ -121,8 +121,8 @@ def checked_payload(value):
 
 def verify(path, signature):
     """Reuse the original full validator, SVG checks and exact saved redraw."""
-    from attachment_selection import measure_candidate
-    from sa_saved import load_placement
+    from netlist2schematic.plugins.attachment.attachment_selection import measure_candidate
+    from netlist2schematic.common.sa_saved import load_placement
     result = region.verify(path, signature)
     data = read_json(path)
     result['strict_simplification_audit'] = strict_simplification_audit(data)
@@ -223,8 +223,11 @@ def load_compatible_off(report_path, audit_path, code):
     audit = read_json(audit_path)
     if audit.get('passed') is not True or audit.get('input_changes') or not audit.get('cases'):
         raise ValueError('Historical off import requires a completed passing compatibility audit')
-    expected = {path: digest for path, digest in code.items() if Path(path).parent == ROOT and
-                (Path(path).suffix == '.py' or Path(path).name == 'symbol-geometry.json')}
+    from netlist2schematic.common.sa_common import engine_source_files
+    runtime_paths = {str(path.resolve()) for path in engine_source_files(root=ROOT)}
+    runtime_paths.add(str((ROOT / 'symbol-geometry.json').resolve()))
+    expected = {path: digest for path, digest in code.items()
+                if str(Path(path).resolve()) in runtime_paths}
     if audit.get('current_files') != expected:
         raise ValueError('Off-state audit does not describe the current frozen root engine')
     audit.update(_path=str(audit_path.resolve()), _sha256=common._sha(audit_path))
@@ -356,8 +359,8 @@ def off_compatibility(current, reference):
     try:
         old_data = read_json(a['placement_json'])
         new_data = read_json(b['placement_json'])
-        from sa_saved import load_placement, saved_routing_options
-        from sa_routing import validate_final_routes
+        from netlist2schematic.common.sa_saved import load_placement, saved_routing_options
+        from netlist2schematic.routing.sa_routing import validate_final_routes
         with VERIFY_LOCK:
             _, _, par, pl, _, nets, index = load_placement(Path(a['placement_json']))
             _, metrics, validation = validate_final_routes(par, nets, pl, index,

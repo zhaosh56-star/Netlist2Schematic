@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import route_tracks
-import simplify_routes as shortcuts
-from routing_rules import Pin, Scene, analyze_routes, canonical_topology
-from sa_routing import _verify
+from netlist2schematic.postprocess import route_tracks
+from netlist2schematic.postprocess import simplify_routes as shortcuts
+from netlist2schematic.routing.routing_rules import Pin, Scene, analyze_routes, canonical_topology
+from netlist2schematic.routing.sa_routing import _verify
 from test_route_track_compaction import track_case
 
 
@@ -132,13 +132,13 @@ class TrackChainFairnessTests(unittest.TestCase):
 class FinalAuthorityTests(unittest.TestCase):
     def run_bad_candidate(self, fixture, candidate):
         with ExitStack() as stack:
-            stack.enter_context(patch('simplify_routes.build_scene', return_value=fixture[5]))
+            stack.enter_context(patch('netlist2schematic.postprocess.simplify_routes.build_scene', return_value=fixture[5]))
             for name in ('_shortcut_candidates', 'reattachment_candidates',
                          '_three_segment_candidates'):
-                stack.enter_context(patch('simplify_routes.' + name, return_value=iter(())))
-            stack.enter_context(patch('simplify_routes._track_compaction_candidates',
+                stack.enter_context(patch('netlist2schematic.postprocess.simplify_routes.' + name, return_value=iter(())))
+            stack.enter_context(patch('netlist2schematic.postprocess.simplify_routes._track_compaction_candidates',
                 side_effect=lambda *args: iter([{'net': fixture[6], 'segments': candidate}])))
-            stack.enter_context(patch('orthogonal_router._find_path',
+            stack.enter_context(patch('netlist2schematic.routing.orthogonal_router._find_path',
                                      side_effect=AssertionError('simplification called A*')))
             result = shortcuts.simplify_routes(*fixture[:4], fixture[4])
         _, metrics, _ = _verify(*fixture[:4], result[0], fixture[5])

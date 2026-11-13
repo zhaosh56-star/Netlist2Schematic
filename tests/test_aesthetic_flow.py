@@ -12,11 +12,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import aesthetic_flow
-from orthogonal_router import RoutingFailure
-import run_flow
-from sa_common import load_local
-from sa_saved import load_placement
+from netlist2schematic.flow import aesthetic_flow
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.flow import run_flow
+from netlist2schematic.common.sa_common import load_local
+from netlist2schematic.common.sa_saved import load_placement
 
 
 class CandidatePlacement:
@@ -49,8 +49,8 @@ def route_result(long=False):
 
 class CandidateSelectionTests(unittest.TestCase):
     def select(self, items, routing, **kwargs):
-        with patch('structured_placement.create_candidates', return_value=iter(items)), \
-                patch('aesthetic_flow.final_route', side_effect=routing) as routed, \
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter(items)), \
+                patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=routing) as routed, \
                 contextlib.redirect_stdout(io.StringIO()):
             result = aesthetic_flow.select_layout('unused.cir', iterations=0, **kwargs)
         return result, routed
@@ -84,7 +84,7 @@ class CandidateSelectionTests(unittest.TestCase):
             clock.now = 111.
             yield candidate(1)
 
-        with patch('aesthetic_flow.perf_counter', side_effect=lambda: clock.now):
+        with patch('netlist2schematic.flow.aesthetic_flow.perf_counter', side_effect=lambda: clock.now):
             chosen, routed = self.select(generate(), [route_result()], quality_seconds=10)
         self.assertEqual(1, routed.call_count)
         self.assertEqual('time_budget', chosen[4]['quality']['stop_reason'])
@@ -109,7 +109,7 @@ class CandidateSelectionTests(unittest.TestCase):
             # A deadline-aware generator can stop without yielding another item.
             return
 
-        with patch('aesthetic_flow.perf_counter', side_effect=lambda: clock.now):
+        with patch('netlist2schematic.flow.aesthetic_flow.perf_counter', side_effect=lambda: clock.now):
             chosen, routed = self.select(generate(), [route_result()], quality_seconds=10)
         self.assertEqual(1, routed.call_count)
         self.assertEqual('time_budget', chosen[4]['quality']['stop_reason'])
@@ -137,8 +137,8 @@ class CandidateSelectionTests(unittest.TestCase):
                 'excess_detour': 500}}}
 
         scores = [quality(score) for score in (30, 10, feedback_score)]
-        with patch('structured_placement.feedback_candidate', return_value=tuple(proposal)) as feedback, \
-                patch('layout_quality.evaluate_quality', side_effect=scores):
+        with patch('netlist2schematic.layout.structured_placement.feedback_candidate', return_value=tuple(proposal)) as feedback, \
+                patch('netlist2schematic.layout.layout_quality.evaluate_quality', side_effect=scores):
             chosen, routed = self.select([candidate(i, energy=-i) for i in (1, 2, 3)],
                                           [route_result()] * 3, candidate_id=candidate_id)
         return chosen, routed, feedback
@@ -221,7 +221,7 @@ class CandidateSelectionTests(unittest.TestCase):
     def test_failed_first_candidate_does_not_rescue_before_later_success(self):
         failed = RoutingFailure('blocked', {'reason': 'no_path'})
         failed._rescue_context = {'failed_net': 'first'}
-        with patch('run_flow._try_local_rescue', side_effect=AssertionError('early rescue')):
+        with patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('early rescue')):
             chosen, _ = self.select([candidate(0), candidate(1)], [failed, route_result()])
         self.assertEqual(1, chosen[0].identifier)
 
@@ -286,7 +286,7 @@ class AestheticSavedFlowTests(unittest.TestCase):
         original_artifacts = {path: path.read_bytes() for path in artifacts}
         failure = RoutingFailure('No verified candidate completed in time', {
             'reason': 'time_budget', 'quality_seconds': .01, 'candidates': []})
-        with patch('aesthetic_flow.select_layout', side_effect=failure), \
+        with patch('netlist2schematic.flow.aesthetic_flow.select_layout', side_effect=failure), \
                 contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RoutingFailure):
             run_flow.run(self.source, iterations=0, quality_seconds=.01, out_dir=destination,
                          fallback='off')
@@ -351,7 +351,7 @@ class AestheticSavedFlowTests(unittest.TestCase):
                         load_placement(saved)
 
     def test_cli_exposes_default_budget_and_candidate_replay(self):
-        with patch('run_flow.run') as run:
+        with patch('netlist2schematic.flow.run_flow.run') as run:
             run_flow.main([str(self.source), '--candidate-id', '2', '--iterations', '0'])
         self.assertEqual('structured', run.call_args.kwargs['layout_style'])
         self.assertEqual(300, run.call_args.kwargs['quality_seconds'])

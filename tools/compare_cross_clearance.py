@@ -42,7 +42,7 @@ NOTICE = ('主组为图1～7及图23旧v5成品；额外两组分别从图23的v
 
 def execute(label, source, destination, seconds):
     from compare_passive_layouts import _verify_saved
-    import run_flow
+    from netlist2schematic.flow import run_flow
 
     source = _resolve(source)
     original = _json(source)

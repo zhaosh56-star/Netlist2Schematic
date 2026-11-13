@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import simplify_budget as budget
-from orthogonal_router import RoutingFailure
+from netlist2schematic.postprocess import simplify_budget as budget
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
 
 
 def route_fixture():
@@ -94,7 +94,7 @@ class CanonicalComplexityTests(unittest.TestCase):
         points = [(0, 0), (100, 0)]
         placement = SimpleNamespace(pin_world=lambda component, pin: points[component])
         expired = RoutingFailure('feature extraction expired', {'reason': 'quality_time_budget'})
-        with patch('simplify_budget.extract_features', side_effect=expired):
+        with patch('netlist2schematic.postprocess.simplify_budget.extract_features', side_effect=expired):
             report = budget.estimate_simplify_budget(placement, [{}, {}],
                 {'signal': [('left', 'P'), ('right', 'P')]}, {'left': 0, 'right': 1},
                 [('signal', [((0, 0), (100, 0))])])
@@ -108,7 +108,7 @@ class CanonicalComplexityTests(unittest.TestCase):
     def test_non_deadline_feature_errors_are_not_hidden_as_a_large_budget(self):
         failure = RoutingFailure('invalid geometry', {'reason': 'invalid_geometry'})
         placement = SimpleNamespace(pin_world=lambda component, pin: (0, 0))
-        with patch('simplify_budget.extract_features', side_effect=failure), \
+        with patch('netlist2schematic.postprocess.simplify_budget.extract_features', side_effect=failure), \
                 self.assertRaises(RoutingFailure) as caught:
             budget.estimate_simplify_budget(placement, [], {}, {}, [])
         self.assertIs(failure, caught.exception)

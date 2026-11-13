@@ -40,8 +40,8 @@ NOTICE = ('图1～7及图23旧v5成品作为主组；另对图23已完成v6的�
 
 def _outer_facts(saved):
     """Measure visible left/top detours without inventing a shortest-path claim."""
-    from routing_rules import canonical_topology
-    from sa_saved import load_placement
+    from netlist2schematic.routing.routing_rules import canonical_topology
+    from netlist2schematic.common.sa_saved import load_placement
 
     data, _, _, placement, _, nets, index = load_placement(saved)
     result = {}
@@ -97,7 +97,7 @@ def _focus_svg(source, destination):
 
 def execute(label, source, destination, seconds):
     from compare_passive_layouts import _verify_saved
-    import run_flow
+    from netlist2schematic.flow import run_flow
 
     source = _resolve(source)
     original = _json(source)

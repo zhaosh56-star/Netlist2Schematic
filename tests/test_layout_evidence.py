@@ -9,8 +9,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from circuit_structures import analyze_structures
-from layout_evidence import build_layout_evidence, extend_branch_evidence
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.plugins.layout_shared.layout_evidence import build_layout_evidence, extend_branch_evidence
 
 
 def mos(d, g, s, kind='NMOS'):

@@ -8,9 +8,9 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from routing_rules import Pin, Scene, canonical_topology
-from net_label_core import build_view
-from net_label_validation import display_routes, validate_view
+from netlist2schematic.routing.routing_rules import Pin, Scene, canonical_topology
+from netlist2schematic.plugins.net_labels.net_label_core import build_view
+from netlist2schematic.plugins.net_labels.net_label_validation import display_routes, validate_view
 
 
 def fixture(routes, points, *, escapes=None):
@@ -130,7 +130,7 @@ class NetLabelCoreTests(unittest.TestCase):
     def test_fixed_original_exits_remain_fully_covered(self):
         self.build()
         runs = geometric_routes(display_routes(self.view))['a']
-        from routing_rules import on_segment
+        from netlist2schematic.routing.routing_rules import on_segment
         for a, b in self.scene.fixed_segments['a']:
             self.assertTrue(any(on_segment(a,c,d) and on_segment(b,c,d) for c,d in runs))
         self.verify()
@@ -155,7 +155,7 @@ class NetLabelCoreTests(unittest.TestCase):
         self.assertEqual(geometric_routes(self.original), geometric_routes(display_routes(view)))
 
     def test_core_never_calls_sa_or_astar(self):
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('A*')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A*')):
             self.assertTrue(self.build()['labels'])
         self.verify()
 
@@ -206,8 +206,8 @@ class NetLabelCoreTests(unittest.TestCase):
         self.verify()
 
     def test_timeout_during_trial_validation_rolls_back_the_whole_split(self):
-        from orthogonal_router import RoutingFailure
-        import net_label_core
+        from netlist2schematic.routing.orthogonal_router import RoutingFailure
+        from netlist2schematic.plugins.net_labels import net_label_core
         actual = validate_view
 
         def interrupt(scene, original, view, terminal_ids, **kwargs):

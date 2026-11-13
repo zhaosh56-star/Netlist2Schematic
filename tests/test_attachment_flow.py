@@ -3,8 +3,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-import run_flow
-from attachment_selection import organization_rank, select_attachment_result
+from netlist2schematic.flow import run_flow
+from netlist2schematic.plugins.attachment.attachment_selection import organization_rank, select_attachment_result
 
 
 def candidate(identifier, *, score=10, embedded=0, violations=0, length=1000,
@@ -37,10 +37,10 @@ class AttachmentFlowTests(unittest.TestCase):
             metadata.setdefault('layout_attachments', {'plan': plan})
             return metadata
         quality = {'score': 10, 'per_net': {'signal': {'detour_factor': 3, 'excess_detour': 900}}}
-        with patch('attachment_integration.refine_attachments', side_effect=refine), \
-                patch('attachment_selection.measure_candidate', side_effect=measure), \
-                patch('structured_placement.feedback_candidate', side_effect=AssertionError('old feedback overwrote slots')), \
-                patch('layout_quality.evaluate_quality', return_value=quality):
+        with patch('netlist2schematic.plugins.attachment.attachment_integration.refine_attachments', side_effect=refine), \
+                patch('netlist2schematic.plugins.attachment.attachment_selection.measure_candidate', side_effect=measure), \
+                patch('netlist2schematic.layout.structured_placement.feedback_candidate', side_effect=AssertionError('old feedback overwrote slots')), \
+                patch('netlist2schematic.layout.layout_quality.evaluate_quality', return_value=quality):
             _, routed = CandidateSelectionTests().select(rows, [route_result()] * 3, attachment_layout='passive')
         self.assertEqual([1, 2, 3], [call.args[2].identifier for call in routed.call_args_list])
         self.assertEqual(len(seen_budgets), 2)
@@ -138,11 +138,11 @@ class AttachmentFlowTests(unittest.TestCase):
         self.assertEqual(organization_rank(row), previous)
 
     def test_disabled_policy_and_reference_keep_original_random_stream(self):
-        import structured_placement as placement
+        from netlist2schematic.layout import structured_placement as placement
         source = Path(__file__).resolve().parents[1] / 'examples/1.cir'
         old = next(placement.create_candidates(source, iterations=30, seed=7))
         for policy in ('off', 'passive', 'all'):
-            with patch('orthogonal_router.route_scene', side_effect=AssertionError('SA called A*')):
+            with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('SA called A*')):
                 reference = next(placement.create_candidates(source, iterations=30, seed=7,
                     attachment_layout=policy))
             self.assertEqual(old[0].cell_of, reference[0].cell_of)

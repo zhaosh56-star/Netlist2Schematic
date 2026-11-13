@@ -8,9 +8,9 @@ from time import perf_counter
 import unittest
 from unittest.mock import patch
 
-from orthogonal_router import RoutingFailure, _axes, _find_path, route_scene
-from routing_rules import Pin, RoutingOptions, Scene
-from sa_routing import RoutingValidationError, final_route
+from netlist2schematic.routing.orthogonal_router import RoutingFailure, _axes, _find_path, route_scene
+from netlist2schematic.routing.routing_rules import Pin, RoutingOptions, Scene
+from netlist2schematic.routing.sa_routing import RoutingValidationError, final_route
 
 
 def simple_scene(points, **options):
@@ -46,7 +46,7 @@ class FailureCheckpointTests(unittest.TestCase):
             _rescue_state['branch'] = branch
             return None, Counter({'a': 1})
 
-        with patch('orthogonal_router._route_net', side_effect=attempt):
+        with patch('netlist2schematic.routing.orthogonal_router._route_net', side_effect=attempt):
             with self.assertRaises(RoutingFailure) as caught:
                 route_scene(self.scene)
         context = caught.exception._rescue_context
@@ -72,7 +72,7 @@ class FailureCheckpointTests(unittest.TestCase):
             _rescue_state['branch'] = {'net': net, 'pin': 'current'}
             raise RoutingFailure('expired', {'reason': 'quality_time_budget'})
 
-        with patch('orthogonal_router._route_net', side_effect=attempt):
+        with patch('netlist2schematic.routing.orthogonal_router._route_net', side_effect=attempt):
             with self.assertRaises(RoutingFailure) as caught:
                 route_scene(self.scene)
         context = caught.exception._rescue_context
@@ -86,7 +86,7 @@ class FailureCheckpointTests(unittest.TestCase):
             # b's proposed route overlaps a; it has not been accepted.
             return [((0, 0), (100, 0))], Counter()
 
-        with patch('orthogonal_router._route_net', side_effect=attempt):
+        with patch('netlist2schematic.routing.orthogonal_router._route_net', side_effect=attempt):
             with self.assertRaises(RoutingFailure) as caught:
                 route_scene(self.scene)
         self.assertEqual('candidate_validation', caught.exception.diagnostics['reason'])
@@ -118,8 +118,8 @@ class FailureCheckpointTests(unittest.TestCase):
                 if starts == 2:
                     raise RoutingFailure('expired', {'reason': 'quality_time_budget'})
 
-        with patch('orthogonal_router._check_deadline', side_effect=deadline), \
-                patch('orthogonal_router._route_net',
+        with patch('netlist2schematic.routing.orthogonal_router._check_deadline', side_effect=deadline), \
+                patch('netlist2schematic.routing.orthogonal_router._route_net',
                       return_value=([((0, 0), (100, 0))], Counter())):
             with self.assertRaises(RoutingFailure) as caught:
                 route_scene(self.scene)
@@ -162,7 +162,7 @@ class RescueSearchInterfaceTests(unittest.TestCase):
             scene = simple_scene({'a': [(0, 0), target]})
             costs = []
             for heading in (None, direction):
-                with patch('orthogonal_router.heapq.heappush', wraps=push) as pushed:
+                with patch('netlist2schematic.routing.orthogonal_router.heapq.heappush', wraps=push) as pushed:
                     routed, _ = _find_path(
                         scene, 'a', (0, 0), [(target, target)], {}, 50, [], statistics(),
                         initial_direction=heading)
@@ -217,9 +217,9 @@ class FinalVerificationCheckpointTests(unittest.TestCase):
     def test_unproven_final_networks_are_not_frozen_for_rescue(self):
         scene = simple_scene({'a': [(0, 0), (100, 0)]})
         error = RoutingValidationError('failed validation', {'structure_errors': ['a: missing pin']})
-        with patch('routing_rules.build_scene', return_value=scene), \
-                patch('orthogonal_router.route_scene', return_value=([('a', [])], {})), \
-                patch('sa_routing._verify', side_effect=error):
+        with patch('netlist2schematic.routing.routing_rules.build_scene', return_value=scene), \
+                patch('netlist2schematic.routing.orthogonal_router.route_scene', return_value=([('a', [])], {})), \
+                patch('netlist2schematic.routing.sa_routing._verify', side_effect=error):
             with self.assertRaises(RoutingValidationError) as caught:
                 final_route(None, {}, None, {})
         self.assertIsNone(caught.exception._rescue_context)
@@ -228,13 +228,13 @@ class FinalVerificationCheckpointTests(unittest.TestCase):
 
     def test_resource_and_malformed_route_errors_do_not_gain_rescue_context(self):
         scene = simple_scene({'a': [(0, 0), (100, 0)]})
-        with patch('routing_rules.build_scene', side_effect=FileNotFoundError('symbol')):
+        with patch('netlist2schematic.routing.routing_rules.build_scene', side_effect=FileNotFoundError('symbol')):
             with self.assertRaises(FileNotFoundError) as caught:
                 final_route(None, {}, None, {})
         self.assertFalse(hasattr(caught.exception, '_rescue_context'))
-        with patch('routing_rules.build_scene', return_value=scene), \
-                patch('orthogonal_router.route_scene', return_value=([('a', [])], {})), \
-                patch('sa_routing._verify', side_effect=ValueError('malformed coordinates')):
+        with patch('netlist2schematic.routing.routing_rules.build_scene', return_value=scene), \
+                patch('netlist2schematic.routing.orthogonal_router.route_scene', return_value=([('a', [])], {})), \
+                patch('netlist2schematic.routing.sa_routing._verify', side_effect=ValueError('malformed coordinates')):
             with self.assertRaises(ValueError) as caught:
                 final_route(None, {}, None, {})
         self.assertFalse(hasattr(caught.exception, '_rescue_context'))

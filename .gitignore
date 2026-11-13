@@ -43,3 +43,6 @@ Thumbs.db
 !/analog-canvas-main/fixtures/simulation-acceptance/
 /analog-canvas-main/fixtures/simulation-acceptance/*
 !/analog-canvas-main/fixtures/simulation-acceptance/ota-5t.spi
+
+# Local distribution archives
+/dist/

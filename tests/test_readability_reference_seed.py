@@ -3,8 +3,8 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from readability_selection import reference_seed, measure_candidate
-from sa_routing import final_route
+from netlist2schematic.plugins.readability.readability_selection import reference_seed, measure_candidate
+from netlist2schematic.routing.sa_routing import final_route
 from tests.test_readability_refinement import tail_fixture, PAR
 
 
@@ -27,7 +27,7 @@ class ReferenceSeedTests(unittest.TestCase):
     def test_reuses_legal_core_in_same_slot_without_routing_or_parent_mutation(self):
         pl, comps, nets, index, metadata, prior, plan = self.fixture()
         before = deepcopy(prior[1].__dict__)
-        with patch('orthogonal_router.route_scene', side_effect=AssertionError('extra A*')):
+        with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('extra A*')):
             result = reference_seed(PAR, pl, comps, nets, index, metadata, [prior], plan)
         self.assertIsNotNone(result)
         self.assertEqual(result[0].cell_of, prior[1].cell_of)
@@ -67,14 +67,14 @@ class ReferenceSeedTests(unittest.TestCase):
         target = {'passive_supported': True, 'measurable': True, 'violations': 1,
                   'shape_error': 0, 'pin_axis_error': 0}
         source = dict(target, violations=0, shape_error=10)
-        with patch('readability_layout.measure_readability', side_effect=[target, source]):
+        with patch('netlist2schematic.plugins.readability.readability_layout.measure_readability', side_effect=[target, source]):
             self.assertIsNone(reference_seed(PAR, pl, comps, nets, index, metadata, [prior], plan))
 
     def test_existing_bank_outlet_gain_cannot_be_overwritten(self):
         pl, comps, nets, index, metadata, prior, plan = self.fixture()
         a = {'bank_outlet_planned': 1, 'bank_outlet_error': 0, 'source_count': 1}
         b = dict(a, bank_outlet_error=3)
-        with patch('readability_refinement.measure_refinements', side_effect=[a, a, b]):
+        with patch('netlist2schematic.plugins.readability.readability_refinement.measure_refinements', side_effect=[a, a, b]):
             self.assertIsNone(reference_seed(PAR, pl, comps, nets, index, metadata, [prior], plan, phase=4))
 
 

@@ -1,5 +1,5 @@
 import unittest
-from candidate_budget import routing_deadline
+from netlist2schematic.flow.candidate_budget import routing_deadline
 
 
 class CandidateBudgetTests(unittest.TestCase):

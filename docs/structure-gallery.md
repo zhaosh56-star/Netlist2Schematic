@@ -54,7 +54,7 @@ BJT目前支持解析、分层和绘图，MOS结构识别器没有对应BJT结�
 
 - [generate_structure_gallery.py](../tools/generate_structure_gallery.py)：实际调用识别、路由、验收及渲染，生成HTML和总清单。
 - [structure_gallery_cases.py](../tools/structure_gallery_cases.py)：独立教学示例的网表、角色和展示坐标；生产布局算法不导入此文件。
-- [circuit_structures.py](../circuit_structures.py)、[vf2_match.py](../vf2_match.py)：现有识别规则。
+- [circuit_structures.py](../netlist2schematic/recognition/circuit_structures.py)、[vf2_match.py](../netlist2schematic/recognition/vf2_match.py)：现有识别规则。
 - `output/structure-gallery/manifest.json`：类型覆盖、源码哈希、每图成员、指标和输出路径。
 - 每个示例子目录保存 `example.cir`、`recognition.json`、`example-placement.json`、高亮/彩色/黑白SVG。
 

@@ -9,11 +9,11 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from attachment_placement import (prepare_attachments, score_attachments,
+from netlist2schematic.plugins.layout_shared.attachment_placement import (prepare_attachments, score_attachments,
                                   measure_parallel_coherence, refine_parallel_attachments)
-from layout_relations import build_layout_relations, prepare_structure_placement
-from netlist_core import parse_netlist, to_document
-import structured_placement as structured
+from netlist2schematic.plugins.layout_shared.layout_relations import build_layout_relations, prepare_structure_placement
+from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
+from netlist2schematic.layout import structured_placement as structured
 from tests.test_passive_placement import base_placement, convert, mos, source, resistor, amplifier
 
 
@@ -36,7 +36,7 @@ class AttachmentPreparationTests(unittest.TestCase):
     def test_cross_coupled_tanks_use_unique_drain_despite_extra_gate(self):
         devices, pl, comps, nets, index, relations = tanks()
         frozen = deepcopy((pl.cell_of, pl.orient, pl.column_x, pl.row_y, pl.blocks))
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* called')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* called')):
             result, report = prepare_attachments(pl, devices, comps, nets, index, relations)
         loads = [row for row in report['groups'] if row['kind'] == 'parallel_load']
         self.assertEqual(len(loads), 2)
@@ -92,7 +92,7 @@ class AttachmentPreparationTests(unittest.TestCase):
 
     def test_no_legal_group_transaction_rolls_back_every_member(self):
         devices, pl, comps, nets, index, relations = tanks()
-        with mock.patch('attachment_placement._legal', return_value=False):
+        with mock.patch('netlist2schematic.plugins.layout_shared.attachment_placement._legal', return_value=False):
             result, report = prepare_attachments(pl, devices, comps, nets, index, relations)
         self.assertEqual((result.cell_of, result.orient), (pl.cell_of, pl.orient))
         self.assertFalse(report['actions'])
@@ -146,7 +146,7 @@ class AttachmentAssociationTests(unittest.TestCase):
         self.assertTrue(any(row['reason'] == 'shared_members_already_placed' for row in report['skipped']))
 
     def test_scoring_uses_actual_original_pins_and_does_not_change_existing_weights(self):
-        from passive_placement import WEIGHTS
+        from netlist2schematic.layout.passive_placement import WEIGHTS
         frozen = deepcopy(WEIGHTS)
         devices, pl, comps, nets, index, relations = tanks()
         result, report = prepare_attachments(pl, devices, comps, nets, index, relations)
@@ -203,15 +203,15 @@ class ParallelCoherenceTests(unittest.TestCase):
         self.assertIs(output, metadata)
 
     def test_post_transaction_only_commits_statically_safe_improvements(self):
-        from symmetry_layout import _static_safe
-        from routing_rules import RoutingOptions
+        from netlist2schematic.plugins.symmetry.symmetry_layout import _static_safe
+        from netlist2schematic.routing.routing_rules import RoutingOptions
         devices, pl, comps, nets, index, relations = tanks()
         seeded, initial = prepare_attachments(pl, devices, comps, nets, index, relations)
         # Start from the original dispersed state, retaining verified ownership.
         seeded.set_state(pl.cell_of, pl.orient)
         metadata = {'attachment_measurement_groups': initial['groups']}
         original = deepcopy((seeded.cell_of, seeded.orient, metadata))
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* called')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* called')):
             result, output = refine_parallel_attachments(structured.par, seeded, comps, nets, index, metadata)
         report = output['parallel_attachment_refinement']
         self.assertGreater(report['accepted'], 0)
@@ -227,7 +227,7 @@ class ParallelCoherenceTests(unittest.TestCase):
         seeded, initial = prepare_attachments(pl, devices, comps, nets, index, relations)
         seeded.set_state(pl.cell_of, pl.orient)
         metadata = {'attachment_measurement_groups': initial['groups']}
-        with mock.patch('symmetry_layout._static_safe', return_value=False):
+        with mock.patch('netlist2schematic.plugins.symmetry.symmetry_layout._static_safe', return_value=False):
             result, output = refine_parallel_attachments(structured.par, seeded, comps, nets, index, metadata)
         self.assertEqual((result.cell_of, result.orient), (seeded.cell_of, seeded.orient))
         self.assertEqual(output['parallel_attachment_refinement']['accepted'], 0)
@@ -237,7 +237,7 @@ class ParallelCoherenceTests(unittest.TestCase):
         seeded, initial = prepare_attachments(pl, devices, comps, nets, index, relations)
         metadata = {'attachment_measurement_groups': initial['groups']}
         for kwargs in ({'seconds': 0}, {'max_candidates': 0}):
-            with mock.patch('symmetry_layout._static_safe', side_effect=AssertionError('no budget')):
+            with mock.patch('netlist2schematic.plugins.symmetry.symmetry_layout._static_safe', side_effect=AssertionError('no budget')):
                 result, output = refine_parallel_attachments(structured.par, seeded, comps, nets, index, metadata, **kwargs)
             self.assertEqual((result.cell_of, result.orient), (seeded.cell_of, seeded.orient))
         with self.assertRaises(ValueError):

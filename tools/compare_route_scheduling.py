@@ -45,7 +45,7 @@ def _detours(before, after):
 def execute(label, source, destination, seconds):
     """Reuse the existing independent geometric and redraw checks."""
     from compare_passive_layouts import _verify_saved
-    import run_flow
+    from netlist2schematic.flow import run_flow
 
     source = _resolve(source)
     original = _json(source)

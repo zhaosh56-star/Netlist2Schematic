@@ -11,8 +11,8 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-import run_flow
-from sa_common import load_local
+from netlist2schematic.flow import run_flow
+from netlist2schematic.common.sa_common import load_local
 
 
 class SimplifyFlowTests(unittest.TestCase):
@@ -47,10 +47,10 @@ class SimplifyFlowTests(unittest.TestCase):
     def test_saved_simplification_never_enters_layout_astar_or_recovery(self):
         par = load_local('place_and_route', 'place-and-route.py')
         with patch.object(par, 'sa', side_effect=AssertionError('SA')), \
-                patch('orthogonal_router.route_scene', side_effect=AssertionError('A*')), \
-                patch('run_flow._normal_result', side_effect=AssertionError('layout')), \
-                patch('run_flow._try_local_rescue', side_effect=AssertionError('rescue')), \
-                patch('fallback_bus.create_fallback', side_effect=AssertionError('bus')):
+                patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A*')), \
+                patch('netlist2schematic.flow.run_flow._normal_result', side_effect=AssertionError('layout')), \
+                patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('rescue')), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('bus')):
             data = self.simplify()
         self.assertTrue(data['validation']['valid'])
         self.assertEqual(self.original['routing_stage'], data['routing_stage'])
@@ -63,7 +63,7 @@ class SimplifyFlowTests(unittest.TestCase):
     def test_simplification_off_and_zero_budget_keep_original_routes(self):
         for kwargs in ({'simplify_routes': 'off'}, {'simplify_seconds': 0}):
             with self.subTest(kwargs=kwargs), \
-                    patch('simplify_routes.simplify_routes', side_effect=AssertionError('disabled')):
+                    patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=AssertionError('disabled')):
                 data = self.simplify(**kwargs)
             self.assertEqual(json.loads(json.dumps(self.original['routes'])),
                              json.loads(json.dumps(data['routes'])))
@@ -83,7 +83,7 @@ class SimplifyFlowTests(unittest.TestCase):
         validation['valid'] = True
         broken = self.variant(routes={}, validation=validation)
         with self.assertRaises(ValueError), \
-                patch('simplify_routes.simplify_routes', side_effect=AssertionError('invalid input')):
+                patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=AssertionError('invalid input')):
             self.simplify(broken)
         for name, value in old.items():
             self.assertEqual(value, (self.destination / name).read_bytes())
@@ -102,13 +102,13 @@ class SimplifyFlowTests(unittest.TestCase):
 
     def test_source_netlist_change_is_rejected_before_simplification(self):
         self.source.write_bytes(self.source_bytes.replace(b'1k', b'2k'))
-        with patch('simplify_routes.simplify_routes', side_effect=AssertionError('changed source')), \
+        with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=AssertionError('changed source')), \
                 self.assertRaisesRegex(ValueError, 'source_sha256'):
             self.simplify()
         self.assertFalse(self.destination.exists())
 
     def test_input_files_changed_during_postprocessing_are_not_published(self):
-        from simplify_routes import simplify_routes as actual
+        from netlist2schematic.postprocess.simplify_routes import simplify_routes as actual
         for target in (self.source, self.saved):
             with self.subTest(target=target.name):
                 self.source.write_bytes(self.source_bytes)
@@ -121,7 +121,7 @@ class SimplifyFlowTests(unittest.TestCase):
                     target.write_bytes(target.read_bytes() + b'\n')
                     return result
 
-                with patch('simplify_routes.simplify_routes', side_effect=changing), \
+                with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=changing), \
                         self.assertRaisesRegex(ValueError, 'changed'):
                     self.simplify()
                 for name, value in old.items():
@@ -130,7 +130,7 @@ class SimplifyFlowTests(unittest.TestCase):
     def test_default_saved_result_replay_uses_verified_fingerprint(self):
         first = self.simplify()
         saved = self.destination / 'small-placement.json'
-        with patch('simplify_routes.simplify_routes', side_effect=AssertionError('same verified result')):
+        with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=AssertionError('same verified result')):
             second = self.simplify(saved, out_dir=self.directory / 'replayed')
         self.assertTrue(second['route_simplification']['verified_saved_replay'])
         self.assertEqual(first['routes'], second['routes'])
@@ -140,19 +140,19 @@ class SimplifyFlowTests(unittest.TestCase):
     def test_changed_budget_and_rule_invalidate_replay(self):
         first = self.simplify()
         saved = self.destination / 'small-placement.json'
-        from simplify_routes import simplify_routes as actual
-        from routing_rules import RoutingOptions
+        from netlist2schematic.postprocess.simplify_routes import simplify_routes as actual
+        from netlist2schematic.routing.routing_rules import RoutingOptions
         for kwargs in ({'simplify_seconds': 4},
                        {'routing_options': RoutingOptions(crossing_cost=151)}):
             with self.subTest(kwargs=kwargs), \
-                    patch('simplify_routes.simplify_routes', wraps=actual) as simplify:
+                    patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', wraps=actual) as simplify:
                 data = self.simplify(saved, out_dir=self.directory / 'changed', **kwargs)
             self.assertEqual(1, simplify.call_count)
             self.assertNotIn('verified_saved_replay', data['route_simplification'])
         self.assertEqual(first['placement'], data['placement'])
 
     def test_previous_algorithm_version_does_not_skip_new_simplification(self):
-        from simplify_routes import VERSION, simplify_routes as actual
+        from netlist2schematic.postprocess.simplify_routes import VERSION, simplify_routes as actual
         first = self.simplify()
         saved = self.directory / 'previous-placement.json'
         for previous in ('orthogonal-shortcuts-v1', 'orthogonal-shortcuts-v2', 'orthogonal-shortcuts-v3',
@@ -161,7 +161,7 @@ class SimplifyFlowTests(unittest.TestCase):
             with self.subTest(version=previous):
                 first['route_simplification']['version'] = previous
                 saved.write_text(json.dumps(first), encoding='utf-8')
-                with patch('simplify_routes.simplify_routes', wraps=actual) as simplify:
+                with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', wraps=actual) as simplify:
                     data = self.simplify(saved, out_dir=self.directory / 'upgraded')
                 self.assertEqual(1, simplify.call_count)
                 self.assertEqual(VERSION, data['route_simplification']['version'])
@@ -205,8 +205,8 @@ class SimplifyFlowTests(unittest.TestCase):
         self.assertEqual('before_route_simplification', data['quality']['candidate_metrics_stage'])
 
     def test_normal_run_and_fixed_reroute_default_to_safe_postprocessing(self):
-        from simplify_routes import simplify_routes as actual
-        with patch('simplify_routes.simplify_routes', wraps=actual) as simplify, \
+        from netlist2schematic.postprocess.simplify_routes import simplify_routes as actual
+        with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', wraps=actual) as simplify, \
                 contextlib.redirect_stdout(io.StringIO()):
             first = run_flow.run(self.source, iterations=0, seed=17, candidate_id='1',
                                 fallback='off', out_dir=self.directory / 'safe-run')
@@ -227,7 +227,7 @@ class SimplifyFlowTests(unittest.TestCase):
             data = run_flow.run(self.source, iterations=0, fallback='only',
                                 out_dir=self.directory / 'bus', simplify_routes='off')
         saved = self.directory / 'bus' / 'small-placement.json'
-        with patch('simplify_routes.simplify_routes', side_effect=AssertionError('bus skipped')):
+        with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=AssertionError('bus skipped')):
             simplified = self.simplify(saved)
         self.assertEqual('bus_fallback', simplified['routing_stage'])
         self.assertEqual('bus_fallback', simplified['route_simplification']['stop_reason'])
@@ -239,7 +239,7 @@ class SimplifyFlowTests(unittest.TestCase):
         data = self.simplify()
         saved = self.destination / 'small-placement.json'
         renderer = load_local('render_clean', 'render-clean.py')
-        with patch('simplify_routes.simplify_routes', side_effect=AssertionError('redraw must not simplify')), \
+        with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=AssertionError('redraw must not simplify')), \
                 contextlib.redirect_stdout(io.StringIO()):
             renderer.render(saved, self.directory / 'redraw.svg')
         self.assertEqual((self.destination / 'small-clean.svg').read_bytes(),
@@ -266,7 +266,7 @@ class SimplifyFlowTests(unittest.TestCase):
                     self.assertRaises(SystemExit) as caught:
                 run_flow.main(args)
             self.assertEqual(2, caught.exception.code)
-        with patch('run_flow.simplify_placement') as simplify:
+        with patch('netlist2schematic.flow.run_flow.simplify_placement') as simplify:
             run_flow.main(['--simplify-placement', str(self.saved), '--simplify-routes', 'off',
                            '--simplify-seconds', '2'])
         self.assertEqual('off', simplify.call_args.kwargs['simplify_routes'])

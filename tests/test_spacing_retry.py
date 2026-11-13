@@ -15,12 +15,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import aesthetic_flow
-from netlist_core import NetlistError
-from orthogonal_router import RoutingFailure
-from routing_rules import RoutingOptions
-from sa_routing import RoutingValidationError
-import spacing_retry
+from netlist2schematic.flow import aesthetic_flow
+from netlist2schematic.netlist.netlist_core import NetlistError
+from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.routing.routing_rules import RoutingOptions
+from netlist2schematic.routing.sa_routing import RoutingValidationError
+from netlist2schematic.recovery import spacing_retry
 
 
 class Placement:
@@ -71,8 +71,8 @@ def routing_result(par, nets, placement, index, *, options=None, deadline=None):
 
 class SpacingRetryTests(unittest.TestCase):
     def retry(self, source=None, **kwargs):
-        with patch('spacing_retry.load_local', return_value=SimpleNamespace()), \
-                patch('spacing_retry.final_route', side_effect=routing_result) as routed:
+        with patch('netlist2schematic.recovery.spacing_retry.load_local', return_value=SimpleNamespace()), \
+                patch('netlist2schematic.recovery.spacing_retry.final_route', side_effect=routing_result) as routed:
             result = spacing_retry.retry_spacing(source or context(), **kwargs)
         return result, routed
 
@@ -131,9 +131,9 @@ class SpacingRetryTests(unittest.TestCase):
         self.assertEqual(7, result[0].column_x[0])
 
     def test_only_one_fresh_route_with_new_deadline_and_no_sa(self):
-        with patch('structured_placement.create_candidates', side_effect=AssertionError('SA called')), \
-                patch('structured_placement._anneal', side_effect=AssertionError('SA called')), \
-                patch('spacing_retry.perf_counter', side_effect=[100., 110., 112.]):
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', side_effect=AssertionError('SA called')), \
+                patch('netlist2schematic.layout.structured_placement._anneal', side_effect=AssertionError('SA called')), \
+                patch('netlist2schematic.recovery.spacing_retry.perf_counter', side_effect=[100., 110., 112.]):
             result, routed = self.retry(seconds=60)
         self.assertEqual(1, routed.call_count)
         self.assertEqual({'options', 'deadline'}, set(routed.call_args.kwargs))
@@ -163,8 +163,8 @@ class SpacingRetryTests(unittest.TestCase):
         source = context()
         original = deepcopy(source)
         failure = RoutingFailure('blocked', {'reason': 'search_budget', 'net': 'signal'})
-        with patch('spacing_retry.load_local', return_value=SimpleNamespace()), \
-                patch('spacing_retry.final_route', side_effect=failure) as routed, \
+        with patch('netlist2schematic.recovery.spacing_retry.load_local', return_value=SimpleNamespace()), \
+                patch('netlist2schematic.recovery.spacing_retry.final_route', side_effect=failure) as routed, \
                 self.assertRaises(RoutingFailure) as caught:
             spacing_retry.retry_spacing(source)
         self.assertEqual(1, routed.call_count)
@@ -175,8 +175,8 @@ class SpacingRetryTests(unittest.TestCase):
         self.assertEqual(original[1:], source[1:])
 
     def test_unvalidated_router_result_is_never_accepted(self):
-        with patch('spacing_retry.load_local', return_value=SimpleNamespace()), \
-                patch('spacing_retry.final_route', return_value=([], {}, {'valid': False})), \
+        with patch('netlist2schematic.recovery.spacing_retry.load_local', return_value=SimpleNamespace()), \
+                patch('netlist2schematic.recovery.spacing_retry.final_route', return_value=([], {}, {'valid': False})), \
                 self.assertRaises(RoutingFailure) as caught:
             spacing_retry.retry_spacing(context())
         self.assertEqual('spacing_retry_validation', caught.exception.diagnostics['reason'])
@@ -188,7 +188,7 @@ class SpacingRetryTests(unittest.TestCase):
             with self.subTest(axis=values):
                 source = context()
                 source[0].column_x = values
-                with patch('spacing_retry.final_route') as routed, self.assertRaises(ValueError):
+                with patch('netlist2schematic.recovery.spacing_retry.final_route') as routed, self.assertRaises(ValueError):
                     spacing_retry.retry_spacing(source)
                 routed.assert_not_called()
         source = context()
@@ -207,9 +207,9 @@ class SpacingRetryTests(unittest.TestCase):
 
 class SelectorRetryContextTests(unittest.TestCase):
     def run_select(self, candidates, router, **kwargs):
-        with patch('structured_placement.create_candidates', return_value=iter(candidates)), \
-                patch('aesthetic_flow.load_local', return_value=SimpleNamespace()), \
-                patch('aesthetic_flow.final_route', side_effect=router) as routed, \
+        with patch('netlist2schematic.layout.structured_placement.create_candidates', return_value=iter(candidates)), \
+                patch('netlist2schematic.flow.aesthetic_flow.load_local', return_value=SimpleNamespace()), \
+                patch('netlist2schematic.flow.aesthetic_flow.final_route', side_effect=router) as routed, \
                 contextlib.redirect_stdout(io.StringIO()):
             result = aesthetic_flow.select_layout('unused.cir', iterations=0, **kwargs)
         return result, routed
@@ -230,7 +230,7 @@ class SelectorRetryContextTests(unittest.TestCase):
             raise RoutingFailure('blocked', {'reason': 'search_budget'})
 
         options = RoutingOptions(grid_step=4, crossing_cost=73)
-        with patch('aesthetic_flow.perf_counter', side_effect=lambda: clock.now), \
+        with patch('netlist2schematic.flow.aesthetic_flow.perf_counter', side_effect=lambda: clock.now), \
                 self.assertRaises(RoutingFailure) as caught:
             self.run_select(candidates(), router, quality_seconds=10, routing_options=options)
         failure = caught.exception
@@ -279,7 +279,7 @@ class SelectorRetryContextTests(unittest.TestCase):
 
     def test_verified_incumbent_is_kept_without_spacing_recovery(self):
         failure = RoutingFailure('late timeout', {'reason': 'quality_time_budget'})
-        with patch('spacing_retry.retry_spacing') as retry:
+        with patch('netlist2schematic.recovery.spacing_retry.retry_spacing') as retry:
             selected, routed = self.run_select([context(0), context(1)],
                                                self._valid_then_failure(failure))
         self.assertEqual(0, selected[0].identifier)

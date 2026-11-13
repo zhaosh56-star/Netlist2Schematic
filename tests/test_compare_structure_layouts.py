@@ -72,7 +72,7 @@ class UnifiedEvidenceComparisonTests(unittest.TestCase):
         saved=evidence_fixture()
         metadata={'layout_evidence':saved,'candidate_id':1}
         before=deepcopy(metadata)
-        with mock.patch('layout_intent.build_intent',side_effect=AssertionError('do not replace saved evidence')):
+        with mock.patch('netlist2schematic.plugins.layout_shared.layout_intent.build_intent',side_effect=AssertionError('do not replace saved evidence')):
             result=comparison._comparison_evidence('unused.cir',None,{},[],[],{},metadata)
         self.assertEqual(saved,result)
         result['relations'][0]['members'].append('other')
@@ -92,7 +92,7 @@ class UnifiedEvidenceComparisonTests(unittest.TestCase):
         comps=[{'id':'a'},{'id':'b'}]
         metadata={'placement':{'a':{'row':100}},'branch_row_plan':{'bridge_alignment':['candidate-specific']}}
         before=deepcopy(metadata)
-        with mock.patch('layout_intent.build_intent',return_value=(evidence,[])) as builder:
+        with mock.patch('netlist2schematic.plugins.layout_shared.layout_intent.build_intent',return_value=(evidence,[])) as builder:
             result=comparison._comparison_evidence('source.cir','dut',devices,original,comps,{},metadata,phase=2)
         builder.assert_called_once_with('source.cir','dut',devices,original,comps,{}, {'a':0,'b':1},phase=2)
         self.assertEqual(evidence,result)
@@ -108,9 +108,9 @@ class UnifiedEvidenceComparisonTests(unittest.TestCase):
         measured={'relation_count':1,'measured_blocks':0,'branch_geometry':{'hard_error':17}}
         pl=SimpleNamespace(cell_of=[(1,1),(2,1)],orient=[0,0])
         snapshot=deepcopy(vars(pl))
-        with mock.patch('layout_relations.build_layout_relations',return_value=relations) as build, \
-                mock.patch('structure_selection.prepare_branch_context',side_effect=lambda *args:args[-1]) as prepare, \
-                mock.patch('structure_selection.measure_structure',return_value=measured) as measure:
+        with mock.patch('netlist2schematic.plugins.layout_shared.layout_relations.build_layout_relations',return_value=relations) as build, \
+                mock.patch('netlist2schematic.plugins.structure.structure_selection.prepare_branch_context',side_effect=lambda *args:args[-1]) as prepare, \
+                mock.patch('netlist2schematic.plugins.structure.structure_selection.measure_structure',return_value=measured) as measure:
             context,result,summary=comparison._measure_comparison(
                 'source.cir','dut',None,pl,[{'id':'a'},{'id':'b'}],{}, {'a':0,'b':1},
                 {'a':{},'b':{}},original,metadata,3)
@@ -127,9 +127,9 @@ class UnifiedEvidenceComparisonTests(unittest.TestCase):
 
     def test_phase_one_uses_same_evidence_without_branch_geometry_pass(self):
         metadata={'layout_evidence':evidence_fixture()}
-        with mock.patch('layout_relations.build_layout_relations',return_value=[]), \
-                mock.patch('structure_selection.prepare_branch_context',side_effect=AssertionError('phase 1')), \
-                mock.patch('structure_selection.measure_structure',return_value={'relation_count':0}):
+        with mock.patch('netlist2schematic.plugins.layout_shared.layout_relations.build_layout_relations',return_value=[]), \
+                mock.patch('netlist2schematic.plugins.structure.structure_selection.prepare_branch_context',side_effect=AssertionError('phase 1')), \
+                mock.patch('netlist2schematic.plugins.structure.structure_selection.measure_structure',return_value={'relation_count':0}):
             _,result,summary=comparison._measure_comparison(
                 'source.cir',None,None,None,[],{}, {},{},[],metadata,1)
         self.assertEqual({'relation_count':0},result)
@@ -143,10 +143,10 @@ class UnifiedEvidenceComparisonTests(unittest.TestCase):
         def measure(*args):
             relations=args[-2]['layout_relations']
             return {'relation_count':len(relations),'kinds':[row['kind'] for row in relations]}
-        with mock.patch('layout_intent.build_intent',return_value=(evidence,[])) as source, \
-                mock.patch('layout_relations.build_layout_relations',
+        with mock.patch('netlist2schematic.plugins.layout_shared.layout_intent.build_intent',return_value=(evidence,[])) as source, \
+                mock.patch('netlist2schematic.plugins.layout_shared.layout_relations.build_layout_relations',
                            side_effect=lambda *args,**kw:deepcopy(kw['validated_evidence']['relations'])), \
-                mock.patch('structure_selection.measure_structure',side_effect=measure):
+                mock.patch('netlist2schematic.plugins.structure.structure_selection.measure_structure',side_effect=measure):
             off=comparison._measure_comparison('source',None,None,None,[],{}, {},{},structs,{},1)
             auto=comparison._measure_comparison('source',None,None,None,[],{}, {},{},structs,
                                                 {'layout_evidence':saved},1)
@@ -231,7 +231,7 @@ class UnifiedEvidenceComparisonTests(unittest.TestCase):
         self.assertIn('不是某条支路',page)
 
     def test_real_saved_off_result_is_measured_with_source_rebuilt_evidence_and_identical_routes(self):
-        import run_flow
+        from netlist2schematic.flow import run_flow
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);source=root/'small.cir'
             source.write_text('R1 inp out 1k\nR2 out 0 2k\n',encoding='utf-8')

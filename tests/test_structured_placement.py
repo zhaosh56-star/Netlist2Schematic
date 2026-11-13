@@ -7,8 +7,8 @@ import time
 import unittest
 from unittest import mock
 
-from netlist_core import parse_netlist, to_document
-import structured_placement as structured
+from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
+from netlist2schematic.layout import structured_placement as structured
 
 ROOT = Path(__file__).resolve().parents[1]
 FROZEN = ROOT / 'tests' / 'fixtures' / 'aesthetic-baseline'
@@ -89,7 +89,7 @@ class StructuredPlacementTests(unittest.TestCase):
 
     def test_annealing_is_reproducible_and_does_not_call_final_astar(self):
         results = []
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* in SA')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in SA')):
             for _ in range(2):
                 pl, _, nets, index, alignment, pairs, _, _ = seed_placement(3, seed=77)
                 result = structured._anneal(pl, nets, index, alignment, pairs, 800, None)

@@ -10,8 +10,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from netlist_core import NetlistError, parse_netlist, to_document
-from presentation import prepare_presentation
+from netlist2schematic.netlist.netlist_core import NetlistError, parse_netlist, to_document
+from netlist2schematic.rendering.presentation import prepare_presentation
 
 
 class PresentationTests(unittest.TestCase):

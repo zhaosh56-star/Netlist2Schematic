@@ -28,9 +28,9 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from compare_passive_layouts import (DEFAULT_CASES as EXAMPLE_CASES, VERIFY_LOCK,
     _candidate_records, _digest, _provenance, _sha, _source_files, _stop,
     _verify_saved)
-from netlist_core import _logical_lines, _partition, parse_netlist
-from sa_common import configure_resources, read_json, resource_root, write_json
-from sa_saved import load_placement, saved_routing_options
+from netlist2schematic.netlist.netlist_core import _logical_lines, _partition, parse_netlist
+from netlist2schematic.common.sa_common import configure_resources, read_json, resource_root, write_json
+from netlist2schematic.common.sa_saved import load_placement, saved_routing_options
 
 FORMAT = 'symmetry-layout-comparison-v1'
 POLICIES = ('off', 'auto')
@@ -63,8 +63,9 @@ def discover_cases():
 
 
 def _snapshot():
+    from netlist2schematic.common.sa_common import engine_source_files
     configure_resources()
-    paths = set(ROOT.glob('*.py'))
+    paths = set(engine_source_files(root=ROOT))
     for folder in ('tools', 'tests'):
         paths.update((ROOT / folder).rglob('*.py'))
     paths.update((ROOT / 'symbol-geometry.json', ROOT / 'requirements.txt'))
@@ -209,7 +210,7 @@ def _annotate(clean, destination, pl, index, relations, measurement):
 
 
 def _symmetry_facts(path, verified):
-    from symmetry_layout import build_symmetry_groups, measure_symmetry
+    from netlist2schematic.plugins.symmetry.symmetry_layout import build_symmetry_groups, measure_symmetry
     with VERIFY_LOCK:
         data, _, _, placement, comps, _, index = load_placement(path)
         groups = build_symmetry_groups(comps, data.get('structs', ()))

@@ -13,10 +13,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from circuit_structures import analyze_structures
-from netlist_core import parse_netlist, to_document
-import structured_placement as structured
-from passive_placement import (FlexiblePassivePlacement, make_flexible,
+from netlist2schematic.recognition.circuit_structures import analyze_structures
+from netlist2schematic.netlist.netlist_core import parse_netlist, to_document
+from netlist2schematic.layout import structured_placement as structured
+from netlist2schematic.layout.passive_placement import (FlexiblePassivePlacement, make_flexible,
                                passive_diagnostics, score_passives)
 
 
@@ -290,8 +290,8 @@ class FlexiblePassiveMovementTests(unittest.TestCase):
 
     def test_flexible_annealing_is_repeatable_without_final_astar(self):
         results = []
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* in SA')), \
-                mock.patch('orthogonal_router._find_path', side_effect=AssertionError('A* in SA')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in SA')), \
+                mock.patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('A* in SA')):
             for _ in range(2):
                 pl, _, nets, index, alignment, pairs = real_opamp(seed=91)
                 result = structured._anneal(pl, nets, index, alignment, pairs, 600, None)

@@ -6,9 +6,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from routing_rules import (RoutingOptions, Scene, Pin, analyze_routes,
+from netlist2schematic.routing.routing_rules import (RoutingOptions, Scene, Pin, analyze_routes,
                            canonical_topology, build_scene)
-from sa_common import load_local
+from netlist2schematic.common.sa_common import load_local
 
 
 class TopologyTests(unittest.TestCase):

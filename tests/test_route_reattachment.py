@@ -11,10 +11,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from routing_rules import (Pin, RoutingOptions, Scene, canonical_topology,
+from netlist2schematic.routing.routing_rules import (Pin, RoutingOptions, Scene, canonical_topology,
                            intersection, on_segment)
-from sa_routing import RoutingValidationError, _verify
-import simplify_routes as shortcuts
+from netlist2schematic.routing.sa_routing import RoutingValidationError, _verify
+from netlist2schematic.postprocess import simplify_routes as shortcuts
 
 
 def tree_case(*, turns=0, mirror=False, shift=(0, 0), cut=False, reverse=False,
@@ -112,8 +112,8 @@ def tree_case(*, turns=0, mirror=False, shift=(0, 0), cut=False, reverse=False,
 
 
 def simplify(case):
-    with patch('simplify_routes.build_scene', return_value=case[5]), \
-            patch('orthogonal_router._find_path', side_effect=AssertionError('A*')):
+    with patch('netlist2schematic.postprocess.simplify_routes.build_scene', return_value=case[5]), \
+            patch('netlist2schematic.routing.orthogonal_router._find_path', side_effect=AssertionError('A*')):
         return shortcuts.simplify_routes(*case[:4], case[4], seconds=5)
 
 
@@ -129,7 +129,7 @@ class BranchReattachmentTests(unittest.TestCase):
                          canonical_topology(second[0][0][1])['runs'])
 
     def test_connector_stops_at_first_tree_contact_instead_of_closing_a_loop(self):
-        from route_reattachment import _first_connection
+        from netlist2schematic.postprocess.route_reattachment import _first_connection
         retained = [((40, -20), (40, 100)), ((0, 100), (40, 100))]
         connector, point = _first_connection(((100, 0), (0, 0), (0, 100)), retained, None)
         self.assertEqual((40, 0), point)

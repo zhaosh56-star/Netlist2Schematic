@@ -2,6 +2,21 @@
 
 把 SPICE 网表转换成布局 JSON、彩色 SVG 和黑白 SVG。默认按电流层级和电路子结构布局，使用模拟退火优化位置，再进行正交 A* 布线、连接与几何验收，最后安全缩短绕线、减少多余折角。输入网表保持原样。
 
+Python 实现已分类放入 `netlist2schematic/`，根目录保留原命令入口。查找算法文件请从[目录与文件用途](docs/project-layout.md)或[旧文件名映射](netlist2schematic/source_map.json)进入；各插件的默认开关保持原值。
+
+```text
+netlist2schematic/
+├─ flow/、common/、netlist/、recognition/   # 调度、支持、解析、分层与识别
+├─ layout/、routing/、recovery/            # 布局、最终布线、失败恢复
+├─ postprocess/、rendering/                # 安全缩线、绘图
+└─ plugins/                               # structure、region、readability、symmetry、attachment、net_labels、preflight及共享关系
+examples/、test_data/                      # 输入与本地数据集
+output/、tests/、tools/、docs/              # 出图、回归、开发工具、说明
+dist/、notes/                             # 本地交付包、手工笔记
+```
+
+`agent-rsi-demo/`、`shinka-circuit-rsi/` 和本地 `ShinkaEvolve/` 继续作为独立项目保留。
+
 想理解每一步怎么执行、用哪些代码，以及SA估价、A*、失败恢复和最终简化的区别，请先读[从网表到原理图：当前flow逐步详解](docs/flow-walkthrough.md)。
 
 结构布局改进通过 `--structure-layout auto` 试用，开发期间默认关闭。候选1保留参照，候选2/3按有拓扑证据的局部块和支路改善排列，继续使用原A*、完整验收和安全缩线。分阶段规则与对照命令见[结构布局说明](docs/structure-layout.md)。

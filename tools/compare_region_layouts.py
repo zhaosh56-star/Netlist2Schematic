@@ -25,8 +25,8 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'tools')]
 import compare_symmetry_layouts as common
 from compare_passive_layouts import VERIFY_LOCK, _wire_paths
 from compare_structure_layouts import _detour_summary
-from netlist_core import NetlistError
-from sa_common import load_local, read_json, write_json
+from netlist2schematic.netlist.netlist_core import NetlistError
+from netlist2schematic.common.sa_common import load_local, read_json, write_json
 
 FORMAT = 'region-layout-comparison-v1'
 POLICIES = ('off', 'auto')
@@ -61,9 +61,9 @@ def check_signature(signature):
 
 def build_measurement_plan(source, cell, devices, structs, comps, nets, index):
     """Use source-derived rows, never either contender's movable coordinates."""
-    from device_leveling import compute_levels
-    from layout_intent import build_intent
-    from region_layout import build_region_plan
+    from netlist2schematic.recognition.device_leveling import compute_levels
+    from netlist2schematic.plugins.layout_shared.layout_intent import build_intent
+    from netlist2schematic.plugins.region.region_layout import build_region_plan
     levels = compute_levels(devices)
     legacy = load_local('place_layered', 'place-layered.py')
     conduction = {n for d in devices.values() if d['cls'] in ('MOS', 'BJT')
@@ -125,14 +125,14 @@ def annotated_svg(source_svg, target, pl, comps, index, plan):
 
 
 def verify(path, signature):
-    from circuit_structures import analyze_structures
-    from layout_quality import evaluate_quality
-    from netlist_core import parse_netlist
-    from region_layout import measure_regions
-    from routing_rules import build_scene
-    from sa_routing import validate_final_routes
-    from sa_saved import load_placement, saved_routing_options
-    from simplify_routes import _covers_fixed
+    from netlist2schematic.recognition.circuit_structures import analyze_structures
+    from netlist2schematic.layout.layout_quality import evaluate_quality
+    from netlist2schematic.netlist.netlist_core import parse_netlist
+    from netlist2schematic.plugins.region.region_layout import measure_regions
+    from netlist2schematic.routing.routing_rules import build_scene
+    from netlist2schematic.routing.sa_routing import validate_final_routes
+    from netlist2schematic.common.sa_saved import load_placement, saved_routing_options
+    from netlist2schematic.postprocess.simplify_routes import _covers_fixed
     with VERIFY_LOCK:
         data, source, par, pl, comps, nets, index = load_placement(path)
         if str(source) != signature['source_netlist'] or data.get('source_cell') != signature['cell']:

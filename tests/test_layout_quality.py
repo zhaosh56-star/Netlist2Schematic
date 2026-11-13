@@ -5,9 +5,9 @@ import json
 from time import perf_counter
 import unittest
 
-from layout_quality import evaluate_quality
-from orthogonal_router import RoutingFailure, route_scene
-from routing_rules import Pin, RoutingOptions, Scene, analyze_routes
+from netlist2schematic.layout.layout_quality import evaluate_quality
+from netlist2schematic.routing.orthogonal_router import RoutingFailure, route_scene
+from netlist2schematic.routing.routing_rules import Pin, RoutingOptions, Scene, analyze_routes
 
 
 class FixturePlacement:

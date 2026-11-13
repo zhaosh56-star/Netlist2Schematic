@@ -9,8 +9,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from layout_relations import build_layout_relations, prepare_structure_placement
-import structured_placement as structured
+from netlist2schematic.plugins.layout_shared.layout_relations import build_layout_relations, prepare_structure_placement
+from netlist2schematic.layout import structured_placement as structured
 from tests.test_layout_relations import strict_pair, transistor
 from tests.test_passive_placement import base_placement, mos, source
 
@@ -61,7 +61,7 @@ class StructurePlacementTests(unittest.TestCase):
 
     def test_off_never_calls_new_relation_builder(self):
         path = ROOT / 'tests/fixtures/aesthetic-baseline/3.cir'
-        with mock.patch('layout_relations.build_layout_relations', side_effect=AssertionError('off invoked builder')):
+        with mock.patch('netlist2schematic.plugins.layout_shared.layout_relations.build_layout_relations', side_effect=AssertionError('off invoked builder')):
             list(structured.create_candidates(path, iterations=30, structure_layout='off'))
 
     def test_reference_one_matches_off_and_only_two_three_enable_stage_one(self):
@@ -79,7 +79,7 @@ class StructurePlacementTests(unittest.TestCase):
 
     def test_stage_one_has_no_astar_in_annealing(self):
         path = ROOT / 'tests/fixtures/aesthetic-baseline/3.cir'
-        with mock.patch('orthogonal_router.route_scene', side_effect=AssertionError('A* in SA')):
+        with mock.patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in SA')):
             list(structured.create_candidates(path, iterations=150, structure_layout='auto'))
 
     def test_invalid_policy_is_rejected(self):

@@ -13,9 +13,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import device_leveling as dl
-import netlist_core as core
-import vf2_match
+from netlist2schematic.recognition import device_leveling as dl
+from netlist2schematic.netlist import netlist_core as core
+from netlist2schematic.recognition import vf2_match
 
 spec = importlib.util.spec_from_file_location('netlist_reader_test', ROOT / 'parse-netlist.py')
 reader = importlib.util.module_from_spec(spec)
@@ -203,7 +203,7 @@ M2 isolated gin tail tail NMOS
     def test_levels_and_vf2_are_reproducible_across_hash_seeds(self):
         path = self.source('M1 d1 g1 tail tail NMOS\nM2 d2 g2 tail tail NMOS\nM3 d3 g3 tail tail NMOS\n')
         script = '''import contextlib,io,json,sys
-import device_leveling as dl, vf2_match
+from netlist2schematic.recognition import device_leveling as dl, vf2_match
 with contextlib.redirect_stdout(io.StringIO()):
     result = vf2_match.analyze(sys.argv[1])
 print(json.dumps({'matches': result, 'levels': dl.compute_levels(dl.parse_netlist(sys.argv[1]))['device_levels']}, sort_keys=True))
