@@ -317,6 +317,8 @@ SA就是“试着挪一下，再决定留不留下”，不是训练一个神经
 
 新结构化SA原有动作包括整块平移、整块镜像、行分布兼容的块交换、块内器件换位/移位及允许的朝向变化。MOS/BJT和E/V/I保留其初排逻辑行；动作不能产生重复占位，也不能把无关器件插进同一有源块在某一行的内部。
 
+默认结构化布局还使用 [structure_hierarchy.py](../netlist2schematic/layout/structure_hierarchy.py) 保护大块里面的小块：例如识别出折叠核心以后，里面的输入差分对仍单独保持完整。初排把子块作为排序单位，SA既可以移动大块，也可以调整子块，但不能把其他成员插进受保护子块。这是同行成员保护，不是锁死整个二维区域；证据歧义或已经分在不同行的配对会记录原因，不强行改行。结果JSON的 `layout_hierarchy` 可查看依据与实际穿插情况；旧JSON重绘不会重新摆件。实测见[父子保护结果](structure-layout-results.md)。
+
 默认的无源灵活布局在保留原初排的基础上，为候选1～3各追加一行、两列空位。SA期间物理坐标轴不变，不会边搜索边插行。每次提案有50%机会沿用原动作，另50%机会尝试无源二维动作：90%在周围八个格子中选一步，10%尝试同一非电源网邻居附近的空位；无可用邻居时退回局部移动。目标为空就移动，目标为另一个可移动无源件就交换，目标为MOS/BJT/E/V/I则拒绝。允许进入有源块外的同行空位和层间空间，不会把多行父结构的整个矩形内部全部封锁。
 
 这些关系不是刚体：串联R/C可以分别调整，反馈路径共享器件也不会被复制到多个块。每次接受、撤销、温度采样或恢复最佳状态，都从 `cell_of` 和 `orient` 重建当前 `row_of` 与占位表。这样，无源跨行后旧动作和评分看到的仍是它的当前行。
@@ -971,6 +973,7 @@ $flowResult.quality.details.per_net
 | [place-layered.py](../netlist2schematic/layout/place_layered.py) | 挂靠、行分配、旧分层SA、分层Placement类 |
 | [place-and-route.py](../netlist2schematic/layout/place_and_route.py) | Placement基础、引脚坐标、旧pattern估价、符号绘制工具 |
 | [structured_placement.py](../netlist2schematic/layout/structured_placement.py) | 结构种子、块动作、快速估价、温度标定及反馈候选 |
+| [structure_hierarchy.py](../netlist2schematic/layout/structure_hierarchy.py) | 默认结构化布局中的同行子块保护、层级排序及实际位置诊断 |
 | [passive_placement.py](../netlist2schematic/layout/passive_placement.py) | 无源跨行移动、动态行恢复、串联/并联/反馈软评分 |
 | [symmetry_layout.py](../netlist2schematic/plugins/symmetry/symmetry_layout.py) | 显式 `--symmetry-layout auto` 才启用：SA及反馈后的器件对称关系、有限规整事务和真实引脚残差；不调用SA/A* |
 | [aesthetic_flow.py](../netlist2schematic/flow/aesthetic_flow.py) | 正常阶段300秒共享预算、真实候选评估、保存最佳结果 |

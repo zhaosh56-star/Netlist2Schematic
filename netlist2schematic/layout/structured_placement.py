@@ -170,7 +170,8 @@ class StructuredPlacement(legacy.LayeredPlacement):
         self.comp_at = {cell: i for i, cell in enumerate(self.cell_of)}
 
     def blocks_contiguous(self):
-        for block in self.blocks + getattr(self, 'layout_macro_blocks', []):
+        for block in (self.blocks + getattr(self, 'layout_macro_blocks', [])
+                      + getattr(self, 'hierarchy_guards', [])):
             by_row = defaultdict(list)
             for i in block:
                 by_row[self.row_of[i]].append(self.cell_of[i][1])
@@ -251,8 +252,7 @@ class StructuredPlacement(legacy.LayeredPlacement):
                 if other is not None:
                     self.cell_of[other] = (row, col)
                 self.comp_at = {cell: j for j, cell in enumerate(self.cell_of)}
-        if (getattr(self, 'layout_relations', None) or getattr(self, 'region_plan', None)
-                or getattr(self, 'readability_plan', None)) and any(
+        if any(
                 self.cell_of[i] != before[0][i] or self.orient[i] != before[1][i]
                 for i in set(getattr(self, 'fixed', ())) | set(getattr(self, 'fixed_cells', {}))):
             self.set_state(*before)
@@ -395,14 +395,22 @@ def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, 
         pl.region_initialization = region_report
     pl.blocks = blocks
     pl.block_of = {i: n for n, block in enumerate(blocks) for i in block}
+    from netlist2schematic.layout.structure_hierarchy import compile_hierarchy, order_children
+    pl.structure_hierarchy, pl.hierarchy_guards = compile_hierarchy(
+        structs, comps, index, row_of, blocks)
+    if pl.hierarchy_guards:
+        pl.motion_blocks = blocks + [group for group in pl.hierarchy_guards if group not in blocks]
     pl.role_orders = []
     for record in structs:
         roles = record.get('roles', {})
         if record['kind'] == 'folded_core':
-            ordered = [roles.get(key) for key in
-                       ('input_left', 'folded_left', 'folded_right', 'input_right')]
-            if all(name in index for name in ordered):
-                pl.role_orders.append([[index[name] for name in ordered]])
+            # A folded input pair is a child, not the outer boundary of the
+            # output pair. Keep output-side correspondence without straddling
+            # the inputs around it, which would contradict child protection.
+            rows = [[roles.get(prefix + '_' + side) for side in ('left', 'right')]
+                    for prefix in ('folded', 'bias')]
+            if all(name in index for row in rows for name in row):
+                pl.role_orders.append([[index[name] for name in row] for row in rows])
         elif record['kind'] == 'latch':
             rows = [[roles.get(a), roles.get(b)] for a, b in
                     (('left_upper', 'right_upper'), ('left_lower', 'right_lower'))]
@@ -491,6 +499,8 @@ def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, 
             for block in ordered_blocks:
                 values = row_blocks[block]
                 values.sort(key=lambda a: (desired.get(a, 0), continuous[a], keys[comps[a]['id']]))
+                if pl.hierarchy_guards:
+                    values = order_children(values, pl.hierarchy_guards)
                 ordered.extend(values)
             offset = (cols - len(ordered)) // 2
             for col, i in enumerate(ordered, offset):
@@ -558,7 +568,7 @@ def _estimate(pl, nets, index, alignment, pairs):
     misalignment = sum(weight * abs(pl.cell_of[a][1] - pl.cell_of[b][1])
                        for a, b, weight in alignment)
     dispersion = 0.0
-    for block in pl.blocks:
+    for block in pl.blocks + getattr(pl, 'hierarchy_guards', []):
         by_row = defaultdict(list)
         for i in block:
             by_row[pl.row_of[i]].append(pl.cell_of[i][1])
@@ -1109,6 +1119,8 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                     'alignment_relations': [{'devices': [comps[a]['id'], comps[b]['id']],
                                               'weight': weight}
                                              for a, b, weight in alignment]}
+        from netlist2schematic.layout.structure_hierarchy import hierarchy_report
+        metadata['layout_hierarchy'] = hierarchy_report(placement)
         if attachment_layout != 'off' and variant:
             from netlist2schematic.plugins.attachment.attachment_selection import measure_candidate
             metadata['layout_attachments'] = {

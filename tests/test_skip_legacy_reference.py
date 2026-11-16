@@ -203,7 +203,9 @@ class StructuredOnlySelectionTests(unittest.TestCase):
                 patch('netlist2schematic.flow.run_flow._bus_result', side_effect=AssertionError('unnecessary fallback')), \
                 patch('netlist2schematic.flow.run_flow._finish', side_effect=finish), \
                 contextlib.redirect_stdout(io.StringIO()):
-            data = run_flow.run(source, iterations=0, out_dir=root / 'result')
+            # These scheduler-only candidates have no physical geometry; the
+            # default-on preflight has its own real-symbol integration tests.
+            data = run_flow.run(source, iterations=0, out_dir=root / 'result', port_preflight='off')
         rescued.assert_not_called()
         self.assertEqual('2', data['quality']['selected_candidate'])
         self.assertEqual('normal', data['routing_stage'])

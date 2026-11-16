@@ -371,6 +371,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 metadata = measure_candidate(placement, comps, index, metadata, shared_attachment_plan,
                     policy=attachment_layout, stage='before_final_routing')
             routing_at = perf_counter()
+            if isinstance(metadata.get('layout_hierarchy'), dict):
+                from netlist2schematic.layout.structure_hierarchy import hierarchy_report
+                metadata = deepcopy(metadata)
+                metadata['layout_hierarchy'] = hierarchy_report(placement, metadata['layout_hierarchy'])
+                metadata['layout_hierarchy']['measurement_stage'] = 'before_final_routing'
             record = {'candidate_id': identifier, 'seed': metadata.get('candidate_seed', seed),
                       'annealing': deepcopy(metadata.get('annealing', {})),
                       'passive_layout_policy': metadata.get('passive_layout_policy', 'fixed'),

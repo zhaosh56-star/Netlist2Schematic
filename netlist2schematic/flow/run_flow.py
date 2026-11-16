@@ -574,6 +574,10 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         data, par, placement, comps, nets, comp_index, (routed, metrics, validation), options,
         simplify_routes, simplify_seconds, allow_verified_replay=allow_verified_replay,
         route_tradeoff=route_tradeoff)
+    if isinstance(data.get('layout_hierarchy'), dict):
+        from netlist2schematic.layout.structure_hierarchy import hierarchy_report
+        data['layout_hierarchy'] = hierarchy_report(placement, data['layout_hierarchy'])
+        data['layout_hierarchy']['measurement_stage'] = 'final_output'
     if isinstance(data.get('layout_symmetry'), dict):
         # Recovery may enlarge physical axes. Saved rerouting/redraw never
         # regularizes devices; this only measures the positions being exported.

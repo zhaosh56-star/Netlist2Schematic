@@ -576,7 +576,8 @@ class AttachmentPlacement(FlexiblePassivePlacement):
     def blocks_contiguous(self):
         permitted = getattr(self, 'attachment_guests', {})
         local_offsets = getattr(self, 'passive_local_offsets', None)
-        for block in self.blocks + getattr(self, 'layout_macro_blocks', []):
+        for block in (self.blocks + getattr(self, 'layout_macro_blocks', [])
+                      + getattr(self, 'hierarchy_guards', [])):
             own = frozenset(block)
             groups = permitted.get(own, ())
             by_row = defaultdict(list)
@@ -788,7 +789,8 @@ def _install(pl, comps, index, plan, *, required=None):
     guest_map = defaultdict(list)
     for group in list(plan['groups'])+list(plan.get('source_groups', ())):
         ids = {index[n] for n in group['members']}
-        for block in getattr(clone, 'blocks', ()) + getattr(clone, 'layout_macro_blocks', []):
+        for block in (getattr(clone, 'blocks', ()) + getattr(clone, 'layout_macro_blocks', [])
+                      + getattr(clone, 'hierarchy_guards', [])):
             names = {comps[i]['id'] for i in block}
             if names & set(group['host_members']):
                 guest_map[frozenset(block)].append(group)
