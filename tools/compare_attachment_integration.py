@@ -93,7 +93,10 @@ def build_measurement_plan(source, cell, comps, nets, index, policy):
     attachments = legacy.attach_info(devices, levels['net_levels'], conduction)
     rows, _ = legacy._allocate_rows(devices, comps, index, levels['net_levels'],
                                     levels['device_levels'], attachments)
-    return build_attachment_plan(devices, comps, nets, index, structs, levels, rows, policy=policy)
+    from netlist2schematic.rendering.presentation import prepare_presentation
+    ports=prepare_presentation(source,cell,comps,nets)['named_ports']
+    return build_attachment_plan(devices, comps, nets, index, structs, levels, rows,
+        policy=policy,formal_ports=ports)
 
 
 def strict_simplification_audit(data):

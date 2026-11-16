@@ -140,10 +140,15 @@ class AttachmentIntegrationTests(unittest.TestCase):
         _, metadata = integration.refine_attachments(structured.par, result, comps, nets,
             index, metadata, budget=budget)
         final = metadata['layout_attachments']['refinement']
-        self.assertEqual(final['candidates'], 0)
-        self.assertEqual(budget['candidates'], before['candidates'])
+        # A stage may now leave its one trial for finishing. That trial must
+        # still be charged to this same ledger, rather than replenished.
+        self.assertEqual(budget['candidates'], before['candidates']+final['candidates'])
         self.assertLessEqual(budget['candidates'], 1)
         self.assertGreaterEqual(budget['spent_seconds'], before['spent_seconds'])
+        used=budget['candidates']
+        _,again=integration.refine_attachments(structured.par,result,comps,nets,index,metadata,budget=budget)
+        self.assertEqual(again['layout_attachments']['refinement']['candidates'],0)
+        self.assertEqual(budget['candidates'],used)
 
     def test_single_rail_shunt_never_opens_columns_or_wins_embedding_count(self):
         d = dict(a=mos('out', 'in'), c=resistor('out', '0', 'C'))

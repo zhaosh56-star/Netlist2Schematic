@@ -37,6 +37,7 @@ def _active(device):
 
 
 def _terminals(device):
+    """Placement connectivity uses visible pins, not hidden opamp supplies."""
     cls = device['cls']
     if cls == 'MOS':
         return (device['d'], device['g'], device['s'])
@@ -153,6 +154,9 @@ def _relations(devices, structs, index, row_of):
 
 class StructuredPlacement(legacy.LayeredPlacement):
     def allowed_orientations(self, i):
+        if (i in getattr(self, 'terminal_orientation_ids', ())
+                and self.comps[i]['symbol'] in ('resistor', 'capacitor', 'inductor')):
+            return list(range(self.n_orients(i)))
         if (i in getattr(self, 'source_orientation_ids', ())
                 and self.comps[i]['symbol'] in ('voltage-source', 'current-source')):
             return list(range(self.n_orients(i)))
@@ -295,6 +299,29 @@ def _opamp_seed(devices, structs, index, row_of, variant):
         width = max(width, offset + right + 2)
     if not cells:
         return None
+    if len(set(cells.values())) != len(cells):
+        # Several feedback paths may enter the same input, e.g. a parallel RC.
+        # Keep the existing template wherever it is already unambiguous, then
+        # give only colliding members nearby columns on their original side.
+        # Reserving every requested cell first prevents a repair from displacing
+        # another path that was not part of the collision.
+        requested = defaultdict(list)
+        names = {i: name for name, i in index.items()}
+        keys = _canonical_keys(devices)
+        amplifiers = {index[s['roles']['amplifier']] for s in cores
+                      if s.get('roles', {}).get('amplifier') in index}
+        for i, cell in cells.items():
+            requested[cell].append(i)
+        occupied = set(requested)
+        limit = max(c for _, c in occupied) + len(cells) + 1
+        for (row, col), members in sorted(requested.items()):
+            members.sort(key=lambda i: (i not in amplifiers, keys[names[i]], names[i]))
+            for i in members[1:]:
+                free = (c for c in range(limit) if (row, c) not in occupied)
+                target = min(free, key=lambda c: (abs(c-col), c))
+                cells[i] = (row, target)
+                occupied.add((row, target))
+        width = max(width, max(c for _, c in occupied) + 1)
     occupied = set(cells.values())
     for name in devices:
         i = index[name]
@@ -922,8 +949,10 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                 from netlist2schematic.plugins.attachment.attachment_integration import build_attachment_plan
                 original_rows, _ = legacy._allocate_rows(devices, comps, index,
                     levels['net_levels'], levels['device_levels'], att)
+                from netlist2schematic.rendering.presentation import prepare_presentation
+                input_ports = prepare_presentation(path,cell,comps,nets)['named_ports']
                 attachment_plan = build_attachment_plan(devices, comps, nets, index,
-                    structs, levels, original_rows, policy=attachment_layout)
+                    structs, levels, original_rows, policy=attachment_layout,formal_ports=input_ports)
             row_plan = attachment_plan.get('branch_row_plan')
         if readability_layout == 'auto' and variant:
             if readability_plan is None:
@@ -1023,12 +1052,35 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                 placement, devices, comps, nets, index, layout_relations)
         if attachment_layout != 'off' and variant:
             from netlist2schematic.plugins.attachment.attachment_integration import initialize_attachments
+            known_pairs = {frozenset((a, b)) for a, b, _ in pairs}
+            for pair in attachment_plan.get('input_blocks', {}).get('pairs', ()):
+                a, b = (index[n] for n in pair['members'])
+                if frozenset((a, b)) not in known_pairs:
+                    pairs.append((a, b, 'differential_pair'))
+                    known_pairs.add(frozenset((a, b)))
             attachment_budget = {'seconds_limit': 1.0, 'max_candidates': 128,
                                  'spent_seconds': 0.0, 'candidates': 0}
             placement, attachment_initialization = initialize_attachments(
                 placement, devices, comps, nets, index, attachment_plan,
                 deadline=deadline, budget=attachment_budget, options=routing_options,
                 estimate=lambda trial: _estimate(trial, nets, index, alignment, pairs)[0])
+            applied=attachment_initialization.get('folded_initialization',{}).get('applied_ids',())
+            if getattr(placement,'attachment_plan',None):
+                applied=list(applied)+[g['id'] for g in attachment_plan['folded_cores']['groups']
+                    if g.get('rail_supply_derived') and g['id'] not in applied]
+            if applied:
+                from netlist2schematic.plugins.attachment.attachment_folded import filter_input_alignment
+                alignment,removed=filter_input_alignment(alignment,index,attachment_plan['folded_cores'],applied)
+                attachment_initialization['folded_alignment_correction']={
+                    'reason':'fold_junction_is_side_access_not_an_input_current_axis',
+                    'removed':[{'devices':[comps[a]['id'],comps[b]['id']],'weight':w} for a,b,w in removed]}
+            if getattr(placement,'attachment_plan',None):
+                from netlist2schematic.plugins.attachment.attachment_folded import filter_RL_alignment
+                alignment,replaced=filter_RL_alignment(alignment,index,attachment_plan['folded_cores'])
+                if replaced:
+                    attachment_initialization['RL_folded_axis_replacement']={
+                        'reason':'use_existing_true_pin_attachment_cost_instead_of_duplicate_cell_alignment',
+                        'removed':[{'devices':[comps[a]['id'],comps[b]['id']],'weight':w} for a,b,w in replaced]}
         # Leave most of the global budget to final routing, which is authoritative.
         local_deadline = min(deadline, time.perf_counter() + 12) if deadline else None
         energy, metrics, annealing = _anneal(placement, nets, index, alignment, pairs,
@@ -1068,6 +1120,8 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                 'sa_proposals': copy.deepcopy(getattr(placement, 'attachment_move_counts', {}))}
             metadata = measure_candidate(placement, comps, index, metadata, attachment_plan,
                 policy=attachment_layout, stage='after_sa_and_geometry_floor')
+            if attachment_plan.get('repeated_stacks',{}).get('rows_applied'):
+                metadata['branch_row_plan']=copy.deepcopy(row_plan)
         if readability_layout == 'auto' and variant:
             from netlist2schematic.plugins.readability.readability_layout import measure_readability
             metadata['layout_readability'] = {

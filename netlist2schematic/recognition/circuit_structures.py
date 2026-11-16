@@ -35,7 +35,8 @@ _OWN_PRIORITY = {
 def _terminals(device):
     fields = {'MOS': ('d', 'g', 's', 'bulk'), 'BJT': ('c', 'b', 'e'),
               'PASSIVE': ('a', 'b'), 'VSRC': ('p', 'n'),
-              'ISRC': ('p', 'n'), 'VCVS': ('op', 'on', 'ip', 'in')}
+              'ISRC': ('p', 'n'), 'VCVS': ('op', 'on', 'ip', 'in'),
+              'OPAMP': ('op', 'ip', 'in')}
     return [(pin, device[pin]) for pin in fields.get(device.get('cls'), ())
             if pin in device]
 
@@ -364,7 +365,8 @@ def _passive_structures(devices, ordered, add, parent):
                 stack.append((other, [*names, name], [*visited, other]))
         return sorted(found, key=lambda item: (len(item[0]), tuple(item[0])))
 
-    for amplifier in ordered(n for n, dev in devices.items() if dev.get('cls') == 'VCVS'):
+    for amplifier in ordered(n for n, dev in devices.items()
+                             if dev.get('cls') in ('VCVS', 'OPAMP')):
         dev = devices[amplifier]
         feedback = []
         positive, negative = [], []

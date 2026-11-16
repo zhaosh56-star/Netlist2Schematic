@@ -23,6 +23,7 @@ from netlist2schematic.common.sa_saved import load_placement, saved_routing_opti
 from netlist2schematic.routing.orthogonal_router import RoutingFailure
 
 ROUTING_FAILURES = (RoutingFailure, RoutingValidationError)
+DEFAULT_PORT_PREFLIGHT = 'repair'
 
 
 def run(path, *, mode='layered', iterations=20000, seed=20261029,
@@ -31,7 +32,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
-        candidate_budget='sequential', port_preflight='off', presentation='legacy', net_labels='off',
+        candidate_budget='sequential', port_preflight=DEFAULT_PORT_PREFLIGHT, presentation='legacy', net_labels='off',
         region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5,
         attachment_layout='off'):
     if iterations < 0:
@@ -130,7 +131,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                 checkpoint = deepcopy(getattr(exc, '_rescue_context', None))
                 retry_options = getattr(exc, 'retry_options', None) or options
                 result = _try_local_rescue(context, checkpoint, retry_options,
-                                           rescue_policy, rescue_seconds, stages)
+                    rescue_policy, rescue_seconds, stages,
+                    **({'postroute_regions':True} if region_layout=='auto' else {}))
                 _check_source(source, source_hash)
                 if result is None and policy == 'off':
                     if stages[-1]['status'] == 'failed':
@@ -288,11 +290,20 @@ def _check_source(source, expected_hash):
 def _saved_positions(placement, comps):
     rows={comp['id']:{'row':placement.cell_of[i][0],'col':placement.cell_of[i][1],
                       'orient':placement.orient[i]} for i,comp in enumerate(comps)}
+    for comp in comps:
+        if 'hidden_nodes' in comp:
+            rows[comp['id']]['hidden_nodes'] = deepcopy(comp['hidden_nodes'])
     if hasattr(placement,'offset_x'):
         if len(placement.offset_x)!=len(comps) or any(type(x) not in (int,float) or not isfinite(x)
                 for x in placement.offset_x):
             raise ValueError('Invalid placement horizontal offsets')
         for i,comp in enumerate(comps):rows[comp['id']]['dx']=placement.offset_x[i]
+    if hasattr(placement,'passive_local_offsets'):
+        from netlist2schematic.common.passive_coordinates import validate_passive_offsets
+        validate_passive_offsets(placement, comps)
+        for i,comp in enumerate(comps):
+            if any(placement.passive_local_offsets[i]):
+                rows[comp['id']]['local_offset']=list(placement.passive_local_offsets[i])
     return rows
 
 
@@ -420,7 +431,7 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
     return data, (simplified, final_metrics, final_validation)
 
 
-def _try_local_rescue(context, checkpoint, options, policy, seconds, stages):
+def _try_local_rescue(context, checkpoint, options, policy, seconds, stages,*,postroute_regions=False):
     """Only the top-level failed-normal path may invoke this recovery stage."""
     reason = ('disabled' if policy == 'off' or seconds == 0 else
               'no_attempted_layout' if context is None else
@@ -437,6 +448,35 @@ def _try_local_rescue(context, checkpoint, options, policy, seconds, stages):
         if not result[5][2].get('valid', False):
             raise RoutingFailure('Local rescue did not pass final validation',
                                  {'reason': 'local_rescue_validation'})
+        if postroute_regions and perf_counter()<started+seconds:
+            from netlist2schematic.flow.aesthetic_flow import _postroute_regions
+            placement,comps,nets,index,metadata,routed=result
+            par=load_local('place_and_route','place-and-route.py')
+            placement,metadata,routed=_postroute_regions(
+                par,placement,comps,nets,index,metadata,routed,options=options,
+                deadline=started+seconds,stage='local_rescue')
+            # The source route/score remains history; exported quality describes
+            # the current verified geometry before the existing simplifier.
+            if metadata.get('layout_regions',{}).get('postroute_budget'):
+                from netlist2schematic.layout.layout_quality import evaluate_quality
+                quality=evaluate_quality(par,placement,comps,nets,index,routed[0],routed[1],
+                                         metadata.get('structs',()))
+                old_quality=deepcopy(metadata.get('quality'))
+                metadata['quality']={**deepcopy(old_quality or {}),'score':quality['score'],'details':quality,
+                    'candidate_metrics_stage':'after_region_postroute_before_route_simplification',
+                    'current_metrics_stage':'after_region_postroute'}
+                for candidate in metadata['quality'].get('candidates',()):
+                    if str(candidate.get('candidate_id'))==str(metadata.get('candidate_id')):
+                        candidate.update(metrics=deepcopy(routed[1]),score=quality['score'])
+                metadata['layout_regions']['postroute_quality']=dict(before=old_quality,after=quality)
+                metadata.setdefault('local_rescue',{})['geometry_stage']='before_region_postroute'
+                metadata['local_rescue']['postroute_layout_changed']=(
+                    list(placement.column_x)!=list(context[0].column_x)
+                    or list(placement.cell_of)!=list(context[0].cell_of)
+                    or list(placement.orient)!=list(context[0].orient)
+                    or list(getattr(placement,'offset_x',()))!=list(getattr(context[0],'offset_x',()))
+                    or list(getattr(placement,'passive_local_offsets',()))!=list(getattr(context[0],'passive_local_offsets',())))
+            result=placement,comps,nets,index,metadata,routed
     except ROUTING_FAILURES as exc:
         if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
             raise
@@ -551,7 +591,11 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         plan = report.get('plan')
         if plan is not None:
             from netlist2schematic.plugins.region.region_layout import measure_regions
+            from netlist2schematic.plugins.region.region_controls import measure_saved_controls
+            from netlist2schematic.plugins.region.region_route_ports import measure_saved_paired_controls
             report['metrics'] = measure_regions(placement, comps, comp_index, plan)
+            report['control_networks'] = measure_saved_controls(placement, comps, comp_index, plan)
+            report['paired_controls'] = measure_saved_paired_controls(placement, comps, comp_index, plan)
         else:
             report['metrics'] = {'measurable': False, 'reason': 'no_saved_region_plan'}
         report['measurement_stage'] = 'final_output'
@@ -808,8 +852,8 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--quality-seconds', type=float, default=300)
     parser.add_argument('--candidate-budget',choices=('sequential','reserved'),default='sequential',
                         help='Optional 70/85/100 percent deadlines; default preserves sequential routing')
-    parser.add_argument('--port-preflight',choices=('off','repair'),default='off',
-                        help='Repair static passive port/marker conflicts before routing; default off')
+    parser.add_argument('--port-preflight',choices=('off','repair'),default=None,
+                        help='Repair fixed-port/marker conflicts before routing; default: repair for netlists, off for saved layouts')
     parser.add_argument('--presentation',choices=('legacy','clean'),
                         help='Clean publication labels and bounds; default keeps saved or legacy style')
     parser.add_argument('--net-labels', choices=('off', 'auto'), default='off',
@@ -836,6 +880,11 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--cell', help='Explicit .subckt name; no recursive expansion')
     parser.add_argument('--analog-canvas-root', help='Read-only original project directory')
     args = parser.parse_args(argv)
+    if args.port_preflight is None:
+        # Saved-layout operations preserve coordinates; their implicit policy
+        # must not inherit the new-layout repair default.
+        args.port_preflight = ('off' if args.reroute_placement or args.simplify_placement
+                               else DEFAULT_PORT_PREFLIGHT)
     try:
         _validate_region_policy(args.region_layout, args.structure_layout, args.symmetry_layout)
         _validate_readability_policy(args.readability_layout, args.readability_phase,

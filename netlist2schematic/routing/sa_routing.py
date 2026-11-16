@@ -141,7 +141,8 @@ class RoutingValidationError(ValueError):
 
 
 def _verify(par, nets, placement, comp_index, routed, scene, deadline=None):
-    from netlist2schematic.routing.routing_rules import analyze_routes, canonical_topology, check_deadline
+    from netlist2schematic.routing.routing_rules import (analyze_routes, canonical_topology, check_deadline,
+                                                       static_shape_conflicts)
     check_deadline(deadline, 'final_validation')
     routed = [(net, canonical_topology(segments,
                 pins=[pin.point for pin in scene.pins.get(net, [])], deadline=deadline)['segments'])
@@ -156,6 +157,11 @@ def _verify(par, nets, placement, comp_index, routed, scene, deadline=None):
     structure_errors = routing_errors(normalize_routes(routed, deadline=deadline), signal_nets,
                                      placement, comp_index, deadline=deadline)
     analysis = analyze_routes(routed, scene, deadline=deadline)
+    # Independent redraw and saved-route validation must enforce the same
+    # device/marker shape checks even when optional preflight repair is off.
+    shapes = static_shape_conflicts(scene, deadline)
+    analysis['violations'].extend(fault for _, fault in shapes)
+    analysis['body_violations'] += len(shapes)
     if structure_errors or analysis['violations']:
         diagnostics = {'structure_errors': structure_errors,
                        **{key: value for key, value in analysis.items() if key != 'topologies'}}

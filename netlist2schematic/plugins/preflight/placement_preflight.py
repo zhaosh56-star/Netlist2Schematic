@@ -7,11 +7,12 @@ from time import perf_counter
 
 from netlist2schematic.routing.orthogonal_router import RoutingFailure
 from netlist2schematic.routing.routing_rules import (EPS, RoutingOptions, analyze_routes, build_scene,
-                           check_deadline, segment_hits_rect)
+                           check_deadline, segment_hits_rect, static_shape_conflicts)
 from netlist2schematic.plugins.symmetry.symmetry_layout import _static_safe
 
-VERSION = 'fixed-port-preflight-v2'
+VERSION = 'fixed-port-preflight-v4'
 PASSIVES = frozenset(('resistor', 'capacitor', 'inductor', 'diode'))
+SOURCES = frozenset(('voltage-source', 'current-source'))
 NEIGHBORS = ((0, -1), (0, 1), (-1, 0), (1, 0),
              (-1, -1), (-1, 1), (1, -1), (1, 1))
 
@@ -56,7 +57,7 @@ def _set_cell(trial, i, cell):
         trial.offset_x[i] = 0.0
 
 
-def _valid_state(trial, original, comps, fixed, movable):
+def _valid_state(trial, original, comps, fixed, movable, *, source_orientations=()):
     movable = {movable} if isinstance(movable, int) else set(movable)
     rows, columns = _shape(trial)
     if len(set(trial.cell_of)) != len(comps):
@@ -69,7 +70,11 @@ def _valid_state(trial, original, comps, fixed, movable):
         row, column = trial.cell_of[i]
         if not (0 <= row < rows and 0 <= column < columns):
             return False
-        if i not in movable or i in fixed or comp['symbol'] not in PASSIVES:
+        source_turn = i in source_orientations and comp['symbol'] in SOURCES
+        if source_turn and (trial.cell_of[i] != original.cell_of[i]
+                            or trial.pos_of(i) != original.pos_of(i)):
+            return False
+        if i not in movable or i in fixed or (comp['symbol'] not in PASSIVES and not source_turn):
             if trial.cell_of[i] != original.cell_of[i] or trial.orient[i] != original.orient[i] or (
                     trial.pos_of(i) != original.pos_of(i)):
                 return False
@@ -91,11 +96,9 @@ def _static_faults(par, pl, nets, index, options, deadline):
     scene = build_scene(par, nets, pl, index, options=options, deadline=deadline)
     faults = list(analyze_routes(list(scene.fixed_segments.items()), scene,
                                 deadline=deadline)['violations'])
-    hard, added = set(), set()
-
-    def overlaps(a, b):
-        return (max(a[0], b[0]) < min(a[2], b[2]) - EPS
-                and max(a[1], b[1]) < min(a[3], b[3]) - EPS)
+    hard = {('power_stub_body', f['component'], f['pin']) for f in faults
+            if f['kind'] == 'power_stub_body'}
+    added = set()
 
     def extra(identity, kind, **detail):
         hard.add(identity)
@@ -103,21 +106,11 @@ def _static_faults(par, pl, nets, index, options, deadline):
             added.add(identity)
             faults.append({'kind': kind, 'point': None, **detail})
 
-    for number, (component, body) in enumerate(scene.body_rects):
-        check_deadline(deadline, 'preflight_shapes')
-        for other, second in scene.body_rects[number + 1:]:
-            if overlaps(body, second):
-                extra(('body_overlap', min(component, other), max(component, other)),
-                      'body_overlap', components=[component, other])
-    marker_components = [index[name] for net, members in nets.items()
-                         if par.power_marker_sym(net) for name, pin in members]
-    for number, (net, marker) in enumerate(scene.marker_rects):
-        check_deadline(deadline, 'preflight_markers')
-        owner = marker_components[number] if number < len(marker_components) else None
-        for component, body in scene.body_rects:
-            if component != owner and overlaps(marker, body):
-                extra(('marker_body_halo', number, component), 'marker_body_halo',
-                      nets=[net], marker=number, component=component)
+    for identity, fault in static_shape_conflicts(scene, deadline):
+        hard.add(identity)
+        added.add(identity)
+        faults.append(fault)
+    marker_components = scene.marker_components
     for net, segments in scene.fixed_segments.items():
         check_deadline(deadline, 'preflight_fixed_ports')
         for a, b in segments:
@@ -146,7 +139,10 @@ def _static_faults(par, pl, nets, index, options, deadline):
 
 def repair_static_ports(par, pl, comps, nets, index, options=None, *, deadline=None,
                         seconds=1.0, max_trials=64):
-    """Keep safe inputs untouched; otherwise try at most two passive actions.
+    """Keep safe inputs untouched; otherwise try at most two local actions.
+
+    V/I may only rotate in place when their default rail stub reenters their
+    own body. Other repairs retain the original passive-only movement scope.
 
     Every successful result passes the same complete static oracle as the
     initial scene. One strictly improving partial state may be kept privately
@@ -172,6 +168,20 @@ def repair_static_ports(par, pl, comps, nets, index, options=None, *, deadline=N
 
     def finish(result, reason):
         report.update(stop_reason=reason, elapsed_seconds=perf_counter()-started)
+        # No partial trial is returned. A confirmed fault on the restored
+        # original remains a fault, even if enumeration stopped at its limit.
+        if reason in ('already_safe','repaired'):
+            report['static_verification'] = dict(complete=True,valid=True,fault_count=0,
+                scope='fixed_port_body_and_marker_geometry',basis=reason)
+        elif result is pl and report.get('original_static_fault_count',0)>0:
+            report['final_static_fault_count'] = report['original_static_fault_count']
+            report['static_verification'] = dict(complete=True,valid=False,
+                fault_count=report['original_static_fault_count'],
+                violations=deepcopy(report['original_violations']),
+                scope='fixed_port_body_and_marker_geometry',basis='original_restored')
+        else:
+            report['static_verification'] = dict(complete=False,valid=None,
+                scope='fixed_port_body_and_marker_geometry',basis=reason)
         return result, report
 
     try:
@@ -187,6 +197,9 @@ def repair_static_ports(par, pl, comps, nets, index, options=None, *, deadline=N
         if max_trials == 0:
             return finish(pl, 'trial_limit')
         original_faults = _static_faults(par, pl, nets, index, options, stop)
+        source_orientations = {f['component'] for f in original_faults['violations']
+                               if f['kind'] == 'power_stub_body'
+                               and comps[f['component']]['symbol'] in SOURCES}
         report['original_violations'] = original_faults['violations'][:16]
         report['original_static_fault_count'] = original_faults['count']
         baseline = _wire_estimate(pl, nets, index, par)
@@ -197,15 +210,25 @@ def repair_static_ports(par, pl, comps, nets, index, options=None, *, deadline=N
         for step in range(2):
             partial = False
             candidates = [i for i, comp in enumerate(comps)
-                          if comp['symbol'] in PASSIVES and i not in fixed | touched]
-            candidates.sort(key=lambda i: (*work.pos_of(i), comps[i]['symbol'], comps[i]['id']))
+                          if (comp['symbol'] in PASSIVES or i in source_orientations)
+                          and i not in fixed | touched]
+            candidates.sort(key=lambda i: (i not in source_orientations,
+                *work.pos_of(i), comps[i]['symbol'], comps[i]['id']))
             for i in candidates:
                 count = len(par.GEO_DOC[comps[i]['symbol']]['orientations'])
                 allowed = work.allowed_orientations(i) if hasattr(work, 'allowed_orientations') else range(count)
                 alternatives = [('orientation', value) for value in sorted(set(allowed))
                                 if type(value) is int and 0 <= value < count and value != work.orient[i]]
+                if i in source_orientations:
+                    def rail_order(item):
+                        pins = par.GEO_DOC[comps[i]['symbol']]['orientations'][item[1]]['pins']
+                        directions = {p['name']: p['direction'] for p in pins}
+                        return sum(directions[p] != ('north' if par.power_marker_sym(n)=='vdd-port' else 'south')
+                                   for p,n in comps[i]['nodes'].items() if par.power_marker_sym(n)), item[1]
+                    alternatives.sort(key=rail_order)
                 row, column = work.cell_of[i]
-                alternatives.extend(('cell', (row+dr, column+dc)) for dr, dc in NEIGHBORS)
+                if i not in source_orientations:
+                    alternatives.extend(('cell', (row+dr, column+dc)) for dr, dc in NEIGHBORS)
                 for kind, value in alternatives:
                     if perf_counter() >= stop:
                         return finish(pl, 'time_budget')
@@ -220,7 +243,8 @@ def repair_static_ports(par, pl, comps, nets, index, options=None, *, deadline=N
                         trial.orient[i] = value
                     else:
                         _set_cell(trial, i, value)
-                    if not _valid_state(trial, pl, comps, fixed, touched | {i}):
+                    if not _valid_state(trial, pl, comps, fixed, touched | {i},
+                                        source_orientations=source_orientations):
                         report['state_rejections'] += 1
                         continue
                     estimate = _wire_estimate(trial, nets, index, par)

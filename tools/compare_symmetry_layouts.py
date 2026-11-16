@@ -114,7 +114,7 @@ def _select_cell(source, requested=None):
     if requested is not None:
         cell = requested
     else:
-        _, cells = _partition(_logical_lines(source))
+        _, cells = _partition(_logical_lines(source), root_path=source)
         if len(cells) > 1:
             raise ValueError('Multiple subcircuits require an explicit cell in --manifest: '
                              + ', '.join(sorted(cells)))

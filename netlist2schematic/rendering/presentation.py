@@ -46,7 +46,7 @@ def prepare_presentation(source, cell, comps, nets):
     """
     source = Path(source).expanduser().resolve()
     lines = _logical_lines(source)
-    top, cells = _partition(lines)
+    top, cells = _partition(lines, root_path=source)
     requested = str(cell).casefold() if cell is not None else None
     if requested is not None and requested not in cells:
         raise NetlistError(f'{source}: unknown subcircuit {cell!r}; available: '

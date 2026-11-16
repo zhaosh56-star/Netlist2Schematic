@@ -168,6 +168,16 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 if reused is not None:
                     placement, comps, nets, index, metadata = reused
             feedback_replaced = False
+            region_local_budget = None
+            if region_layout=='auto' and metadata.get('layout_regions',{}).get('applied'):
+                region_state=metadata['layout_regions']
+                initial=region_state.get('initialization',{})
+                region_local_budget=deepcopy(region_state.get('local_budget',dict(
+                    seconds=initial.get('seconds_limit',1.0),
+                    max_candidates=initial.get('max_trials',128),
+                    elapsed_seconds=initial.get('elapsed_seconds',0),
+                    candidates=initial.get('trials',0))))
+                region_local_budget['provenance']='this_candidate_before_feedback'
             readability_feedback_state = None
             readability_feedback_statistics = {}
             feedback_best = best
@@ -319,10 +329,30 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 from netlist2schematic.plugins.structure.structure_selection import measure_structure
                 report['metrics'] = measure_structure(par, placement, comps, nets, index,
                                                      metadata, structure_phase)
+            if (region_layout == 'auto' and identifier in ('2','3')
+                    and metadata.get('layout_regions',{}).get('applied')):
+                from netlist2schematic.plugins.region.region_controls import refine_region_controls
+                from netlist2schematic.plugins.region.region_bank_controls import refine_control_banks
+                from netlist2schematic.plugins.region.region_tails import refine_region_tails
+                placement,metadata=refine_region_controls(par,placement,comps,nets,index,metadata,
+                    options=effective_options,deadline=min(candidate_deadline,local_refinement_deadline),
+                    budget=region_local_budget)
+                placement,metadata=refine_control_banks(par,placement,comps,nets,index,metadata,
+                    options=effective_options,deadline=min(candidate_deadline,local_refinement_deadline),
+                    budget=metadata.get('layout_regions',{}).get('local_budget',region_local_budget))
+                placement,metadata=refine_region_tails(par,placement,comps,nets,index,metadata,
+                    options=effective_options,deadline=min(candidate_deadline,local_refinement_deadline),
+                    budget=metadata.get('layout_regions',{}).get('local_budget',region_local_budget))
             if port_preflight == 'repair':
                 from netlist2schematic.plugins.preflight.placement_preflight import repair_static_ports
-                placement, preflight_report = repair_static_ports(
-                    par,placement,comps,nets,index,effective_options,deadline=candidate_deadline)
+                try:
+                    placement, preflight_report = repair_static_ports(
+                        par,placement,comps,nets,index,effective_options,deadline=candidate_deadline)
+                except ValueError:
+                    # A malformed static scene is a data error, not a later
+                    # producer stopping after an incumbent already succeeded.
+                    candidate_data_error = True
+                    raise
                 metadata=deepcopy(metadata)
                 metadata['port_preflight']=preflight_report
                 if structure_layout=='auto' and 'structure_layout' in metadata:
@@ -341,8 +371,6 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 metadata = measure_candidate(placement, comps, index, metadata, shared_attachment_plan,
                     policy=attachment_layout, stage='before_final_routing')
             routing_at = perf_counter()
-            print(f'Quality candidate {identifier}: final routing, '
-                  f'budget remaining={candidate_deadline-routing_at:.1f}s', flush=True)
             record = {'candidate_id': identifier, 'seed': metadata.get('candidate_seed', seed),
                       'annealing': deepcopy(metadata.get('annealing', {})),
                       'passive_layout_policy': metadata.get('passive_layout_policy', 'fixed'),
@@ -373,6 +401,23 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     stop_reason = 'time_budget'
                     break
                 continue
+            fixed_check = metadata.get('port_preflight',{}).get('static_verification',{})
+            if (port_preflight=='repair' and fixed_check.get('complete')
+                    and fixed_check.get('valid') is False and fixed_check.get('fault_count',0)>0):
+                record.update(status='failed',message='Fixed port geometry remains invalid after preflight',
+                    diagnostics=dict(reason='static_port_conflict',stage='before_final_routing',
+                        fault_count=fixed_check['fault_count'],violations=deepcopy(fixed_check.get('violations',[])),
+                        routing_skipped=True))
+                records.append(record)
+                print(f"Quality candidate {identifier}: fixed geometry rejected before routing "
+                      f"({fixed_check['fault_count']} faults)",flush=True)
+                # A rejected preflight has no routing checkpoint of its own.
+                # Keep the preceding actually attempted candidate for rescue.
+                if candidate_id is not None and str(candidate_id)==identifier:
+                    stop_reason='replay_complete';break
+                continue
+            print(f'Quality candidate {identifier}: final routing, '
+                  f'budget remaining={candidate_deadline-routing_at:.1f}s', flush=True)
             # A router or suspended producer may mutate/reuse its own buffers.
             # Keep only the last actually attempted candidate, after any feedback
             # replacement, and never serialize this executable placement object.
@@ -385,6 +430,18 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             try:
                 routed, metrics, validation = final_route(
                     par, nets, placement, index, options=effective_options, deadline=candidate_deadline)
+                if (region_layout == 'auto' and identifier in ('2','3')
+                        and shared_region_plan is not None and shared_region_plan.get('supported')
+                        and metadata.get('layout_regions',{}).get('applied')):
+                    placement,metadata,result=_postroute_regions(
+                        par,placement,comps,nets,index,metadata,(routed,metrics,validation),
+                        options=effective_options,deadline=candidate_deadline,plan=shared_region_plan)
+                    routed,metrics,validation=result
+                    region_report=metadata['layout_regions']
+                    record['region_route_compaction']=deepcopy(region_report['route_compaction'])
+                    record['region_control_routes']=deepcopy(region_report['paired_control_routes'])
+                    if 'channel_compaction' in region_report:
+                        record['region_channel_compaction']=deepcopy(region_report['channel_compaction'])
                 quality = evaluate_quality(par, placement, comps, nets, index,
                                            routed, metrics, metadata.get('structs', []))
                 record.update(status='valid', metrics=deepcopy(metrics), score=quality['score'],
@@ -578,8 +635,69 @@ def _region_feedback_compatible(source, target):
                 and ap['signature'] == bp.get('signature'))
 
 
+def _postroute_regions(par,placement,comps,nets,index,metadata,result,*,options,deadline,
+                       plan=None,stage='normal'):
+    """A single bounded window, after complete routing and before shortening.
+
+    Existing attachment compression and paired-control repairs run first. New
+    independent-channel compression gets only their unused time and trials.
+    This helper is never called implicitly for saved-coordinate operations.
+    """
+    from netlist2schematic.plugins.region.region_compaction import compact_region_routes
+    from netlist2schematic.plugins.region.region_route_ports import regularize_control_routes
+    region=metadata.get('layout_regions') or {}
+    plan=plan if plan is not None else region.get('plan')
+    identifier=str(metadata.get('candidate_id'))
+    if (region.get('policy')!='auto' or not region.get('applied')
+            or identifier not in ('2','3') or not plan or not plan.get('supported')
+            or metadata.get('routing_stage')=='bus_fallback'):
+        return placement,metadata,result
+    if not result[2].get('valid'):
+        raise ValueError('region postroute cleanup requires a completely verified route')
+    started=perf_counter()
+    until=min(deadline,started+1)
+    metadata=deepcopy(metadata)
+    region=metadata['layout_regions']
+    placement,result,compression=compact_region_routes(
+        par,placement,comps,nets,index,result,plan,
+        options=options,deadline=until,prevalidated=True)
+    remaining=max(0,12-compression.get('candidates',0))
+    placement,result,controls=regularize_control_routes(
+        par,placement,comps,nets,index,result,plan,
+        options=options,deadline=until,seconds=max(0,until-perf_counter()),
+        max_candidates=remaining,prevalidated=True,
+        protected_ids=[r['device'] for r in metadata.get('role_adjustments',()) if 'device' in r])
+    remaining=max(0,remaining-controls.get('candidates',0))
+    changed=compression['applied'] or controls['applied']
+    region.update(route_compaction=compression,paired_control_routes=controls)
+    from netlist2schematic.plugins.region.region_placement import _leaves
+    if len(_leaves(plan))>=2 and remaining and perf_counter()<until:
+        previous_pitch=(region.get('channel_compaction') or {}).get('reference_pitch')
+        placement,result,channels=compact_region_routes(
+            par,placement,comps,nets,index,result,plan,options=options,deadline=until,
+            seconds=max(0,until-perf_counter()),max_candidates=remaining,prevalidated=True,
+            channel_mode='independent',reference_pitch=previous_pitch)
+        region['channel_compaction']=channels
+        changed=changed or channels['applied']
+    else:
+        channels=dict(applied=False,candidates=0,stop_reason=(
+            'candidate_limit' if not remaining else 'time_budget' if perf_counter()>=until
+            else 'no_independent_regions'))
+        region['channel_compaction']=channels
+    region['postroute_budget']=dict(stage=stage,seconds_limit=1,max_candidates=12,
+        candidates=compression.get('candidates',0)+controls.get('candidates',0)+channels.get('candidates',0),
+        elapsed_seconds=perf_counter()-started,
+        operation_order=['attachment_compaction','paired_control_routes','reserved_region_channels'])
+    if changed:
+        metadata['layout_grid']=dict(column_x=list(placement.column_x),row_y=list(placement.row_y))
+        metadata=_measure_region_candidate(placement,comps,index,metadata,plan,identifier)
+    return placement,metadata,result
+
+
 def _measure_region_candidate(placement, comps, index, metadata, plan, identifier):
     from netlist2schematic.plugins.region.region_layout import measure_regions
+    from netlist2schematic.plugins.region.region_controls import measure_saved_controls
+    from netlist2schematic.plugins.region.region_route_ports import measure_saved_paired_controls
     metadata = deepcopy(metadata)
     report = metadata.setdefault('layout_regions', {
         'policy': 'auto', 'version': plan.get('version'), 'applied': False,
@@ -587,5 +705,7 @@ def _measure_region_candidate(placement, comps, index, metadata, plan, identifie
     report.update(plan=deepcopy(plan), plan_signature=plan.get('signature'),
                   reference_candidate=str(identifier) == '1',
                   metrics=measure_regions(placement, comps, index, plan),
+                  control_networks=measure_saved_controls(placement,comps,index,plan),
+                  paired_controls=measure_saved_paired_controls(placement,comps,index,plan),
                   measurement_stage='before_route_simplification')
     return metadata

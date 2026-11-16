@@ -14,6 +14,8 @@ from netlist2schematic.routing.orthogonal_router import RoutingFailure
 from netlist2schematic.postprocess.route_patterns import MAX_TRACKS_PER_AXIS, three_segment_candidates
 from netlist2schematic.postprocess.route_reattachment import MAX_TARGETS_PER_BRANCH, reattachment_candidates
 from netlist2schematic.postprocess.route_tracks import MAX_TRACK_CANDIDATES_PER_CHAIN, track_compaction_candidates
+from netlist2schematic.postprocess.route_junctions import (aligned_T_candidates,
+    VERSION as JUNCTION_VERSION, PATTERN as T_PATTERN, MAX_PER_NET as MAX_T_PER_NET)
 from netlist2schematic.postprocess.route_tradeoff import (MAX_EXTRA_CROSSINGS, VERSION as TRADEOFF_VERSION,
                             crossing_identities, evaluate as evaluate_tradeoff,
                             physical_pitch)
@@ -21,7 +23,7 @@ from netlist2schematic.routing.routing_rules import (EPS, PreparedOccupancy, bui
                            check_deadline, intersection, on_segment)
 from netlist2schematic.routing.sa_routing import RoutingValidationError, _verify
 
-VERSION = 'orthogonal-shortcuts-v9'
+VERSION = 'orthogonal-shortcuts-v10'
 MAX_ROUNDS = 4
 MAX_CANDIDATES = 512
 OPERATIONS = ('chain_shortcut', 'leaf_reattachment', 'three_segment_shortcut',
@@ -153,7 +155,7 @@ def _replacements(path):
                    if {_edge(p, q) for p, q in choice if p != q} != original})
 
 
-def _shortcut_candidates(scene, routed, deadline=None):
+def _chain_shortcut_candidates(scene, routed, deadline=None):
     for chain in _chains(scene, routed, deadline):
         check_deadline(deadline, 'simplify_shortcut_generation')
         path = chain['path']
@@ -165,6 +167,25 @@ def _shortcut_candidates(scene, routed, deadline=None):
                    'new_chain_length': sum(abs(a[0]-b[0])+abs(a[1]-b[1])
                                            for a, b in replacement),
                    'shortcut_identity': (chain['net'], tuple(chain['segments']), replacement)}
+
+
+def _shortcut_candidates(scene, routed, deadline=None):
+    """Alternate a coordinated T and an ordinary chain on this incumbent.
+
+    They share the old first-operation and first-stage allowance. Neither a
+    large T list nor many old chains can silently starve its sibling family.
+    The enclosing scheduler still reserves the other three stages unchanged.
+    """
+    iterators={0:iter(aligned_T_candidates(scene,routed,deadline)),
+               1:iter(_chain_shortcut_candidates(scene,routed,deadline))}
+    turn=0
+    while iterators:
+        check_deadline(deadline,'simplify_local_pattern_round_robin')
+        if turn in iterators:
+            try:proposal=next(iterators[turn])
+            except StopIteration:del iterators[turn]
+            else:yield proposal
+        turn=1-turn
 
 
 def _three_segment_candidates(scene, routed, deadline=None):
@@ -297,6 +318,10 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
               'operation_order': list(OPERATIONS),
               'phase_order': list(PHASES),
               'scheduling': 'reserved_stages_v6',
+              'junction_generation': {'version': JUNCTION_VERSION, 'pattern': T_PATTERN,
+                                     'max_candidates_per_net': MAX_T_PER_NET,
+                                     'operation': 'chain_shortcut', 'stage': 'chain_warmup',
+                                     'ordering': 'alternate_T_and_ordinary_chain'},
               'track_generation': {'version': 'chain_round_robin_v1',
                                    'prefilter': 'scene.edge_check',
                                    'max_candidates_per_chain': MAX_TRACK_CANDIDATES_PER_CHAIN,
@@ -318,6 +343,7 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
               'original_revalidated': False, 'converged': False,
               'stop_reason': 'disabled' if seconds == 0 else 'round_budget'}
     report['operations'] = {name: dict(report['candidate_counts']) for name in OPERATIONS}
+    report['patterns'] = {T_PATTERN: dict(report['candidate_counts'])}
     report['stages'] = [
         {'phase': phase, 'activated_operation': OPERATIONS[index],
          'time_fraction': (index+1)/len(OPERATIONS),
@@ -427,10 +453,13 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                         pending_identity = identity
                         counts = report['candidate_counts']
                         op_counts = report['operations'][operation]
+                        pattern_counts = report['patterns'].get(proposal.get('pattern'))
 
                         def count(key):
                             counts[key] += 1
                             op_counts[key] += 1
+                            if pattern_counts is not None:
+                                pattern_counts[key] += 1
 
                         count('considered')
                         if net not in net_facts:
@@ -517,6 +546,9 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                                     'target', 'track_axis', 'track_coordinate',
                                     'old_track_coordinate', 'moved_segment_index',
                                     'old_chain_length', 'new_chain_length'):
+                            if key in proposal:
+                                change[key] = deepcopy(proposal[key])
+                        for key in ('pattern','junction','trunk','terminals'):
                             if key in proposal:
                                 change[key] = deepcopy(proposal[key])
                         report['accepted_changes'].append(change)

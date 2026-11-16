@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import warnings
 
 SRC_ALIASES = frozenset({'vdd', 'vdd!', 'vpwr', 'vcc', 'vcc!', 'avdd', 'dvdd'})
 SNK_ALIASES = frozenset({'0', 'gnd', 'gnd!', 'vss', 'vss!', 'gnds', 'agnd', 'dgnd'})
@@ -11,6 +12,10 @@ SNK_ALIASES = frozenset({'0', 'gnd', 'gnd!', 'vss', 'vss!', 'gnds', 'agnd', 'dgn
 
 class NetlistError(ValueError):
     """An unsupported or malformed source statement, including its location."""
+
+
+class NetlistCompatibilityWarning(UserWarning):
+    """An explicit, source-located compatibility interpretation."""
 
 
 @dataclass(frozen=True)
@@ -78,12 +83,14 @@ _IGNORED_DIRECTIVES = frozenset({
 })
 
 
-def _partition(lines: list[SourceLine]):
+def _partition(lines: list[SourceLine], *, root_path=None):
     top: list[SourceLine] = []
     cells: dict[str, list[SourceLine]] = {}
     active: str | None = None
     control = False
-    for line in lines:
+    has_definition = any(line.text.split()[0].casefold() == '.subckt' for line in lines)
+    single_file = len({line.path for line in lines}) == 1
+    for position, line in enumerate(lines):
         tokens = line.text.split()
         directive = tokens[0].casefold()
         if directive == '.control':
@@ -106,6 +113,15 @@ def _partition(lines: list[SourceLine]):
             continue
         if directive == '.ends':
             if active is None:
+                # Some flat exports finish with an unnamed .ends. Do not
+                # hide missing/named definitions, trailing devices, or an
+                # orphan terminator coming from an included model file.
+                if (len(tokens) == 1 and not has_definition and single_file and top
+                        and (root_path is None or line.path == Path(root_path).resolve())
+                        and all(tail.text.casefold() == '.end' for tail in lines[position+1:])):
+                    warnings.warn(str(line.error('interpreting terminal unnamed .ends as a flat-circuit terminator')),
+                                  NetlistCompatibilityWarning, stacklevel=2)
+                    continue
                 raise line.error('.ends has no matching .subckt')
             if len(tokens) > 1 and tokens[1].casefold() != active:
                 raise line.error(f'.ends {tokens[1]} does not match {active}')
@@ -168,11 +184,35 @@ def classify_tokens(tokens: list[str], models: dict[str, str], line: SourceLine)
         if len(tokens) < count:
             raise line.error(f'{name}: expected {shape}')
 
-    if family in ('M', 'X'):
+    if family == 'X':
+        # X has variable node counts. The model precedes named parameters;
+        # neither a final parameter nor a node is a reliable model position.
+        end = next((i for i, token in enumerate(tokens[1:], 1)
+                    if '=' in token or token.casefold() == 'params:'), len(tokens))
+        head = tokens[:end]
+        if len(head) < 3:
+            raise line.error(f'{name}: expected X nodes model [parameters]')
+        model, nodes = head[-1], head[1:-1]
+        declared = models.get(model.casefold())
+        if model.casefold() in ('npn', 'pnp') or declared in ('NPN', 'PNP'):
+            if len(nodes) not in (3, 4):
+                raise line.error(f'{name}: typed X BJT expects C B E [substrate] model [parameters]')
+            kind = _semiconductor_type(model, 'BJT', models, line)
+            result = {'cls': 'BJT', 'type': kind, 'c': net(nodes[0]),
+                      'b': net(nodes[1]), 'e': net(nodes[2]), 'model': model}
+            if len(nodes) == 4:
+                result['substrate'] = net(nodes[3])
+            return result
+        if re.search(r'(?:^|[_\-.])(?:nfet|pfet)(?:$|[_\d\-.])', model, re.I):
+            if len(nodes) != 4:
+                raise line.error(f'{name}: X MOS expects D G S B model [parameters]')
+            kind = _semiconductor_type(model, 'MOS', models, line)
+            return {'cls': 'MOS', 'type': kind, 'd': net(nodes[0]), 'g': net(nodes[1]),
+                    's': net(nodes[2]), 'bulk': net(nodes[3]), 'model': model}
+        raise line.error(f'{name}: unsupported X instance {model!r}; supported mappings are nfet/pfet MOS and explicitly typed NPN/PNP BJT')
+    if family == 'M':
         need(6, 'name D G S B model [parameters]')
         model = tokens[5]
-        if family == 'X' and not re.search(r'(?:^|[_\-.])(?:nfet|pfet)(?:$|[_\d\-.])', model, re.I):
-            raise line.error(f'{name}: unsupported X instance {model!r}; only explicit nfet/pfet MOS mappings are supported, not hierarchical expansion')
         kind = _semiconductor_type(model, 'MOS', models, line)
         return {'cls': 'MOS', 'type': kind, 'd': net(tokens[1]), 'g': net(tokens[2]),
                 's': net(tokens[3]), 'bulk': net(tokens[4]), 'model': model}
@@ -200,6 +240,25 @@ def classify_tokens(tokens: list[str], models: dict[str, str], line: SourceLine)
         return {'cls': 'VSRC' if family == 'V' else 'ISRC', 'type': family,
                 'p': net(tokens[1]), 'n': net(tokens[2]), 'value': ' '.join(tokens[3:])}
     if family == 'E':
+        # A named black-box contract is different from a SPICE VCVS. Preserve
+        # both supply connections, without inventing an out- node or gain.
+        end = next((i for i, token in enumerate(tokens[1:], 1)
+                    if '=' in token or token.casefold() == 'params:'), len(tokens))
+        head = tokens[:end]
+        if head[-1].casefold() == 'opamp' and len(head) in (5, 7):
+            parameters = tokens[end:]
+            if parameters and parameters[0].casefold() == 'params:':
+                parameters = parameters[1:]
+            if any('=' not in token for token in parameters):
+                raise line.error(f'{name}: opamp parameters must use name=value')
+            result = {'cls': 'OPAMP', 'type': 'E', 'model': head[-1],
+                      'ip': net(head[-4]), 'in': net(head[-3]), 'op': net(head[-2]),
+                      'parameters': ' '.join(parameters)}
+            if len(head) == 7:
+                result.update(vdd=net(head[1]), vss=net(head[2]))
+            return result
+        if head[-1].casefold() == 'opamp' and len(head) != 6:
+            raise line.error(f'{name}: named opamp expects [VDD VSS] IN+ IN- OUT opamp [name=value]')
         need(6, 'name out+ out- control+ control- gain')
         if net(tokens[2]) not in SNK_ALIASES:
             raise line.error(f'{name}: E-source opamp proxy requires a grounded out-; got {tokens[2]!r}')
@@ -213,7 +272,7 @@ def classify_tokens(tokens: list[str], models: dict[str, str], line: SourceLine)
 def parse_netlist(path, cell=None) -> dict[str, dict]:
     """Read supported devices, retaining source locations and instance IDs."""
     path = Path(path).expanduser().resolve()
-    top, cells = _partition(_logical_lines(path))
+    top, cells = _partition(_logical_lines(path), root_path=path)
     if cell is not None:
         key = str(cell).casefold()
         if key not in cells:
@@ -251,7 +310,8 @@ def parse_netlist(path, cell=None) -> dict[str, dict]:
 def terminal_nets(device: dict) -> tuple[str, ...]:
     keys = {'MOS': ('d', 'g', 's', 'bulk'), 'BJT': ('c', 'b', 'e', 'substrate'),
             'PASSIVE': ('a', 'b'), 'VSRC': ('p', 'n'), 'ISRC': ('p', 'n'),
-            'VCVS': ('op', 'on', 'ip', 'in')}[device['cls']]
+            'VCVS': ('op', 'on', 'ip', 'in'),
+            'OPAMP': ('vdd', 'vss', 'ip', 'in', 'op')}[device['cls']]
     return tuple(device[key] for key in keys if key in device)
 
 
@@ -272,8 +332,13 @@ def to_document(devices: dict[str, dict]) -> dict:
             pins = {'+': 'p', '-': 'n'}
         else:
             symbol, pins = 'opamp', {'OUT': 'op', 'IN+': 'ip', 'IN-': 'in'}
-        components.append({'id': name, 'symbol': symbol,
-                           'nodes': {pin: device[key] for pin, key in pins.items()}})
+        component = {'id': name, 'symbol': symbol,
+                     'nodes': {pin: device[key] for pin, key in pins.items()}}
+        if family == 'OPAMP':
+            hidden = {pin: device[key] for pin, key in (('VDD', 'vdd'), ('VSS', 'vss')) if key in device}
+            if hidden:
+                component['hidden_nodes'] = hidden
+        components.append(component)
     nets: dict[str, list[tuple[str, str]]] = {}
     for component in components:
         for pin, net in component['nodes'].items():

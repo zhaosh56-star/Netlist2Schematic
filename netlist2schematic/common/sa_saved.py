@@ -73,6 +73,9 @@ def load_placement(jpath, *, analog_canvas_root=None):
     saved = data.get('placement', {})
     if set(saved) != set(index):
         raise ValueError('Saved placement device IDs do not match the source netlist')
+    for comp in comps:
+        if saved[comp['id']].get('hidden_nodes') != comp.get('hidden_nodes'):
+            raise ValueError(f"Saved hidden supply connections do not match the source for {comp['id']}")
     placement = par.Placement.__new__(par.Placement)
     placement.comps = comps
     placement.rng = random.Random(data.get('seed', 20261029))
@@ -128,6 +131,10 @@ def load_placement(jpath, *, analog_canvas_root=None):
             if value < -left-1e-9 or value > right+1e-9:
                 raise ValueError(f"Horizontal offset crosses a column midpoint for {comps[i]['id']}")
         placement.offset_x = offsets
+    if any('local_offset' in saved[component['id']] for component in comps):
+        placement.passive_local_offsets = [saved[c['id']].get('local_offset', (0, 0)) for c in comps]
+        from netlist2schematic.common.passive_coordinates import validate_passive_offsets
+        validate_passive_offsets(placement, comps)
     if 'presentation' in data:
         if not isinstance(data['presentation'],dict):
             raise ValueError('Saved presentation must be an object')

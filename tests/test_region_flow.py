@@ -83,6 +83,7 @@ class RegionFlowTests(unittest.TestCase):
         quality_iterator = iter(scores or [10 * i for i in range(1, len(items) + 1)])
 
         def quality(*args):
+            self.events.append(('quality',args[1].identifier,deepcopy(args[1].positions)))
             return {'score': next(quality_iterator), 'per_net': {
                 'signal': {'detour_factor': 3, 'excess_detour': 600}}}
 
@@ -150,7 +151,7 @@ class RegionFlowTests(unittest.TestCase):
 
     def test_no_evaluated_region_does_not_claim_coverage(self):
         result = self.select([region_candidate(1)])
-        self.assertEqual([('route', 1)], self.events)
+        self.assertEqual([('route', 1)], [e for e in self.events if e[0]!='quality'])
         self.assertNotIn('layout_regions', result[4])
         self.selection_mock.assert_not_called()
 
@@ -161,6 +162,141 @@ class RegionFlowTests(unittest.TestCase):
         metadata = caught.exception.retry_context[4]
         self.assertTrue(metadata['layout_regions']['applied'])
         self.assertEqual(PLAN, metadata['layout_regions']['plan'])
+
+    def test_compaction_occurs_after_valid_route_before_quality_and_keeps_reference(self):
+        seen=[]
+        def compression(par,pl,comps,nets,index,result,plan,**kwargs):
+            self.assertEqual(self.events[-1],('route',pl.identifier))
+            self.assertTrue(result[2]['valid'])
+            self.assertTrue(kwargs['prevalidated'])
+            self.assertGreater(kwargs['deadline'],0)
+            self.assertEqual(kwargs['options'].cross_clearance,12)
+            seen.append(pl.identifier)
+            return pl,result,{'applied':False,'reason':'no_free_strip'}
+        with patch('netlist2schematic.plugins.region.region_compaction.compact_region_routes',side_effect=compression):
+            result=self.select([region_candidate(i) for i in (1,2,3)],feedback=lambda *args:None)
+        self.assertEqual(seen,[2,3])
+        self.assertEqual(len([e for e in self.events if e[0]=='route']),3)
+        self.assertEqual(result[4]['quality']['candidates'][1]['region_route_compaction']['reason'],'no_free_strip')
+
+    def test_failed_or_unapplied_region_never_reaches_compaction(self):
+        item=region_candidate(3)
+        item[4]['layout_regions']['applied']=False
+        with patch('netlist2schematic.plugins.region.region_compaction.compact_region_routes',
+                   side_effect=AssertionError('unapplied or failed placement compressed')):
+            self.select([region_candidate(1),region_candidate(2),item],
+                routes=[route_result(),RoutingFailure('blocked',{'reason':'blocked'}),route_result()])
+
+    def test_paired_control_ports_follow_compaction_share_quota_and_precede_quality(self):
+        deadlines=[]
+        def compact(par,pl,comps,nets,index,result,plan,**kwargs):
+            self.events.append(('compact',pl.identifier))
+            deadlines.append(kwargs['deadline'])
+            return pl,result,dict(applied=False,candidates=11)
+        def ports(par,pl,comps,nets,index,result,plan,**kwargs):
+            self.assertEqual(self.events[-1],('compact',pl.identifier))
+            self.assertEqual(kwargs['deadline'],deadlines[-1])
+            self.assertEqual(kwargs['max_candidates'],1)
+            self.assertLessEqual(kwargs['seconds'],1)
+            self.assertTrue(kwargs['prevalidated'])
+            self.assertEqual(kwargs['protected_ids'],['R1'])
+            clone=deepcopy(pl);clone.positions[0]=(20,0)
+            clone.column_x=[20,100];clone.row_y=[0]
+            self.events.append(('paired_ports',pl.identifier))
+            return clone,result,dict(applied=True,candidates=1)
+        items=[region_candidate(j) for j in (1,2)]
+        items[1][4]['role_adjustments']=[dict(device='R1',kind='protected_role')]
+        with patch('netlist2schematic.plugins.region.region_compaction.compact_region_routes',side_effect=compact), \
+             patch('netlist2schematic.plugins.region.region_route_ports.regularize_control_routes',side_effect=ports):
+            result=self.select(items)
+        self.assertEqual([e[1] for e in self.events if e[0]=='paired_ports'],[2])
+        quality=next(e for e in self.events if e[0]=='quality' and e[1]==2)
+        self.assertEqual(quality[2][0],(20,0))
+        self.assertEqual(len([e for e in self.events if e[0]=='route']),2)
+        self.assertEqual(items[0][0].positions[0],(0,0))
+        self.assertTrue(result[4]['quality']['candidates'][1]['region_control_routes']['applied'])
+
+    def test_tail_finish_uses_actual_feedback_layout_and_preserves_reference(self):
+        seen=[]
+        def feedback(pl,comps,nets,index,metadata,quality):
+            clone=deepcopy(pl);clone.positions[0]=(33,0)
+            return clone,comps,nets,index,deepcopy(metadata)
+        def finish(par,pl,comps,nets,index,metadata,**kwargs):
+            seen.append((pl.identifier,pl.positions[0]))
+            self.assertGreater(kwargs['deadline'],0)
+            return pl,metadata
+        with patch('netlist2schematic.plugins.region.region_tails.refine_region_tails',side_effect=finish):
+            self.select([region_candidate(j) for j in (1,2,3)],feedback=feedback)
+        self.assertEqual(seen,[(2,(0,0)),(2,(33,0))])
+
+    def test_failure_snapshot_is_captured_after_tail_finish(self):
+        def finish(par,pl,comps,nets,index,metadata,**kwargs):
+            clone=deepcopy(pl);clone.positions[0]=(24,0)
+            metadata=deepcopy(metadata)
+            metadata['layout_regions']['tail_refinement']={'applied':True}
+            return clone,metadata
+        with patch('netlist2schematic.plugins.region.region_tails.refine_region_tails',side_effect=finish):
+            with self.assertRaises(RoutingFailure) as caught:
+                self.select([region_candidate(2)],routes=[RoutingFailure('blocked',{'reason':'blocked'})])
+        snapshot=caught.exception.retry_context
+        self.assertEqual(snapshot[0].positions[0],(24,0))
+        self.assertTrue(snapshot[4]['layout_regions']['tail_refinement']['applied'])
+
+    def test_feedback_does_not_replace_third_candidates_actual_local_budget(self):
+        items=[region_candidate(j) for j in (1,2,3)]
+        items[1][4]['layout_regions']['initialization']={'trials':11,'elapsed_seconds':.02}
+        items[2][4]['layout_regions']['initialization']={'trials':77,'elapsed_seconds':.06}
+        budgets=[]
+        def control(par,pl,comps,nets,index,metadata,**kwargs):
+            metadata=deepcopy(metadata)
+            used=deepcopy(kwargs['budget'])
+            used['candidates']+=3;used['elapsed_seconds']+=.01
+            metadata['layout_regions']['local_budget']=used
+            return pl,metadata
+        def bank_controls(par,pl,comps,nets,index,metadata,**kwargs):
+            metadata=deepcopy(metadata)
+            used=deepcopy(kwargs['budget'])
+            self.assertIn(used['candidates'],(14,80))
+            used['candidates']+=2;used['elapsed_seconds']+=.005
+            metadata['layout_regions']['local_budget']=used
+            return pl,metadata
+        def finish(par,pl,comps,nets,index,metadata,**kwargs):
+            budgets.append(deepcopy(kwargs['budget']))
+            metadata=deepcopy(metadata)
+            metadata['layout_regions']['local_budget']=dict(seconds=1,max_candidates=128,
+                                                            candidates=127,elapsed_seconds=.99)
+            return pl,metadata
+        def feedback(pl,comps,nets,index,metadata,quality):
+            return deepcopy((pl,comps,nets,index,metadata))
+        with patch('netlist2schematic.plugins.region.region_controls.refine_region_controls',side_effect=control), \
+             patch('netlist2schematic.plugins.region.region_bank_controls.refine_control_banks',side_effect=bank_controls), \
+             patch('netlist2schematic.plugins.region.region_tails.refine_region_tails',side_effect=finish):
+            self.select(items,feedback=feedback)
+        self.assertEqual([b['candidates'] for b in budgets],[16,82])
+        for used,expected in zip(budgets,(.035,.075)):
+            self.assertAlmostEqual(used['elapsed_seconds'],expected)
+
+    def test_control_networks_run_after_feedback_before_tail_and_failure_snapshot(self):
+        events=[]
+        def controls(par,pl,comps,nets,index,metadata,**kwargs):
+            clone=deepcopy(pl);clone.positions[0]=(10,0)
+            metadata=deepcopy(metadata)
+            metadata['layout_regions']['control_refinement']={'applied':True}
+            events.append('control')
+            return clone,metadata
+        def tails(par,pl,comps,nets,index,metadata,**kwargs):
+            self.assertEqual(pl.positions[0],(10,0))
+            self.assertTrue(metadata['layout_regions']['control_refinement']['applied'])
+            clone=deepcopy(pl);clone.positions[0]=(20,0)
+            events.append('tail')
+            return clone,metadata
+        with patch('netlist2schematic.plugins.region.region_controls.refine_region_controls',side_effect=controls), \
+             patch('netlist2schematic.plugins.region.region_tails.refine_region_tails',side_effect=tails):
+            with self.assertRaises(RoutingFailure) as caught:
+                self.select([region_candidate(2)],routes=[RoutingFailure('blocked',{'reason':'blocked'})])
+        self.assertEqual(events,['control','tail'])
+        self.assertEqual(caught.exception.retry_context[0].positions[0],(20,0))
+        self.assertTrue(caught.exception.retry_context[4]['layout_regions']['control_refinement']['applied'])
 
 
 class RegionSavedCoordinatesTests(unittest.TestCase):
@@ -183,6 +319,9 @@ class RegionSavedCoordinatesTests(unittest.TestCase):
             original.write_text(json.dumps(data), encoding='utf8')
             saved_bytes = original.read_bytes()
             with patch('netlist2schematic.plugins.region.region_layout.build_region_plan', side_effect=AssertionError('saved input replanned')), \
+                 patch('netlist2schematic.plugins.region.region_controls.refine_region_controls', side_effect=AssertionError('saved input repacked')), \
+                  patch('netlist2schematic.plugins.region.region_bank_controls.refine_control_banks', side_effect=AssertionError('saved bank reoriented')), \
+                 patch('netlist2schematic.plugins.region.region_route_ports.regularize_control_routes', side_effect=AssertionError('saved input reoriented')), \
                  patch('netlist2schematic.layout.structured_placement.create_candidates', side_effect=AssertionError('saved input relayout')), \
                  redirect_stdout(io.StringIO()):
                 run_flow.simplify_placement(original, out_dir=root/'simplified', simplify_seconds=0)

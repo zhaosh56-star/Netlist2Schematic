@@ -276,7 +276,11 @@ class ShortcutSafetyTests(unittest.TestCase):
 
     def test_reusing_own_tree_cannot_introduce_a_cycle(self):
         fixture = case(cycle_trap=True)
-        routed, metrics, _, report = run_case(fixture)
+        # Exercise the existing tree-reuse trap directly. A coordinated T can
+        # legitimately remove this trap before its old chain is considered;
+        # T cycle/fixed-coverage safety is checked independently as well.
+        with patch.object(shortcuts, 'aligned_T_candidates', return_value=iter(())):
+            routed, metrics, _, report = run_case(fixture)
         self.assertGreater(report['candidate_counts']['cycle_rejected'], 0)
         self.assertEqual(0, shortcuts._cycle_rank(dict(routed)['a']))
         self.assertLess(metrics['bends'], fixture[4][1]['bends'])

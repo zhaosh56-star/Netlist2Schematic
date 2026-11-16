@@ -157,7 +157,8 @@ class SimplifyFlowTests(unittest.TestCase):
         saved = self.directory / 'previous-placement.json'
         for previous in ('orthogonal-shortcuts-v1', 'orthogonal-shortcuts-v2', 'orthogonal-shortcuts-v3',
                          'orthogonal-shortcuts-v4', 'orthogonal-shortcuts-v5',
-                         'orthogonal-shortcuts-v6', 'orthogonal-shortcuts-v7'):
+                         'orthogonal-shortcuts-v6', 'orthogonal-shortcuts-v7',
+                         'orthogonal-shortcuts-v8', 'orthogonal-shortcuts-v9'):
             with self.subTest(version=previous):
                 first['route_simplification']['version'] = previous
                 saved.write_text(json.dumps(first), encoding='utf-8')

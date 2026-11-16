@@ -14,7 +14,7 @@ from math import isfinite
 from statistics import median
 from time import perf_counter
 
-VERSION = 'attachment-sources-v1'
+VERSION = 'attachment-sources-v2'
 SOURCE = frozenset(('current-source', 'voltage-source'))
 PASSIVE = frozenset(('resistor', 'capacitor', 'inductor', 'diode'))
 ACTIVE = frozenset(('nmos', 'pmos', 'npn', 'pnp', 'opamp'))
@@ -75,6 +75,29 @@ def _control_path(source, signal, by_id, incidence):
         incoming = (name, exit_pin)
 
 
+def _reference_access(source, ports, by_id, net):
+    """One diode-connected conduction port, with only control fanout elsewhere.
+
+    This chooses a physical access point, not a current-mirror functional label.
+    A passive tap, another source or another conduction port is ambiguous.
+    """
+    if source['symbol'] != 'current-source':
+        return None
+    conduction = [(n, p) for n, p in ports if p in ('D', 'C')]
+    if len(conduction) != 1:
+        return None
+    name, pin = conduction[0]
+    comp = by_id[name]
+    control = 'G' if comp['symbol'] in ('nmos', 'pmos') else 'B' if comp['symbol'] in ('npn', 'pnp') else None
+    if (control is None or comp['nodes'].get(control) != net
+            or (name, control) not in ports
+            or any((n, p) != (name, pin) and (p not in CONTROL or by_id[n]['symbol'] not in ACTIVE)
+                   for n, p in ports)):
+        return None
+    return dict(device=name, symbol=comp['symbol'], conduction_pin=pin, control_pin=control,
+        net=net, evidence='unique_diode_conduction_and_only_control_fanout')
+
+
 def build_source_groups(devices, comps, nets, index, *, display_rows=None):
     """Return JSON-safe source groups without changing data, rows or geometry.
 
@@ -128,7 +151,7 @@ def build_source_groups(devices, comps, nets, index, *, display_rows=None):
         host_net = path[-1]
         # Every host belongs to this one real junction, even when it has many
         # D/G terminals. Unrelated rail-connected loads never enter this group.
-        groups.append(dict(id='source:'+name, kind=kind, members=[name, *passive],
+        group = dict(id='source:'+name, kind=kind, members=[name, *passive],
             device=name, source_device=name, source_symbol=comp['symbol'],
             source_pins=deepcopy(pins), signal_pin=signal_pin, rail_pin=rail_pin,
             net=net, rail_net=rail_net, attachment_net=host_net,
@@ -136,7 +159,11 @@ def build_source_groups(devices, comps, nets, index, *, display_rows=None):
             host_ports=[list(p) for p in sorted(hosts)], host_members=sorted({n for n, _ in hosts}),
             passive_members=passive, path=[rail_net, *path], confidence='high',
             electrical_role=role, preserve_polarity=True,
-            functional_role_claimed=kind == 'direct_tail'))
+            functional_role_claimed=kind == 'direct_tail')
+        reference = _reference_access(comp, ports, by_id, net)
+        if reference is not None:
+            group['reference_anchor'] = reference
+        groups.append(group)
     # Two sources cannot independently claim the same passive path. Reject both
     # overlapping transactions rather than picking one by instance name.
     claims = {}
@@ -191,9 +218,21 @@ def source_group_anchor(pl, comps, index, group):
             points.append(tuple(point)); directions.append(pl.pin_dir(i, pin))
         if not points:
             return None
-        return dict(net=group['attachment_net'], point=[median(p[0] for p in points), median(p[1] for p in points)],
+        result = dict(net=group['attachment_net'], point=[median(p[0] for p in points), median(p[1] for p in points)],
             host_points=[list(p) for p in points],
             preferred_direction=directions[0] if len(set(directions)) == 1 else None)
+        reference = group.get('reference_anchor')
+        if reference is not None:
+            name, pin = reference['device'], reference['conduction_pin']
+            i = index[name]; comp = comps[i]
+            if (comp['symbol'] != reference['symbol'] or reference['net'] != group['attachment_net']
+                    or comp['nodes'].get(reference['control_pin']) != reference['net']
+                    or [name, pin] not in group['host_ports']):
+                return None
+            result.update(junction_center=list(result['point']), point=list(pl.pin_world(i, pin)),
+                preferred_direction=pl.pin_dir(i, pin), selection='unique_diode_reference',
+                reference_anchor=deepcopy(reference))
+        return result
     except (KeyError, IndexError, AttributeError, TypeError, ValueError):
         return None
 
@@ -401,3 +440,43 @@ def source_group_trials(pl, comps, nets, index, model, *, deadline=None, max_can
                     clone.offset_x[i] = 0.0
         clone.set_state(cells, orient)
         yield clone, action
+
+
+def source_axis_trials(pl, comps, index, model, *, deadline=None, grid_step=2):
+    """Only after SA: center a proved tail using its actual connected pole.
+
+    Logical cells, y positions, orientations and the shared axes stay fixed.
+    The finite horizontal offset remains inside the cell's midpoint bounds.
+    These offsets never enter the cells/orientations-only SA undo interface.
+    """
+    from netlist2schematic.plugins.layout_shared.branch_alignment import _grid_offset
+    for group in _groups(model):
+        if deadline is not None and perf_counter() >= deadline:
+            return
+        if group['kind'] != 'direct_tail' or len(group['members']) != 1:
+            continue
+        i=index[group['device']]
+        if i in _fixed(pl,index):
+            continue
+        anchor=source_group_anchor(pl,comps,index,group)
+        if anchor is None or anchor['preferred_direction'] not in ('north','south'):
+            continue
+        pin=group['signal_pin']
+        if (comps[i]['nodes'] != group['source_pins']
+                or pl.pin_dir(i,pin) not in ('north','south')):
+            continue
+        point=pl.pin_world(i,pin)
+        trial=deepcopy(pl)
+        trial.offset_x=list(getattr(pl,'offset_x',[0.0]*len(comps)))
+        before=trial.offset_x[i]
+        desired=before+anchor['point'][0]-point[0]
+        after=_grid_offset(trial,i,desired,grid_step)
+        if after is None or abs(after-before)<EPS:
+            continue
+        trial.offset_x[i]=after
+        if abs(trial.pin_world(i,pin)[0]-anchor['point'][0]) >= abs(point[0]-anchor['point'][0])-EPS:
+            continue
+        yield trial,dict(kind='source_tail_axis',group=group['id'],source=group['device'],
+            source_kind=group['kind'],members=list(group['members']),pin=pin,
+            attachment_net=group['attachment_net'],dx_before=before,dx_after=after,
+            target_x=anchor['point'][0],cells_preserved=True,axes_changed=False)

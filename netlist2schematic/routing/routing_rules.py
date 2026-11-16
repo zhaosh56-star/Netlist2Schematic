@@ -215,6 +215,8 @@ class Scene:
     power_connections: list | None = None
     power_corridors: dict = field(default_factory=dict)
     power_markers: list = field(default_factory=list)
+    power_stub_faults: list = field(default_factory=list)
+    marker_components: list = field(default_factory=list)
 
     def prepare_occupied(self, occupied):
         if isinstance(occupied, PreparedOccupancy):
@@ -301,6 +303,43 @@ class Scene:
 
 def _inflate(rect, amount):
     return rect[0]-amount, rect[1]-amount, rect[2]+amount, rect[3]+amount
+
+
+def static_shape_conflicts(scene, deadline=None):
+    """Share the pre-existing static shape contract with final verification.
+
+    Rectangles already include the configured halo. Exact boundary contact
+    retains the old preflight rule; only positive-area intersection is a hit.
+    The own default marker's pin-entry allowance is unchanged. A different
+    component never receives that allowance merely by sharing a supply net.
+    """
+    conflicts = []
+    operations = 0
+
+    def overlaps(a, b):
+        return (max(a[0], b[0]) < min(a[2], b[2]) - EPS
+                and max(a[1], b[1]) < min(a[3], b[3]) - EPS)
+
+    for number, (component, body) in enumerate(scene.body_rects):
+        check_deadline(deadline, 'geometry_shapes')
+        for other, second in scene.body_rects[number + 1:]:
+            operations += 1
+            if operations % 256 == 0:
+                check_deadline(deadline, 'geometry_shapes')
+            if overlaps(body, second):
+                conflicts.append((('body_overlap', min(component, other), max(component, other)),
+                    dict(kind='body_overlap', point=None, components=[component, other])))
+    for number, (net, marker) in enumerate(scene.marker_rects):
+        check_deadline(deadline, 'geometry_markers')
+        owner = scene.marker_components[number] if number < len(scene.marker_components) else None
+        for component, body in scene.body_rects:
+            operations += 1
+            if operations % 256 == 0:
+                check_deadline(deadline, 'geometry_markers')
+            if component != owner and overlaps(marker, body):
+                conflicts.append((('marker_body_halo', number, component),
+                    dict(kind='marker_body_halo', point=None, nets=[net], marker=number, component=component)))
+    return conflicts
 
 
 def _power_error(message, **details):
@@ -457,11 +496,18 @@ def build_scene(par, nets, placement, comp_index, options=None, deadline=None):
                     fixed.extend(record['segments'])
                     continue
                 tip = (point[0], point[1] + (-par.STUB_LEN if symbol == 'vdd-port' else par.STUB_LEN))
+                direction = par.DIR_VEC[placement.pin_dir(component, pin_name)]
+                if sum((tip[k]-point[k])*direction[k] for k in (0, 1)) < -EPS:
+                    scene.power_stub_faults.append(dict(kind='power_stub_body', nets=[net],
+                        point=point, component=component, pin=pin_name,
+                        direction=list(direction), segment=(point, tip),
+                        reason='default_power_stub_reenters_own_component'))
                 fixed.append((point, tip))
                 box = par.GEO_DOC[symbol]['orientations'][0]['viewBoxAABB']
                 marker = (tip[0]+box['x'], tip[1]+box['y'],
                           tip[0]+box['x']+box['width'], tip[1]+box['y']+box['height'])
                 scene.marker_rects.append((net, _inflate(marker, options.halo)))
+                scene.marker_components.append(component)
                 continue
             direction = tuple(par.DIR_VEC[placement.pin_dir(component, pin_name)])
             rect = bodies[component]
@@ -481,6 +527,7 @@ def build_scene(par, nets, placement, comp_index, options=None, deadline=None):
             scene.power_nets.add(net)
     if custom is not None:
         scene.marker_rects.extend((marker['net'], marker['rect']) for marker in scene.power_markers)
+        scene.marker_components.extend(comp_index[marker['identity'][0]] for marker in scene.power_markers)
     rectangles = [rect for _, rect in scene.body_rects + scene.marker_rects]
     if rectangles:
         scene.bounds = (min(r[0] for r in rectangles), min(r[1] for r in rectangles),
@@ -556,6 +603,9 @@ def analyze_routes(routed, scene, deadline=None):
             seen.add(key)
             violations.append({'kind': kind, 'nets': list(names), 'point': location, **details})
 
+    for fault in scene.power_stub_faults:
+        check_deadline(deadline, 'power_geometry')
+        add(**fault)
     _audit_power_connections(scene, add, deadline)
     operations = 0
     for net, topology in topologies.items():
@@ -628,7 +678,7 @@ def analyze_routes(routed, scene, deadline=None):
                             add('fixed_stub_clearance', (net,owner), c, segment=(a,b))
     return {'violations': violations, 'crossings': len(crossing_points),
             'overlap': overlap, 'proximity': proximity,
-            'body_violations': sum(item['kind'] in ('body','marker','power_body','power_marker',
+            'body_violations': sum(item['kind'] in ('body','marker','power_body','power_marker','power_stub_body',
                                                    'power_marker_body','power_marker_overlap') for item in violations),
             'power_connections_checked': len(scene.power_connections or ()),
             'topologies': topologies}

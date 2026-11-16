@@ -31,9 +31,7 @@ def _ports(device):
         mapping = {'A': 'a', 'K': 'b'} if device.get('type') == 'D' else {'1': 'a', '2': 'b'}
     elif cls in ('VSRC', 'ISRC'):
         mapping = {'+': 'p', '-': 'n'}
-    elif cls == 'OPAMP':
-        mapping = {'OUT': 'op', 'IN+': 'ip', 'IN-': 'in', 'VDD': 'vdd', 'VSS': 'vss'}
-    elif cls == 'VCVS':
+    elif cls in ('VCVS', 'OPAMP'):
         mapping = {'OUT': 'op', 'IN+': 'ip', 'IN-': 'in'}
     else:
         mapping = {}
@@ -79,6 +77,9 @@ def _roles(devices, incidence, formals, supplied):
                 if field in device:
                     actual_supplies[device[field]].append({'kind': 'explicit_opamp_supply',
                                                           'device': name, 'pin': pin})
+    # Hidden supplies retain their semantic evidence without becoming visible
+    # terminals, attachment anchors or members of signal connectivity paths.
+    nodes.update(actual_supplies)
     result = {}
     for net in sorted(nodes):
         evidence = []

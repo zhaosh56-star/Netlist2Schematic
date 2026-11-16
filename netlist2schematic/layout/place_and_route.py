@@ -81,9 +81,10 @@ class Placement:
     def pos_of(self, i):
         r, c = self.cell_of[i]
         dx = self.offset_x[i] if hasattr(self, 'offset_x') else 0
+        local = self.passive_local_offsets[i] if hasattr(self, 'passive_local_offsets') else (0, 0)
         if hasattr(self, 'column_x') and hasattr(self, 'row_y'):
-            return self.column_x[c] + dx, self.row_y[r]
-        return c * CELL + CELL / 2 + dx, r * CELL + CELL / 2
+            return self.column_x[c] + dx + local[0], self.row_y[r] + local[1]
+        return c * CELL + CELL / 2 + dx + local[0], r * CELL + CELL / 2 + local[1]
 
     def pin_world(self, i, pin_name):
         cx, cy = self.pos_of(i)

@@ -5,7 +5,7 @@ blocks; regions and branch identities remain deformable during annealing.
 """
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from copy import deepcopy
 from itertools import islice, permutations, product
 import random
@@ -99,6 +99,12 @@ def _lanes(region, row_of, index, axes, mirror, local_blocks=()):
                 if name in index and index[name] in parent:
                     side[find(index[name])].append(value)
     desired = {root: fmean(side[root]) if side[root] else 0 for root in groups}
+    from netlist2schematic.plugins.region.region_references import reference_lane_hints
+    role_hints = defaultdict(list)
+    for name,value in reference_lane_hints(region).items():
+        if name in index and index[name] in parent:
+            role_hints[find(index[name])].append(value)
+    desired.update({root:fmean(values) for root,values in role_hints.items()})
     ordered = sorted(groups, key=lambda root: (-len(rows[root]),
                      -bool(side[root]), desired[root], min(groups[root])))
     width = max(Counter(row_of[i] for i in ids).values(), default=1)
@@ -155,34 +161,108 @@ def _contiguous(cells, blocks):
     return True
 
 
+def _region_gap(left, right, comps, index, nets, rails=()):
+    """An explicitly attached child can abut its core; independent areas cannot.
+
+    Every attachment must use a real conduction pin and reach a conduction pin
+    in the target leaf. A shared supply, clock or bias is insufficient.
+    """
+    from netlist2schematic.netlist.netlist_core import SRC_ALIASES, SNK_ALIASES
+    for source,target in ((left,right),(right,left)):
+        attachments=source.get('attachments',())
+        if (not source.get('parent') or source.get('parent')!=target.get('parent')
+                or not attachments or {a.get('device') for a in attachments}!=set(source['members'])):
+            continue
+        valid=True
+        for a in attachments:
+            name,pin,net=a.get('device'),a.get('pin'),a.get('net')
+            if (a.get('target_region')!=target['id'] or name not in index or pin not in ('D','C')
+                    or comps[index[name]]['nodes'].get(pin)!=net or net in SRC_ALIASES|SNK_ALIASES|set(rails)
+                    or not any(n in target['members'] and p in ('D','S','C','E') for n,p in nets.get(net,()))):
+                valid=False;break
+        if valid:
+            return 0
+    return 1
+
+
+def _guest_anchors(comps,nets,index,cells,plan):
+    """Nearest actual region ports, including a passive chain's remote end.
+
+    Walking is limited to visible passive terminals. Supplies stop the walk,
+    and voltage/current sources never conduct a guessed ownership relation.
+    Distinct equally near hosts stay a set of anchors, not a rigid union.
+    """
+    passive={'resistor','capacitor','inductor','diode'}
+    anchors=defaultdict(set)
+    links=defaultdict(set)
+    from netlist2schematic.layout.structured_placement import par
+    rails=set(plan.get('power_interfaces',()))
+    for net,ports in nets.items():
+        if net in rails or par.power_marker_sym(net):
+            continue
+        ids={index[name] for name,_ in ports if name in index}
+        placed={i for i in ids if cells[i] is not None}
+        guests={i for i in ids if cells[i] is None}
+        for i in guests:
+            anchors[i].update(placed)
+            if comps[i]['symbol'] in passive:
+                links[i].update(j for j in guests if i!=j and comps[j]['symbol'] in passive)
+    result={}
+    for i,cell in enumerate(cells):
+        if cell is not None:
+            continue
+        queue,visited=deque([(i,0)]),{i}
+        best=None
+        found=set()
+        while queue:
+            j,depth=queue.popleft()
+            if best is not None and depth>best:
+                break
+            if anchors[j]:
+                best=depth
+                found.update(anchors[j])
+                continue
+            if comps[i]['symbol'] not in passive:
+                continue
+            for k in sorted(links[j]):
+                if k not in visited:
+                    visited.add(k)
+                    queue.append((k,depth+1))
+        if found:
+            result[i]=found
+    return result
+
+
 def _pack_seed(comps, nets, index, row_of, plan, blocks, order, mirror):
     leaves = {region['id']: region for region in _leaves(plan)}
     cells = [None] * len(comps)
-    start, channels = 0, set()
-    for identity in order:
+    start, channels = 0, {}
+    for ordinal,identity in enumerate(order):
         region = leaves[identity]
         sign = mirror.get(identity, 1) if isinstance(mirror, dict) else mirror
         lanes, width = _lanes(region, row_of, index, plan.get('series_axes', ()), sign, blocks)
         for i, col in lanes.items():
             cells[i] = (row_of[i], start+col)
-        channels.add(start+width)
-        start += width+1
-    cols = max(1, start-1)
-    # Sources and passives stay free: place them near connected active members
-    # without filling the one-column region channels or splitting a leaf owner.
-    adjacent = defaultdict(set)
-    for net, endpoints in nets.items():
-        members = [index[name] for name, _ in endpoints if name in index]
-        for i in members:
-            adjacent[i].update(j for j in members if j != i and cells[j] is not None)
+        gap=_region_gap(region,leaves[order[ordinal+1]],comps,index,nets,
+                        plan.get('power_interfaces',())) if ordinal+1<len(order) else 0
+        if gap:
+            channels[start+width]=set(region['members'])|set(leaves[order[ordinal+1]]['members'])
+        start += width+gap
+    cols = max(1, start)
+    # Sources and passives stay free. A port-proven guest can access the
+    # bordering channel; unrelated guests cannot consume that reserved space.
+    # Same-row leaf owner integrity remains a separate constraint below.
+    adjacent=_guest_anchors(comps,nets,index,cells,plan)
     for i, cell in enumerate(cells):
         if cell is not None:
             continue
-        target = fmean(cells[j][1] for j in adjacent[i]) if adjacent[i] else (cols-1)/2
+        target = fmean(cells[j][1] for j in adjacent[i]) if adjacent.get(i) else (cols-1)/2
         occupied = {cell for cell in cells if cell is not None}
         candidates = sorted(range(cols), key=lambda col: (abs(col-target), col))
         for col in candidates:
-            if col in channels or (row_of[i], col) in occupied:
+            if ((col in channels and not any(comps[j]['id'] in channels[col]
+                                               for j in adjacent.get(i,())))
+                    or (row_of[i],col) in occupied):
                 continue
             # A protected local pair may have an intentional empty slot.
             if any(i not in block and len(values := [cells[j][1] for j in block
@@ -323,6 +403,8 @@ def initialize_regions(devices, comps, nets, index, row_of, structs, seed, varia
     until = min(started+INITIAL_SECONDS, deadline) if deadline is not None else started+INITIAL_SECONDS
     report = {'status': 'skipped', 'trials': 0, 'max_trials': MAX_INITIAL_TRIALS,
               'seconds_limit': INITIAL_SECONDS, 'channel_columns': 1,
+              'channel_policy': 'validated_attachment_adjacency_v2',
+              'guest_anchor_policy':'nearest_visible_port_through_passives_v1',
               'packing_rejections': 0, 'fixed_rejections': 0}
     if not plan.get('supported') or not _leaves(plan):
         report['reason'] = 'no_supported_regions'
@@ -409,6 +491,10 @@ def initialize_regions(devices, comps, nets, index, row_of, structs, seed, varia
                   selected_metrics=metrics, selected_rank=list(key[:-1]), selected_energy=cost,
                   selected_estimated_wirelength=estimated['estimated_wirelength'],
                   elapsed_seconds=time.perf_counter()-started)
+    leaves={r['id']:r for r in _leaves(plan)}
+    report['region_gaps']=[dict(left=a,right=b,columns=_region_gap(leaves[a],leaves[b],comps,index,nets,
+                                                               plan.get('power_interfaces',())))
+                           for a,b in zip(chosen_order,chosen_order[1:])]
     # Same-axis costs come exclusively from validated physical series_axes.
     # Do not send these through the old logical-column misalignment sum too.
     return (pl, [], pairs, report), report

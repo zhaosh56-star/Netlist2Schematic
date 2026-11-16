@@ -265,6 +265,12 @@ class RegionPlacementTests(unittest.TestCase):
     def test_independent_subregion_can_move_while_parent_siblings_stay_put(self):
         pl, _, _, index, plan, _, _, _, rows = region_seed()
         core = next(row for row in plan['regions'] if row['kind'] == 'comparator_core')
+        # Compact access leaves no longer reserve a spare column. Supply a
+        # vacancy explicitly to test the move rather than the former packing.
+        edge=max(pl.cell_of[index[n]][1] for n in core['members'])
+        pl.set_state([(r,c+(c>edge)) for r,c in pl.cell_of],pl.orient)
+        pl.cols+=1
+        pl.column_x.append(pl.column_x[-1]+pl.column_x[-1]-pl.column_x[-2])
         original = list(pl.cell_of)
         rng = mock.Mock()
         rng.randrange.return_value = 0

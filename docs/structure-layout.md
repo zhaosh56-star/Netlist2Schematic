@@ -70,7 +70,7 @@ SA之后继续按既有顺序执行可选对称、附件收拢、引脚对齐和
 ## 后续独立开关
 
 - `--candidate-budget sequential|reserved`默认sequential。reserved只对普通候选1～3比较生效，使用正常预算70%/85%/100%的绝对截止点，局部超时继续下一候选；显式候选回放保持原完整预算，不增加A*次数。
-- `--port-preflight off|repair`默认off。repair只在原场景静态非法时尝试修复无源朝向或邻格；最多两只无源共用1秒/64提案，完整静态验收通过才提交。两步失败、超时、穿体或累计估计线长超过原115%时整体撤销，不能把半修好的图送作成功结果。固定位置重布不接受此开关。
+- `--port-preflight off|repair`在新网表的结构化主flow中默认repair；加off可复现未预检的旧行为。repair只在原场景静态非法时尝试修复无源朝向或邻格；有明确自身电源引线冲突的V/I只允许原地旋转，MOS/BJT及固定器件不动。最多两处局部动作共用1秒/64提案，完整静态验收通过才提交。两步失败、超时、穿体或累计估计线长超过原115%时整体撤销，不能把半修好的图送作成功结果。固定位置重布和单独缩线默认off，显式repair仍会报错；独立重绘不执行预检修复。
 - `--presentation legacy|clean`默认legacy。clean仅改善黑白SVG的文本、端口标注和边界，移除调试框/指标标题；彩色图保留分析信息。线路、器件位置、电源符号和分支圆点保持原样。没有明确端口声明的内部网络不猜成输入输出。
 
 这些开关独立于结构布局，便于定位收益来源。只调整旧图的展示可使用 `render-clean.py old-placement.json new-clean.svg --presentation clean`；要同时保存新展示元数据及两种SVG，使用 `run_flow.py --simplify-placement old-placement.json --simplify-routes off --presentation clean --out-dir 独立目录`，不会调用SA/A*。

@@ -67,6 +67,10 @@ def active_terminal_nets(devices):
             nets.update((d['p'], d['n']))
         elif c == 'VCVS':
             nets.update((d['op'], d['on']))
+        elif c == 'OPAMP':
+            # The black-box symbol has three signal pins.  Its hidden supply
+            # metadata must not create a fabricated output-minus terminal.
+            nets.add(d['op'])
     return nets
 
 
@@ -274,7 +278,7 @@ def level_file(path, cell=None):
         elif c == 'VSRC':
             tgt = lv(d['p'])
             attach.append(f"{n}(V {d['p']}/{d['n']} → 挂层{tgt},被驱动侧)")
-        elif c == 'VCVS':
+        elif c in ('VCVS', 'OPAMP'):
             tgt = lv(d['op'])
             attach.append(f"{n}(E out={d['op']} in={d['ip']}/{d['in']} → 宏器件层{tgt})")
     if attach:

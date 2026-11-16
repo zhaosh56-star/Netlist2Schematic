@@ -13,7 +13,7 @@ from itertools import combinations, product
 import json
 from math import inf, isfinite
 
-VERSION = 'topological-regions-v1'
+VERSION = 'topological-regions-v4'
 SELECTION_VERSION = 'region-selection-v1'
 LENGTH_RATIO = 1.15
 
@@ -40,9 +40,20 @@ def _rails(devices, evidence):
             bulks[dev.get('bulk')].append(name)
     # A fed internal common source has a drain incident on it and cannot pass.
     # Bulk-only source boundaries also survive arbitrary rail renaming.
+    current_ports={dev.get(pin) for dev in devices.values() if dev.get('cls')=='ISRC'
+                   for pin in ('p','n')}
+    fed_pairs=set()
+    for relation in evidence.get('relations',()):
+        names=relation.get('members',relation.get('devices',()))
+        if (relation.get('kind')=='differential_pair' and relation.get('confidence')=='high'
+                and len(names)==2 and all(name in devices for name in names)):
+            a,b=(devices[name] for name in names)
+            if _pol(a) and _pol(a)==_pol(b) and a['s']==b['s'] and a['s'] in current_ports:
+                fed_pairs.add(a['s'])
     def may_infer(net):
         row = evidence.get('net_roles', {}).get(net, {})
-        return not (isinstance(row, dict) and (row.get('role') == 'signal' or row.get('conflict')))
+        return net not in fed_pairs and not (isinstance(row, dict)
+            and (row.get('role') == 'signal' or row.get('conflict')))
     result.update(net for net in sources if net not in drains and len(bulks[net]) >= 2
                   and may_infer(net))
     return result
@@ -298,6 +309,29 @@ def _folded(builder, pair):
     nodes = [devs[a]['d'], devs[b]['d']]
     feeds = [name for name in builder.find(d=devs[a]['s'], polarity=pol)
              if devs[name]['s'] in rails]
+    feed_pins = {name:'D' for name in feeds}
+    # A real two-terminal current source can supply the same input junction.
+    # Exact visible incidence is required: a shared source or a tapped tail is
+    # not silently assigned to one pair. No source-value or name heuristics.
+    from netlist2schematic.netlist.netlist_core import to_document
+    document=to_document(devs)
+    common=devs[a]['s']
+    for comp in document['components']:
+        if comp['symbol']!='current-source':
+            continue
+        source_nodes=comp['nodes']
+        pins=[pin for pin,net in source_nodes.items() if net==common]
+        if len(pins)!=1:
+            continue
+        pin=pins[0]
+        other=next(value for p,value in source_nodes.items() if p!=pin)
+        if other not in rails:
+            continue
+        if set(map(tuple,document['nets'][common]))!={(a,'S'),(b,'S'),(comp['id'],pin)}:
+            builder.ambiguity('folded_main',pair,'nonexclusive_current_feed',source=comp['id'])
+            continue
+        feeds.append(comp['id'])
+        feed_pins[comp['id']]=pin
     continuations = [builder.find(s=node, polarity=opposite) for node in nodes]
     motifs = []
     for feed, qa, qb in product(feeds, *continuations):
@@ -368,6 +402,14 @@ def _folded(builder, pair):
         detector_id = builder.region('feedback_detector', detector['members'], pairs=local_pairs,
             branches=[dict(id=lane, members=[item[2][0], item[0], item[1]])
                       for lane, item in zip(('A', 'B'), cp)])
+        detector_region = next(r for r in builder.regions if r['id'] == detector_id)
+        reference_access = dict(control_pin='G', net=devs[cp[0][1]]['g'],
+            comparisons=[dict(sensor=item[0], reference=item[1], feed=item[2][0]) for item in cp],
+            evidence='complete_two_sensors_common_reference_paired_loads_and_control_return')
+        detector_region['reference_access'] = [reference_access]
+        detector_region['shared_control_pairs'] = [dict(members=[item[1] for item in cp],
+            pin='G', net=reference_access['net'], role='common_reference',
+            evidence=reference_access['evidence'])]
         system = builder.region('folded_feedback', names, children=[main, detector_id])
         order.append(detector_id)
         builder.correspondence('interface', [[qa, qb], [cp[0][0], cp[1][0]]], system)
@@ -387,8 +429,10 @@ def _folded(builder, pair):
         builder.axis(upper, 'D', lower, 'D', main)
         builder.axis(lower, 'S', sink, 'D', main)
     # Shared-source centering is a junction term, not two incompatible axes.
-    builder.junctions.append(dict(kind='shared_feed', members=[a, b], tail=[feed],
-                                  net=devs[a]['s'], source=main))
+    junction=dict(kind='shared_feed',members=[a,b],tail=[feed],net=devs[a]['s'],source=main)
+    if feed_pins[feed]!='D':
+        junction['tail_pins']={feed:feed_pins[feed]}
+    builder.junctions.append(junction)
     builder.junctions.extend(dict(kind='fold', net=node, input=inp, continuation=cont,
                                   source=main) for node, inp, cont in zip(nodes, (a, b), (qa, qb)))
     return True
@@ -435,19 +479,29 @@ def build_region_plan(devices, evidence=None, relations=None, display_rows=None,
             row['id'] = 'correspondence:' + str(len(builder.correspondences))
             builder.correspondences.append(row)
     active = sorted(name for name, dev in devices.items() if dev.get('cls') in ('MOS', 'BJT'))
-    covered = sorted(builder.ownership)
+    covered = sorted(set(builder.ownership)&set(active))
+    auxiliary=sorted(set(builder.ownership)-set(active))
     rows = {str(name): int(value) for name, value in (display_rows or {}).items()
-            if name in devices and devices[name].get('cls') in ('MOS', 'BJT')}
+            if name in devices and (devices[name].get('cls') in ('MOS', 'BJT') or name in auxiliary)}
     plan = dict(version=VERSION, supported=bool(builder.regions), regions=builder.regions,
         ownership=builder.ownership, series_axes=builder.axes, correspondences=builder.correspondences,
         junctions=builder.junctions, edges=builder.edges, ambiguities=builder.ambiguities,
-        display_rows=dict(sorted(rows.items())),
+        display_rows=dict(sorted(rows.items())),power_interfaces=sorted(rails),
         coverage=dict(active_devices=len(active), recognized_devices=len(covered),
                       recognized_fraction=len(covered) / len(active) if active else None,
                       unassigned_active=sorted(set(active) - set(covered)),
                       seed_pairs=len(seeds), leaf_regions=sum(not row['children'] for row in builder.regions),
                       series_axes=len(builder.axes), correspondences=len(builder.correspondences),
                       ambiguity_count=len(builder.ambiguities)))
+    if auxiliary:
+        plan['coverage'].update(auxiliary_devices=auxiliary,
+                                recognized_auxiliary_devices=len(auxiliary))
+    from netlist2schematic.plugins.region.region_interfaces import compile_port_banks
+    if comps is None:
+        from netlist2schematic.netlist.netlist_core import to_document
+        comps=to_document(devices)['components']
+    plan['port_banks']=compile_port_banks(builder.regions,comps,rails)
+    plan['coverage']['port_banks']=len(plan['port_banks'])
     # Identity includes named source topology so a changed unrecognized subgraph
     # cannot silently reuse a feedback plan, but excludes physical grid spacing.
     signature_source = dict(plan=plan, devices={name: dev for name, dev in sorted(devices.items())})
@@ -561,13 +615,25 @@ def measure_regions(pl, comps, index, plan):
             continue
         try:
             center = sum(pl.pin_world(index[name], 'S')[0] for name in junction['members']) / len(junction['members'])
-            tail = sum(pl.pin_world(index[name], 'D')[0] for name in junction['tail']) / len(junction['tail'])
+            tail = sum(pl.pin_world(index[name],junction.get('tail_pins',{}).get(name,'D'))[0]
+                       for name in junction['tail']) / len(junction['tail'])
             junction_error += abs(center - tail) / 100.0
         except (KeyError, IndexError, TypeError, ValueError, AttributeError, ZeroDivisionError):
             coverage.setdefault('missing_junctions', []).append(deepcopy(junction))
+    from netlist2schematic.plugins.region.region_interfaces import measure_port_banks
+    bank_order=measure_port_banks(pl,index,plan.get('port_banks',()))
+    from netlist2schematic.plugins.region.region_references import measure_reference_access
+    reference_access=measure_reference_access(pl,index,leaves)
+    coverage['missing_port_banks']=bank_order['missing']
+    coverage['reference_access_relations']=reference_access['relation_count']
+    coverage['missing_reference_access']=reference_access['missing']
     complete = not (coverage['missing_axes'] or coverage.get('missing_junctions')
+                    or coverage['missing_port_banks']
+                    or coverage['missing_reference_access']
                     or coverage.get('missing_order_regions'))
-    metrics.update(measurable=complete, interleaving=interleaving, order_errors=order_errors,
+    metrics.update(measurable=complete, interleaving=interleaving,
+        order_errors=order_errors+(bank_order['errors'] or 0)+(reference_access['inside_errors'] or 0),
+        port_bank_order=bank_order,reference_access=reference_access,
         pin_axis_error=pin_error if complete else None, axis_drift=drift,
         dispersion=dispersion, junction_error=junction_error if complete else None)
     return metrics

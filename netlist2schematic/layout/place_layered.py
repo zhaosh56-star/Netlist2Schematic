@@ -84,7 +84,7 @@ def attach_info(devices, net_lv, in_conduction):
         elif cls == 'VSRC':
             mode = 'pwrsrc' if net_is_pwr(device['p']) else 'vsink'
             info[name] = {'mode': mode, 'anchor_net': device['p']}
-        elif cls == 'VCVS':
+        elif cls in ('VCVS', 'OPAMP'):
             info[name] = {'mode': 'vcvs', 'anchor_net': device['op']}
         else:
             raise ValueError(f'No attachment rule for {name}: {cls}')
