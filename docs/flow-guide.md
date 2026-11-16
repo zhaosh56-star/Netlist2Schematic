@@ -17,6 +17,8 @@
 ## 一次默认 flow 用到哪些代码
 
 入口是 `run_flow.py`，默认执行 `layered + structured`，下表列出原主线和恢复链的核心文件。
+
+新网表默认启用 `--column-layout auto`：原SA、朝向／间距、反馈及端口预检之后，候选2/3使用 `plugins/columns/column_layout.py` 规整长列及短旁支，然后由 `layout/series_alignment.py` 对齐明确串接段，再进入原A*。两种收尾共用原有1秒／128试案，候选1保留参照。`--column-layout off`恢复前一列策略；保存位置操作、baseline／legacy和其他显式布局实验不隐式叠加。21图结果及已知取舍见[实测记录](structure-layout-results.md)。
 预算参数校验另外使用`candidate_budget.py`；显式结构布局、静态端口修复与展示使用的新增模块见[结构布局说明](structure-layout.md)，实验对称规整仍由`symmetry_layout.py`单独控制。新网表的结构化主flow现默认开启`--port-preflight repair`：在最终A*前检查并限量修复固定出线与器件／电源标记冲突，已经合法的布局原样返回；需要旧行为时指定`--port-preflight off`。这不启用附件、区域、结构或对称实验。已有JSON的重布和单独缩线默认关闭修复、禁止显式repair，独立重绘只恢复并验收保存结果。
 
 | 环节 | 文件 | 作用 |
@@ -410,6 +412,7 @@ v4最初只将图7主图更新，其余样例当时仅作只读回归。此后�
 | `--mode` | `layered` 固定层级；`baseline` 自由网格布局 | `layered` |
 | `--layout-style` | `structured` 使用结构化候选选择；`legacy` 保留旧分层算法；用于 `layered` 模式 | `structured` |
 | `--passive-layout` | 新结构候选中R/C/L/D使用 `flexible` 跨行或 `fixed` 固定行；保存模式不重新摆件 | `flexible` |
+| `--column-layout` | `auto`规整候选2/3长列及短旁支，`off`关闭；保持有源行、朝向和公共轴 | 新structured网表为`auto`；保存模式、legacy／baseline及其他显式布局实验为`off` |
 | `--symmetry-layout` | `off` 跳过额外器件对称规整和S选优，按原Q选择；显式 `auto` 才规整结构候选2/3并启用对称选优；不要求导线镜像 | `off` |
 | `--quality-seconds` | `structured` 每张图的候选优化及最终布线时间预算，必须为正数 | `300` |
 | `--candidate-id` | 重放一个结构化候选编号，编号以保存的 JSON 为准 | 自动比较候选 |

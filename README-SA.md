@@ -16,6 +16,8 @@ Set-Location D:\gongzuo
 
 新网表的结构化主flow默认开启端口冲突预检修复（`--port-preflight repair`）：最终A*前检查固定出线、器件和电源标记，场景已合法时保留原位置与朝向；存在冲突时限量尝试无源朝向／邻格修复，以及有明确自身电源引线冲突的V/I原地旋转。需要旧行为时加 `--port-preflight off`。已有JSON的重布、单独缩线和独立重绘保持保存坐标，不自动修复；附件、区域、结构、对称等实验开关仍默认关闭。
 
+新网表的结构化主flow也默认开启长列／短旁支规整（`--column-layout auto`）：候选1保留参照，候选2/3在布线前尝试连续长列和相邻短支路，再执行原串接对齐；两步共用局部预算，不增加A*次数。可用 `--column-layout off` 做对照。已有JSON、baseline／legacy及其他显式布局实验不隐式重摆或叠加；依据、取舍和21图实测见[结构布局结果](docs/structure-layout-results.md)。
+
 安全缩线默认仍为固定5秒。需要按首次合法线路的复杂度自动分配5～30秒时，可加 `--simplify-seconds auto`；估计后只执行一次缩线，候选上限仍是512。使用方式和实测见[自动缩线预算说明](docs/auto-simplify-budget.md)。
 
 新增的可读性实验保持关闭：`--readability-layout auto` 尝试无源成组、源器件归位和失效间距回收，`--route-tradeoff balanced` 允许用少量稀疏交叉换取明显缩短。两者独立启用，默认仍为 `off` 和 `strict`；实现边界、分阶段实测及未达标项见[可读性改进说明](docs/readability-improvement.md)，本地对照入口为 `output/readability-improvement/index.html`。

@@ -65,7 +65,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   passive_layout='flexible', symmetry_layout='off', structure_layout='off',
                   structure_phase=3, candidate_budget='sequential',port_preflight='off',
                   region_layout='off', readability_layout='off', readability_phase=5,
-                  route_tradeoff='strict', attachment_layout='off'):
+                  route_tradeoff='strict', attachment_layout='off', column_layout='off'):
     validate_policy(candidate_budget)
     if port_preflight not in ('off','repair'):
         raise ValueError('port_preflight must be off or repair')
@@ -91,6 +91,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     _validate_attachment_policy(attachment_layout, passive_layout=passive_layout,
         readability=readability_layout, region=region_layout, structure=structure_layout,
         symmetry=symmetry_layout)
+    from netlist2schematic.flow.run_flow import _validate_column_policy
+    _validate_column_policy(column_layout, 'layered', 'structured', structure_layout,
+        symmetry_layout, region_layout, readability_layout, attachment_layout)
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     from netlist2schematic.layout.structured_placement import create_candidates, feedback_candidate
@@ -105,6 +108,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     shared_region_plan = None
     shared_readability_plan = None
     shared_attachment_plan = None
+    shared_column_plan = None
     valid_results = []
     retry_context = retry_options = rescue_context = None
     candidate_data_error = False
@@ -359,6 +363,35 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     from netlist2schematic.plugins.structure.structure_selection import measure_structure
                     metadata['structure_layout']['metrics']=measure_structure(
                         par,placement,comps,nets,index,metadata,structure_phase)
+            column_trials = 0
+            if column_layout == 'auto' and identifier in ('2', '3') and metadata.get('layout_style') == 'structured':
+                from netlist2schematic.plugins.columns.column_layout import build_column_plan, refine_columns
+                if shared_column_plan is None:
+                    shared_column_plan = build_column_plan(par, placement, comps, nets, index, metadata.get('structs', ()))
+                placement, metadata = refine_columns(par, placement, comps, nets, index, metadata,
+                    shared_column_plan, effective_options, deadline=local_refinement_deadline,
+                    seconds=max(0, local_refinement_deadline-perf_counter()), max_trials=128)
+                column_trials = metadata['layout_columns']['trials']
+            if (identifier != '0' and metadata.get('layout_style') == 'structured'
+                    and all(policy == 'off' for policy in (structure_layout, symmetry_layout,
+                              region_layout, readability_layout, attachment_layout))):
+                # Refine the actual post-feedback, post-preflight placement.
+                # Other experimental layouts retain their own finalizers.
+                from netlist2schematic.layout.series_alignment import refine_series_alignment
+                placement, metadata = refine_series_alignment(
+                    par, placement, comps, nets, index, metadata, effective_options,
+                    deadline=min(candidate_deadline, local_refinement_deadline),
+                    seconds=max(0, local_refinement_deadline-perf_counter()), max_trials=128-column_trials)
+            if column_layout == 'auto' and identifier != '0' and metadata.get('layout_style') == 'structured':
+                from netlist2schematic.plugins.columns.column_layout import build_column_plan, measure_columns, VERSION
+                if shared_column_plan is None:
+                    shared_column_plan = build_column_plan(par, placement, comps, nets, index, metadata.get('structs', ()))
+                metadata = deepcopy(metadata)
+                report = metadata.setdefault('layout_columns', dict(version=VERSION, policy='auto',
+                    reference_candidate=identifier == '1', plan=deepcopy(shared_column_plan), applied=False,
+                    trials=0, actions=[], stop_reason='reference_not_reorganized'))
+                report['current'] = measure_columns(placement, index, shared_column_plan)
+                report['measurement_stage'] = 'before_final_routing'
             if region_layout == 'auto' and shared_region_plan is not None:
                 metadata = _measure_region_candidate(placement, comps, index, metadata,
                                                      shared_region_plan, identifier)
@@ -396,6 +429,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 record['parallel_attachment_refinement'] = deepcopy(metadata['parallel_attachment_refinement'])
             if 'port_preflight' in metadata:
                 record['port_preflight']=deepcopy(metadata['port_preflight'])
+            if 'series_alignment' in metadata:
+                record['series_alignment']=deepcopy(metadata['series_alignment'])
+            if 'layout_columns' in metadata:
+                record['layout_columns'] = deepcopy(metadata['layout_columns'])
             if budget_policy == 'reserved' and routing_at >= candidate_deadline:
                 global_expired = routing_at >= deadline
                 reason = 'quality_time_budget' if global_expired else 'candidate_time_budget'
@@ -532,8 +569,16 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     # all routing attempts do device symmetry and the 125% wire cap choose the
     # delivered candidate. Explicit replay always returns its requested ID.
     symmetry_selection = structure_selection = region_selection = readability_selection = None
-    attachment_selection = None
-    if attachment_layout != 'off' and shared_attachment_plan is not None:
+    attachment_selection = column_selection = None
+    if column_layout == 'auto' and shared_column_plan is not None:
+        from netlist2schematic.plugins.columns.column_layout import measure_columns, select_column_result
+        for result in valid_results:
+            report = result[5].setdefault('layout_columns', {'plan': deepcopy(shared_column_plan)})
+            report['current'] = measure_columns(result[1], result[4], shared_column_plan)
+            report['measurement_stage'] = 'before_route_simplification'
+        if candidate_id is None:
+            best, column_selection = select_column_result(valid_results, shared_column_plan)
+    elif attachment_layout != 'off' and shared_attachment_plan is not None:
         from netlist2schematic.plugins.attachment.attachment_selection import measure_candidate, select_attachment_result
         for result in valid_results:
             measured = measure_candidate(result[1], result[2], result[4], result[5],
@@ -584,6 +629,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         'selected_candidate': identifier, 'score': quality['score'],
         'details': quality, 'candidates': records})
     metadata['quality']['selection_policy'] = (
+        column_selection['policy'] if column_selection else
         attachment_selection['policy'] if attachment_selection else
         readability_selection['policy'] if readability_selection else
         region_selection['policy'] if region_selection else
@@ -600,6 +646,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         metadata['quality']['readability_selection'] = readability_selection
     if attachment_selection is not None:
         metadata['quality']['attachment_selection'] = attachment_selection
+    if column_selection is not None:
+        metadata['quality']['column_selection'] = column_selection
     return placement, comps, nets, index, metadata, routed_result
 
 

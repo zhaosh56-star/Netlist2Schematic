@@ -24,6 +24,7 @@ from netlist2schematic.routing.orthogonal_router import RoutingFailure
 
 ROUTING_FAILURES = (RoutingFailure, RoutingValidationError)
 DEFAULT_PORT_PREFLIGHT = 'repair'
+DEFAULT_COLUMN_LAYOUT = 'auto'
 
 
 def run(path, *, mode='layered', iterations=20000, seed=20261029,
@@ -34,7 +35,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
         candidate_budget='sequential', port_preflight=DEFAULT_PORT_PREFLIGHT, presentation='legacy', net_labels='off',
         region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5,
-        attachment_layout='off'):
+        attachment_layout='off', column_layout=None):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -51,6 +52,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     _validate_attachment_policy(attachment_layout, mode=mode, layout_style=layout_style,
         passive_layout=passive_layout, readability=readability_layout, region=region_layout,
         structure=structure_layout, symmetry=symmetry_layout)
+    column_layout = _resolve_column_policy(column_layout, mode, layout_style, structure_layout,
+                            symmetry_layout, region_layout, readability_layout, attachment_layout)
     if readability_layout == 'auto' and (mode != 'layered' or layout_style != 'structured'
                                          or passive_layout != 'flexible'):
         raise ValueError('readability layout requires structured layered layouts with flexible passives')
@@ -119,7 +122,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                                         candidate_budget=candidate_budget,port_preflight=port_preflight,
                                         region_layout=region_layout, readability_layout=readability_layout,
                                         readability_phase=readability_phase, route_tradeoff=route_tradeoff,
-                                        attachment_layout=attachment_layout)
+                                        attachment_layout=attachment_layout,
+                                        **({'column_layout': column_layout} if column_layout != 'off' else {}))
             except ROUTING_FAILURES as exc:
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
                     raise
@@ -193,6 +197,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         **({'requested_readability_layout': readability_layout,
             'requested_readability_phase': readability_phase} if readability_layout != 'off' else {}),
         **({'requested_attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
+        **({'requested_column_layout': column_layout} if column_layout != 'off' else {}),
         **({'presentation':{'style':'clean'}} if presentation=='clean' else {}),
         'placement': _saved_positions(placement, comps),
     }
@@ -236,12 +241,30 @@ def _validate_attachment_policy(policy, *, mode='layered', layout_style='structu
         raise ValueError('attachment layout requires structured layered layouts with flexible passives')
 
 
+def _resolve_column_policy(policy, mode='layered', style='structured', *others, saved=False):
+    """Default new structured layouts to columns; saved and other modes stay put."""
+    if policy is None:
+        compatible = mode == 'layered' and style == 'structured' and all(p == 'off' for p in others)
+        policy = DEFAULT_COLUMN_LAYOUT if compatible and not saved else 'off'
+    _validate_column_policy(policy, mode, style, *others)
+    return policy
+
+
+def _validate_column_policy(policy, mode='layered', style='structured', *others):
+    if policy not in ('off', 'auto'):
+        raise ValueError('column_layout must be off or auto')
+    if policy == 'auto' and (mode != 'layered' or style != 'structured'):
+        raise ValueError('column_layout auto requires structured layered layouts')
+    if policy == 'auto' and any(p != 'off' for p in others):
+        raise ValueError('column_layout auto cannot be combined with other experimental layouts')
+
+
 def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    quality_seconds, candidate_id, options, *, passive_layout='flexible',
                    symmetry_layout='off', structure_layout='off', structure_phase=3,
                    candidate_budget='sequential',port_preflight='off', region_layout='off',
                    readability_layout='off', readability_phase=5, route_tradeoff='strict',
-                   attachment_layout='off'):
+                   attachment_layout='off', column_layout='off'):
     if mode == 'layered' and layout_style == 'structured':
         from netlist2schematic.flow.aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
@@ -252,7 +275,8 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                              port_preflight=port_preflight, region_layout=region_layout,
                              readability_layout=readability_layout, readability_phase=readability_phase,
                              route_tradeoff=route_tradeoff,
-                             **({'attachment_layout': attachment_layout} if attachment_layout != 'off' else {}))
+                             **({'attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
+                             **({'column_layout': column_layout} if column_layout != 'off' else {}))
     elif mode == 'layered':
         layered = load_local('place_layered', 'place-layered.py')
         placement, comps, nets, comp_index, metadata = layered.create_placement(
@@ -578,6 +602,16 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         from netlist2schematic.layout.structure_hierarchy import hierarchy_report
         data['layout_hierarchy'] = hierarchy_report(placement, data['layout_hierarchy'])
         data['layout_hierarchy']['measurement_stage'] = 'final_output'
+    if isinstance(data.get('layout_columns'), dict) and data['layout_columns'].get('plan'):
+        from netlist2schematic.plugins.columns.column_layout import measure_columns
+        data['layout_columns']['current'] = measure_columns(placement, comp_index, data['layout_columns']['plan'])
+        data['layout_columns']['measurement_stage'] = 'final_output'
+        data['layout_columns']['routing_stage'] = data.get('routing_stage', 'normal')
+    if isinstance(data.get('series_alignment'), dict) and 'relations' in data['series_alignment']:
+        from netlist2schematic.layout.series_alignment import measure_series
+        data['series_alignment']['current'] = measure_series(
+            placement, comp_index, data['series_alignment']['relations'])
+        data['series_alignment']['measurement_stage'] = 'final_output'
     if isinstance(data.get('layout_symmetry'), dict):
         # Recovery may enlarge physical axes. Saved rerouting/redraw never
         # regularizes devices; this only measures the positions being exported.
@@ -851,6 +885,8 @@ def main(argv=None, default_mode='layered'):
                         help='Replay an independent readability rollout phase')
     parser.add_argument('--attachment-layout', choices=('off', 'passive', 'all'), default='off',
                         help='Joint host/attachment placement in candidates 2/3; all also places source devices')
+    parser.add_argument('--column-layout', choices=('off', 'auto'), default=None,
+                        help='Conduction columns in candidates 2/3; default auto for new structured layouts, off for saved/legacy/other layout experiments')
     parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=3,
                         help='Replay a structure rollout phase; ignored when structure-layout is off')
     parser.add_argument('--quality-seconds', type=float, default=300)
@@ -896,6 +932,11 @@ def main(argv=None, default_mode='layered'):
         _validate_attachment_policy(args.attachment_layout, mode=args.mode, layout_style=args.layout_style,
             passive_layout=args.passive_layout, readability=args.readability_layout,
             region=args.region_layout, structure=args.structure_layout, symmetry=args.symmetry_layout)
+        args.column_layout = _resolve_column_policy(args.column_layout, args.mode, args.layout_style, args.structure_layout,
+            args.symmetry_layout, args.region_layout, args.readability_layout, args.attachment_layout,
+            saved=bool(args.simplify_placement or args.reroute_placement))
+        if args.column_layout != 'off' and (args.simplify_placement or args.reroute_placement):
+            parser.error('saved-layout operations preserve coordinates; they cannot request column layout')
         if sum(map(bool, (args.netlist, args.reroute_placement, args.simplify_placement))) != 1:
             parser.error('provide exactly one netlist, --reroute-placement JSON or --simplify-placement JSON')
         if args.simplify_placement:
@@ -939,6 +980,7 @@ def main(argv=None, default_mode='layered'):
                 region_layout=args.region_layout,
                 readability_layout=args.readability_layout, readability_phase=args.readability_phase,
                 attachment_layout=args.attachment_layout,
+                column_layout=args.column_layout,
                 structure_phase=args.structure_phase,
                 candidate_budget=args.candidate_budget,port_preflight=args.port_preflight,
                 presentation=args.presentation or 'legacy',

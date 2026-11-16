@@ -319,6 +319,8 @@ SA就是“试着挪一下，再决定留不留下”，不是训练一个神经
 
 默认结构化布局还使用 [structure_hierarchy.py](../netlist2schematic/layout/structure_hierarchy.py) 保护大块里面的小块：例如识别出折叠核心以后，里面的输入差分对仍单独保持完整。初排把子块作为排序单位，SA既可以移动大块，也可以调整子块，但不能把其他成员插进受保护子块。这是同行成员保护，不是锁死整个二维区域；证据歧义或已经分在不同行的配对会记录原因，不强行改行。结果JSON的 `layout_hierarchy` 可查看依据与实际穿插情况；旧JSON重绘不会重新摆件。实测见[父子保护结果](structure-layout-results.md)。
 
+默认structured新布局还会在候选反馈、朝向和端口预检之后，用 [series_alignment.py](../netlist2schematic/layout/series_alignment.py) 做一次明确串接段的对齐收尾。它只处理同极性MOS D/S或BJT C/E的唯一导通延续，允许栅／基极控制接点，遇到额外导通分支则跳过；在现有列上横移单管或短链，保持行号、朝向、固定位置和小块。真实引脚误差不增加且原估价改善、静态几何通过才提交；共用原1秒／128次局部窗口，不调用SA或A*。随后捕获恢复快照并执行原最终布线与验收，JSON的 `series_alignment`记录动作及前后指标。实验布局沿用自己的收尾，不叠加此步骤；旧JSON重绘／重布不自动改位置。图10实测见[串接对齐结果](structure-layout-results.md)。
+
 默认的无源灵活布局在保留原初排的基础上，为候选1～3各追加一行、两列空位。SA期间物理坐标轴不变，不会边搜索边插行。每次提案有50%机会沿用原动作，另50%机会尝试无源二维动作：90%在周围八个格子中选一步，10%尝试同一非电源网邻居附近的空位；无可用邻居时退回局部移动。目标为空就移动，目标为另一个可移动无源件就交换，目标为MOS/BJT/E/V/I则拒绝。允许进入有源块外的同行空位和层间空间，不会把多行父结构的整个矩形内部全部封锁。
 
 这些关系不是刚体：串联R/C可以分别调整，反馈路径共享器件也不会被复制到多个块。每次接受、撤销、温度采样或恢复最佳状态，都从 `cell_of` 和 `orient` 重建当前 `row_of` 与占位表。这样，无源跨行后旧动作和评分看到的仍是它的当前行。
@@ -974,6 +976,8 @@ $flowResult.quality.details.per_net
 | [place-and-route.py](../netlist2schematic/layout/place_and_route.py) | Placement基础、引脚坐标、旧pattern估价、符号绘制工具 |
 | [structured_placement.py](../netlist2schematic/layout/structured_placement.py) | 结构种子、块动作、快速估价、温度标定及反馈候选 |
 | [structure_hierarchy.py](../netlist2schematic/layout/structure_hierarchy.py) | 默认结构化布局中的同行子块保护、层级排序及实际位置诊断 |
+| [series_alignment.py](../netlist2schematic/layout/series_alignment.py) | 最终布线前的唯一串接段真实引脚对齐、静态验收及保存测量 |
+| [column_layout.py](../netlist2schematic/plugins/columns/column_layout.py) | 新structured主flow默认auto：候选2/3长列与短旁支事务，先于唯一串接对齐，共用局部预算，不增加A*；`--column-layout off`可关闭，保存位置不重新规整 |
 | [passive_placement.py](../netlist2schematic/layout/passive_placement.py) | 无源跨行移动、动态行恢复、串联/并联/反馈软评分 |
 | [symmetry_layout.py](../netlist2schematic/plugins/symmetry/symmetry_layout.py) | 显式 `--symmetry-layout auto` 才启用：SA及反馈后的器件对称关系、有限规整事务和真实引脚残差；不调用SA/A* |
 | [aesthetic_flow.py](../netlist2schematic/flow/aesthetic_flow.py) | 正常阶段300秒共享预算、真实候选评估、保存最佳结果 |
