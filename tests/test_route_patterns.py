@@ -211,14 +211,12 @@ class ThreeSegmentPatternTests(unittest.TestCase):
                     self.assertEqual(metrics, second[1])
                     self.assertEqual(0, second[3]['candidate_counts']['accepted'])
 
-    def test_required_doglegs_around_a_marker_are_not_flattened_through_it(self):
+    def test_supply_marker_does_not_prevent_shortening_signal_doglegs(self):
         case = pattern_case(blocked=True)
         routes, metrics, report = self.assert_safe(case, simplify(case))
-        # The three old operations cannot replace these doglegs. Track shifts
-        # may tighten them while the independent oracle still protects markers.
-        self.assertEqual(case[4][1], report['v4_metrics'])
-        self.assertGreater(metrics['bends'], 0)
-        self.assertGreater(report['candidate_counts']['geometry_rejected'], 0)
+        self.assertLess(metrics['wirelength'], case[4][1]['wirelength'])
+        self.assertLess(metrics['bends'], case[4][1]['bends'])
+        self.assertEqual([], _verify(*case[:4], routes, case[5])[2]['violations'])
 
     def test_shorter_three_segment_wire_cannot_add_an_otherwise_legal_crossing(self):
         case = pattern_case(extra_crossing=True)

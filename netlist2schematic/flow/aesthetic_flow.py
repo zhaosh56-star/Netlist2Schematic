@@ -5,7 +5,7 @@ from copy import deepcopy
 from math import isfinite
 from time import perf_counter
 
-from netlist2schematic.flow.candidate_budget import routing_deadline, validate_policy
+from netlist2schematic.flow.candidate_budget import routing_deadline, primary_deadline, validate_policy
 from netlist2schematic.common.sa_common import load_local
 from netlist2schematic.routing.sa_routing import RoutingValidationError, final_route
 
@@ -65,7 +65,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   passive_layout='flexible', symmetry_layout='off', structure_layout='off',
                   structure_phase=3, candidate_budget='sequential',port_preflight='off',
                   region_layout='off', readability_layout='off', readability_phase=5,
-                  route_tradeoff='strict', attachment_layout='off', column_layout='off'):
+                  route_tradeoff='strict', attachment_layout='off', column_layout='off', passive_skeleton='off',
+                  simplify_policy='off', simplify_seconds=5):
     validate_policy(candidate_budget)
     if port_preflight not in ('off','repair'):
         raise ValueError('port_preflight must be off or repair')
@@ -94,6 +95,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     from netlist2schematic.flow.run_flow import _validate_column_policy
     _validate_column_policy(column_layout, 'layered', 'structured', structure_layout,
         symmetry_layout, region_layout, readability_layout, attachment_layout)
+    from netlist2schematic.flow.run_flow import _validate_passive_skeleton
+    _validate_passive_skeleton(passive_skeleton,'layered','structured',passive_layout,
+        structure_layout,symmetry_layout,region_layout,readability_layout,attachment_layout)
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     from netlist2schematic.layout.structured_placement import create_candidates, feedback_candidate
@@ -109,14 +113,21 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     shared_readability_plan = None
     shared_attachment_plan = None
     shared_column_plan = None
+    shared_skeleton_plan = None
     valid_results = []
     retry_context = retry_options = rescue_context = None
+    recovery_candidates = []
     candidate_data_error = False
     effective_options = routing_options if routing_options is not None else RoutingOptions()
     include_legacy = str(candidate_id) == '0'
-    budget_policy = candidate_budget if candidate_id is None else 'sequential'
+    prefer_primary = passive_skeleton == 'auto' and candidate_id is None
+    budget_policy = ('primary_reserved' if prefer_primary else
+                     candidate_budget if candidate_id is None else 'sequential')
+    reserved_budget = budget_policy in ('reserved', 'primary_reserved')
     candidate_limit = 1 if include_legacy else 3
-    candidate_policy = 'legacy_reference_replay' if include_legacy else 'structured_only'
+    candidate_policy = ('legacy_reference_replay' if include_legacy else
+                        'primary_2_3_then_failure_reference_1' if prefer_primary else 'structured_only')
+    candidate_order = ('2', '3', '1') if prefer_primary else ('1', '2', '3')
     stop_reason = 'candidates_exhausted'
     try:
         candidates = create_candidates(path, cell=cell, iterations=iterations,
@@ -126,14 +137,30 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                                        readability_layout=readability_layout,
                                        readability_phase=readability_phase,
                                         **({'attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
+                                       **({'passive_skeleton':passive_skeleton,'skeleton_columns':column_layout=='auto'}
+                                          if passive_skeleton=='auto' else {}),
                                        **({'routing_options': effective_options}
                                           if (readability_layout == 'auto' and readability_phase >= 5)
-                                             or attachment_layout != 'off' else {}))
-        for number, item in enumerate(candidates):
-            if number >= candidate_limit:
-                stop_reason = 'candidate_limit'
+                                             or attachment_layout != 'off' or passive_skeleton=='auto' else {}),
+                                       **({'candidate_ids': (2, 3, 1),
+                                           'candidate_deadlines': {i: primary_deadline(started, quality_seconds, i)
+                                                                   for i in candidate_order}}
+                                          if prefer_primary else
+                                          {'candidate_ids': (int(candidate_id),)}
+                                          if passive_skeleton == 'auto' and str(candidate_id) in ('1','2','3') else {}))
+        for number in range(candidate_limit):
+            # Check before resuming the lazy generator: a valid preferred result
+            # must prevent even initializing/annealing the reference fallback.
+            if prefer_primary and number == 2 and any(r[8] in ('2', '3') for r in valid_results):
+                stop_reason = 'primary_candidates_complete'
+                break
+            try:
+                item = next(candidates)
+            except StopIteration:
                 break
             placement, comps, nets, index, metadata = item
+            if metadata.get('passive_skeleton',{}).get('plan') is not None:
+                shared_skeleton_plan=deepcopy(metadata['passive_skeleton']['plan'])
             identifier = str(metadata.get('candidate_id', 0 if include_legacy else number + 1))
             if region_layout == 'auto' and metadata.get('layout_regions', {}).get('plan') is not None:
                 shared_region_plan = deepcopy(metadata['layout_regions']['plan'])
@@ -141,18 +168,28 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 shared_readability_plan = deepcopy(metadata['layout_readability']['plan'])
             if attachment_layout != 'off' and metadata.get('layout_attachments', {}).get('plan') is not None:
                 shared_attachment_plan = deepcopy(metadata['layout_attachments']['plan'])
-            replay_feedback = str(candidate_id) == '3'
+            replay_feedback = str(candidate_id) == '3' and passive_skeleton != 'auto'
             if candidate_id is not None and str(candidate_id) != identifier and not replay_feedback:
+                continue
+            if placement is None and metadata.get('generation_skipped'):
+                records.append(dict(candidate_id=identifier,seed=metadata.get('candidate_seed',seed),
+                    status='skipped',reason='passive_module_insertion_failed',
+                    passive_skeleton=deepcopy(metadata['passive_skeleton']),
+                    fallback='retain_verified_incumbent_no_mixed_restart'))
+                print(f'Quality candidate {identifier}: passive module insertion skipped; '
+                      'preserving the verified incumbent and active skeleton checkpoint',flush=True)
+                if candidate_id is not None and str(candidate_id)==identifier:
+                    stop_reason='replay_complete';break
                 continue
             generated_at = perf_counter()
             if generated_at >= deadline:
                 stop_reason = 'time_budget'
                 break
-            candidate_deadline = routing_deadline(started, quality_seconds, identifier,
-                                                  policy=budget_policy)
+            candidate_deadline = (primary_deadline(started, quality_seconds, identifier) if prefer_primary else
+                                  routing_deadline(started, quality_seconds, identifier, policy=budget_policy))
             budget_record = {'policy': budget_policy,
                              'cutoff_seconds': candidate_deadline - started}
-            if budget_policy == 'reserved' and generated_at >= candidate_deadline:
+            if reserved_budget and generated_at >= candidate_deadline:
                 records.append({'candidate_id': identifier,
                                 'seed': metadata.get('candidate_seed', seed),
                                 'status': 'skipped', 'reason': 'candidate_time_budget',
@@ -185,6 +222,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             readability_feedback_state = None
             readability_feedback_statistics = {}
             feedback_best = best
+            if metadata.get('passive_skeleton',{}).get('applied'):
+                feedback_best=None
+                metadata['passive_skeleton']['feedback_skipped']='preserve_active_skeleton_and_reserved_slots'
             if (attachment_layout != 'off' and identifier == '3'
                     and shared_attachment_plan is not None and shared_attachment_plan.get('supported')):
                 # The old feedback clones another candidate and changes axes.
@@ -364,7 +404,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     metadata['structure_layout']['metrics']=measure_structure(
                         par,placement,comps,nets,index,metadata,structure_phase)
             column_trials = 0
-            if column_layout == 'auto' and identifier in ('2', '3') and metadata.get('layout_style') == 'structured':
+            if (column_layout == 'auto' and identifier in ('2', '3') and metadata.get('layout_style') == 'structured'
+                    and not metadata.get('passive_skeleton',{}).get('applied')):
                 from netlist2schematic.plugins.columns.column_layout import build_column_plan, refine_columns
                 if shared_column_plan is None:
                     shared_column_plan = build_column_plan(par, placement, comps, nets, index, metadata.get('structs', ()))
@@ -373,6 +414,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     seconds=max(0, local_refinement_deadline-perf_counter()), max_trials=128)
                 column_trials = metadata['layout_columns']['trials']
             if (identifier != '0' and metadata.get('layout_style') == 'structured'
+                    and not metadata.get('passive_skeleton',{}).get('applied')
                     and all(policy == 'off' for policy in (structure_layout, symmetry_layout,
                               region_layout, readability_layout, attachment_layout))):
                 # Refine the actual post-feedback, post-preflight placement.
@@ -433,7 +475,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 record['series_alignment']=deepcopy(metadata['series_alignment'])
             if 'layout_columns' in metadata:
                 record['layout_columns'] = deepcopy(metadata['layout_columns'])
-            if budget_policy == 'reserved' and routing_at >= candidate_deadline:
+            if shared_skeleton_plan is not None:
+                from netlist2schematic.plugins.passive_skeleton.plan import measure
+                metadata.setdefault('passive_skeleton',dict(applied=False,plan=deepcopy(shared_skeleton_plan)))['current']=measure(placement,comps,index,shared_skeleton_plan)
+                record['passive_skeleton']=deepcopy(metadata['passive_skeleton'])
+            if reserved_budget and routing_at >= candidate_deadline:
                 global_expired = routing_at >= deadline
                 reason = 'quality_time_budget' if global_expired else 'candidate_time_budget'
                 record.update(status='skipped', reason=reason)
@@ -461,8 +507,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             print(f'Quality candidate {identifier}: final routing, '
                   f'budget remaining={candidate_deadline-routing_at:.1f}s', flush=True)
             # A router or suspended producer may mutate/reuse its own buffers.
-            # Keep only the last actually attempted candidate, after any feedback
-            # replacement, and never serialize this executable placement object.
+            # Retain the last attempt for legacy/spacing recovery. Preferred
+            # candidates also keep independent rescue snapshots below, so the
+            # failure-only reference cannot discard their completed work.
             retry_context = deepcopy((placement, comps, nets, index, metadata))
             retry_options = deepcopy(effective_options)
             # A checkpoint belongs to this exact routing attempt.  In
@@ -505,9 +552,13 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
                     raise
                 rescue_context = deepcopy(getattr(exc, '_rescue_context', None))
+                if prefer_primary and rescue_context is not None:
+                    from netlist2schematic.recovery.candidate_rescue import capture_candidate
+                    recovery_candidates.append(capture_candidate(
+                        retry_context, rescue_context, retry_options, identifier, len(records)))
                 diagnostics = getattr(exc, 'diagnostics', {})
                 local_timeout = (diagnostics.get('reason') == 'quality_time_budget'
-                                 and budget_policy == 'reserved'
+                                 and reserved_budget
                                  and candidate_deadline < deadline
                                  and perf_counter() < deadline)
                 if local_timeout:
@@ -564,13 +615,38 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             failure.retry_options = retry_options or deepcopy(effective_options)
             if rescue_context is not None:
                 failure._rescue_context = rescue_context
+            if recovery_candidates:
+                failure._recovery_candidates = recovery_candidates
+                failure.diagnostics['recovery_candidate_ids'] = [
+                    row['candidate_id'] for row in recovery_candidates]
         raise failure
     # Feedback above deliberately uses the original-Q incumbent.  Only after
     # all routing attempts do device symmetry and the 125% wire cap choose the
     # delivered candidate. Explicit replay always returns its requested ID.
+    cleanup_selection = None
+    if prefer_primary:
+        preferred = [row for row in valid_results if row[8] in ('2', '3')]
+        if preferred:
+            valid_results = preferred
+        valid_results, cleanup_selection = _clean_primary_results(
+            path, cell, par, valid_results, records, effective_options,
+            simplify_policy, simplify_seconds, route_tradeoff)
+        best = min(valid_results, key=lambda row: row[0])
     symmetry_selection = structure_selection = region_selection = readability_selection = None
-    attachment_selection = column_selection = None
-    if column_layout == 'auto' and shared_column_plan is not None:
+    attachment_selection = column_selection = skeleton_selection = None
+    if passive_skeleton=='auto' and shared_skeleton_plan is not None and shared_skeleton_plan['applicable']:
+        from netlist2schematic.plugins.passive_skeleton.plan import measure
+        from netlist2schematic.plugins.passive_skeleton.selection import select_result
+        for result in valid_results:
+            report=result[5].setdefault('passive_skeleton',dict(applied=False,plan=deepcopy(shared_skeleton_plan)))
+            report['current']=measure(result[1],result[2],result[4],shared_skeleton_plan)
+            for record in records:
+                if record.get('candidate_id')==result[8]:record['passive_skeleton']=deepcopy(report)
+        if candidate_id is None:
+            best,skeleton_selection=select_result(valid_results,shared_skeleton_plan,
+                column_plan=shared_column_plan if column_layout=='auto' else None,
+                **({'primary': True} if prefer_primary else {}))
+    elif column_layout == 'auto' and shared_column_plan is not None:
         from netlist2schematic.plugins.columns.column_layout import measure_columns, select_column_result
         for result in valid_results:
             report = result[5].setdefault('layout_columns', {'plan': deepcopy(shared_column_plan)})
@@ -623,12 +699,17 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         'policy': 'balanced-v1', 'budget_seconds': quality_seconds,
         'candidate_policy': candidate_policy, 'candidate_limit': candidate_limit,
         'legacy_reference_enabled': include_legacy,
+        **({'candidate_order': list(candidate_order), 'reference_fallback_only': True,
+            'reference_fallback_used': identifier == '1',
+            'comparison_stage': 'after_shared_route_simplification',
+            'candidate_cleanup': cleanup_selection} if prefer_primary else {}),
         'candidate_budget_policy': budget_policy,
         'requested_candidate_budget': candidate_budget,
         'elapsed_seconds': round(perf_counter()-started, 6), 'stop_reason': stop_reason,
         'selected_candidate': identifier, 'score': quality['score'],
         'details': quality, 'candidates': records})
     metadata['quality']['selection_policy'] = (
+        skeleton_selection['policy'] if skeleton_selection else
         column_selection['policy'] if column_selection else
         attachment_selection['policy'] if attachment_selection else
         readability_selection['policy'] if readability_selection else
@@ -648,7 +729,67 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         metadata['quality']['attachment_selection'] = attachment_selection
     if column_selection is not None:
         metadata['quality']['column_selection'] = column_selection
+    if skeleton_selection is not None:
+        metadata['quality']['passive_skeleton_selection']=skeleton_selection
     return placement, comps, nets, index, metadata, routed_result
+
+
+def _clean_primary_results(path, cell, par, results, records, options, policy, seconds, tradeoff):
+    """Compare finished drawings using one shared, unchanged cleanup budget."""
+    from hashlib import sha256
+    from pathlib import Path
+    from netlist2schematic.flow.run_flow import _postprocess_routes, _saved_positions
+    report = dict(policy='shared_preselection_cleanup_v1', requested_seconds=seconds,
+                  mode=policy, candidate_ids=[r[8] for r in results], candidates=[])
+    if policy == 'off' or seconds == 0:
+        report.update(budget_seconds=0, elapsed_seconds=0, stop_reason='disabled' if policy == 'off' else 'zero_budget')
+        return results, report
+    if seconds == 'auto':
+        from netlist2schematic.postprocess.simplify_budget import estimate_simplify_budget
+        budget = max(estimate_simplify_budget(r[1], r[2], r[3], r[4], r[6][0])['selected_seconds']
+                     for r in results)
+    else:
+        budget = seconds
+    started = perf_counter()
+    deadline = started + budget
+    remaining_candidates = 512
+    source = Path(path).resolve()
+    source_hash = sha256(source.read_bytes()).hexdigest()
+    cleaned = []
+    for offset, row in enumerate(results):
+        _, pl, comps, nets, index, metadata, routed, quality, identifier = row
+        allocated = max(0., deadline-perf_counter()) / (len(results)-offset)
+        allocated_candidates = remaining_candidates // (len(results)-offset)
+        data = deepcopy(metadata)
+        data.update(source_netlist=str(source), source_cell=cell, source_sha256=source_hash,
+                    placement=_saved_positions(pl, comps))
+        data['quality'] = dict(score=quality['score'], details=deepcopy(quality))
+        data, result = _postprocess_routes(data, par, pl, comps, nets, index,
+            routed, options, policy, allocated, route_tradeoff=tradeoff,
+            candidate_limit=allocated_candidates)
+        final_quality = data['quality']['details']
+        metrics = result[1]
+        data['_candidate_cleanup'] = dict(requested_seconds=seconds, policy=policy,
+            allocated_seconds=allocated, shared_budget_seconds=budget,
+            allocated_candidates=allocated_candidates)
+        considered = data['route_simplification'].get('candidate_counts',{}).get('considered',0)
+        remaining_candidates -= considered
+        key = (final_quality['score'], metrics['crossings'], metrics['wirelength'], identifier)
+        cleaned.append((key, pl, comps, nets, index, data, result, final_quality, identifier))
+        for record in records:
+            if str(record.get('candidate_id')) == identifier:
+                record.update(routing_metrics=deepcopy(record.get('metrics')),
+                    routing_score=record.get('score'), metrics=deepcopy(metrics), score=final_quality['score'],
+                    quality=deepcopy(final_quality), route_simplification=deepcopy(data['route_simplification']),
+                    metrics_stage='after_shared_route_simplification')
+        report['candidates'].append(dict(candidate_id=identifier, allocated_seconds=allocated,
+            allocated_candidates=allocated_candidates, considered=considered,
+            elapsed_seconds=data['route_simplification']['elapsed_seconds'],
+            before_metrics=deepcopy(routed[1]), after_metrics=deepcopy(metrics)))
+    report.update(budget_seconds=budget, max_candidates=512, considered=512-remaining_candidates,
+                  elapsed_seconds=round(perf_counter()-started, 6),
+                  stop_reason='shared_budget_complete')
+    return cleaned, report
 
 
 def _preserve_readability_feedback(par, pl, comps, nets, index, metadata, saved, options, deadline):

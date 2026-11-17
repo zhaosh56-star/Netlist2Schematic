@@ -111,7 +111,9 @@ def _find_path(scene, net, start, tree, occupied, margin, history, statistics,
     x_index, y_index = {x:i for i,x in enumerate(xs)}, {y:i for i,y in enumerate(ys)}
     if start[0] not in x_index or start[1] not in y_index:
         return None, Counter()
-    obstacles = _scene_rectangles(scene)
+    # Marker bounds still supply useful graph coordinates in _axes; only
+    # component bodies exclude signal search vertices.
+    obstacles = [rect for _, rect in scene.body_rects]
     checks = checks if checks is not None else {'free': {}, 'edge': {}, 'turn': {}}
     point_cache, edge_cache, turn_cache = checks['free'], checks['edge'], checks['turn']
     prepared = prepared if prepared is not None else scene.prepare_occupied(occupied)
@@ -262,23 +264,27 @@ def _priority(scene, net):
     return -len(pins),-hpwl,net
 
 
-def route_scene(scene, deadline=None):
+def route_scene(scene, deadline=None, *, initial_routes=None):
     """Return signal routes and diagnostics, or raise a bounded RoutingFailure."""
     from netlist2schematic.routing.routing_rules import analyze_routes
     started=perf_counter()
     diagnostics={'router':'orthogonal-a-star-v1','expanded_states':0,'graph_nodes':0,
                  'reroute_rounds':0,'attempts':0,'elapsed_seconds':0.0}
-    initial_order=sorted(scene.pins,key=lambda net:_priority(scene,net))
+    initial_routes=deepcopy(initial_routes) if initial_routes else {}
+    initial_order=sorted((n for n in scene.pins if n not in initial_routes),key=lambda net:_priority(scene,net))
+    if initial_routes:
+        diagnostics['passive_module_seed_nets']=len(initial_routes)
     last_failure={}
     history=[]
     order=list(initial_order)
     shared_free={}
     rescue_state=None
+    module_interface_attempts=set()
     try:
         _check_deadline(deadline, stage='routing_start')
         for margin in scene.options.margins:
             _check_deadline(deadline, stage='margin_start', margin=margin)
-            completed={}
+            completed=deepcopy(initial_routes)
             pending=list(order)
             rounds=0
             while pending:
@@ -294,6 +300,21 @@ def route_scene(scene, deadline=None):
                 result,blockers=_route_net(scene,net,occupied,margin,history,diagnostics,
                                            shared_free,deadline=deadline,
                                            _rescue_state=rescue_state)
+                if (result is None and net in getattr(scene,'module_port_nets',())
+                        and net not in module_interface_attempts
+                        and len(module_interface_attempts)<scene.options.max_rounds):
+                    # Only a failed module-related net gets the existing safe
+                    # source/tree interfaces. No fresh budget, margin growth,
+                    # geometry exemption or default-router behavior is added.
+                    from netlist2schematic.recovery.local_rescue import _route_local_net
+                    module_interface_attempts.add(net)
+                    interface_report=dict(net=net,port_plans=0,branches=[])
+                    repaired,owners,direct,failed=_route_local_net(
+                        scene,net,occupied,margin,diagnostics,deadline,interface_report)
+                    blockers.update(owners);blockers.update(direct)
+                    interface_report.update(repaired=repaired is not None,failure=failed)
+                    diagnostics.setdefault('module_interface_repairs',[]).append(interface_report)
+                    if repaired is not None:result=repaired
                 failure={'reason':'no_path','net':net,
                          'branch':diagnostics.get('failed_branch')}
                 if result is not None:
@@ -315,7 +336,7 @@ def route_scene(scene, deadline=None):
                     rescue_state=None
                     continue
                 movable=[name for name,_ in sorted(blockers.items(),key=lambda item:(-item[1],_priority(scene,item[0]) if item[0] in scene.pins else (0,0,item[0])))
-                         if name in completed]
+                         if name in completed and name not in initial_routes]
                 last_failure={**failure,'blocking_nets':dict(blockers),'margin':margin}
                 if diagnostics['reroute_rounds'] >= scene.options.max_rounds or not movable:
                     break

@@ -29,6 +29,9 @@ Netlist2Schematic/
 │  │  ├─ readability/          # 无源、源器件、空隙及绕线风险实验
 │  │  ├─ symmetry/             # 器件位置和朝向对称实验
 │  │  ├─ attachment/           # 无源与源器件联合布局实验
+│  │  ├─ columns/              # 当前默认的连续长列和短旁支规整
+│  │  ├─ passive_embedding/    # 成品之后的安全无源试摆（默认off）
+│  │  ├─ passive_skeleton/     # 默认有源骨架、串并联模块；2/3优先，1仅失败兜底
 │  │  ├─ net_labels/           # 局部实体连线＋同名网标的额外视图
 │  │  └─ preflight/            # 最终 A* 前的静态端口修复实验
 │  └─ source_map.json          # 旧文件名 → 当前实现路径
@@ -61,9 +64,10 @@ Netlist2Schematic/
 | 解析 | `netlist/netlist_core.py`、`netlist/parse_netlist.py` | 读取扁平电路或显式指定的 cell，规范器件与引脚连接 |
 | 分层与识别 | `recognition/device_leveling.py`、`circuit_structures.py`、`vf2_match.py` | 计算导通层级，识别有角色的子结构；VF2 保留给旧参考路径 |
 | 布局 | `layout/structured_placement.py`、`passive_placement.py`、`layout_quality.py` | 结构初排、SA、无源跨行和真实布线质量测量 |
+| 默认模块布局 | `plugins/passive_skeleton/` | 候选2/3先排有源骨架，再插入真实串并联无源模块；失败才运行候选1 |
 | 基础布局能力 | `layout/place_layered.py`、`layout/place_and_route.py` | Placement、真实引脚坐标、快速估价和旧布局参考；结构化流程也会复用 |
 | 最终布线 | `routing/sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 正交 A*、拆网重布、真实引脚连通和几何验收 |
-| 失败恢复 | `recovery/local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 正常阶段失败后按既定顺序恢复 |
+| 失败恢复 | `recovery/candidate_rescue.py`、`local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 独立保留候选失败现场，在共享预算内救援，再按既定顺序扩距、总线恢复 |
 | 安全缩线 | `postprocess/simplify_routes.py`、`route_reattachment.py`、`route_patterns.py`、`route_tracks.py` | 在已合法线路上生成、验收及提交更短的候选 |
 | 缩线策略与预算 | `postprocess/simplify_budget.py`、`route_tradeoff.py` | 固定或自动预算，以及 strict／balanced 的接受规则 |
 | 绘图 | `rendering/sa_render.py`、`presentation.py` | 同一份验收线路生成彩色和黑白 SVG，安排文字和端口展示 |
@@ -82,6 +86,9 @@ Netlist2Schematic/
 | `plugins/readability/` | `--readability-layout auto`，无源排列、源归位、空隙及布线反馈实验 |
 | `plugins/symmetry/` | `--symmetry-layout auto`，器件位置和朝向对称，不要求导线镜像 |
 | `plugins/attachment/` | `--attachment-layout passive` 或 `all`，联合安排宿主支路、无源及源器件 |
+| `plugins/columns/` | 新结构化主flow默认 `--column-layout auto`，规整长列及短旁支 |
+| `plugins/passive_embedding/` | `--passive-embedding auto`，原成品之后最多一次无源重排／重布，不劣才采用 |
+| `plugins/passive_skeleton/` | `--passive-skeleton auto`，候选2/3先建立有源骨架，局部扩距后嵌入无源 |
 | `plugins/net_labels/` | `--net-labels auto` 或根 `net_labels.py`，生成独立网标视图 |
 | `plugins/preflight/` | `--port-preflight repair`，最终路由前修复可调整的静态冲突 |
 

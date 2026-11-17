@@ -6,8 +6,7 @@ No placement, global routing or A* search is performed.
 """
 from __future__ import annotations
 
-from netlist2schematic.routing.routing_rules import (EPS, canonical_topology, check_deadline,
-                           segment_hits_rect)
+from netlist2schematic.routing.routing_rules import EPS, canonical_topology, check_deadline
 
 MAX_TRACKS_PER_AXIS = 12
 
@@ -72,15 +71,11 @@ def _connector(source, target, axis, track):
 
 
 def _body_clear(scene, net, segments, deadline):
-    """Discard obvious body/marker hits before spending a track's work slot."""
+    """Discard body hits; supply-marker bounds do not exclude signal wires."""
     for a, b in segments:
         for component, rect in scene.body_rects:
             check_deadline(deadline, 'pattern_body_screen')
             if not scene.body_allowed(net, a, b, component, rect):
-                return False
-        for _, rect in scene.marker_rects:
-            check_deadline(deadline, 'pattern_marker_screen')
-            if segment_hits_rect(a, b, rect):
                 return False
     return True
 

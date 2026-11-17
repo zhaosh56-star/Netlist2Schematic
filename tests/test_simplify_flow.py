@@ -223,6 +223,48 @@ class SimplifyFlowTests(unittest.TestCase):
         self.assertEqual(json.loads(json.dumps(self.original['routes'])),
                          json.loads(json.dumps(data['routes'])))
 
+    def test_passive_embedding_follows_original_cleanup_and_cleans_only_its_proposal(self):
+        from netlist2schematic.plugins.passive_embedding import safe_postroute
+        from netlist2schematic.common.sa_saved import load_placement,saved_routing_options
+        data,_,par,pl,cs,ns,ix=load_placement(self.saved)
+        from netlist2schematic.routing.sa_routing import validate_final_routes
+        routed=validate_final_routes(par,ns,pl,ix,list(data['routes'].items()),options=saved_routing_options(data))
+        events=[];actual=run_flow._postprocess_routes
+        def cleanup(*args,**kwargs):
+            events.append('cleanup');return actual(*args,**kwargs)
+        def embed(par,pl,cs,ns,ix,data,routed,options,*,seconds,postprocess):
+            events.append('embed');self.assertEqual(seconds,5.)
+            proposed,result=postprocess(data,pl,routed,4.)
+            self.assertEqual(proposed['placement'],run_flow._saved_positions(pl,cs))
+            return pl,dict(data,passive_embedding=dict(applied=False)),routed
+        with patch.object(run_flow,'_postprocess_routes',side_effect=cleanup), \
+             patch.object(safe_postroute,'optimize',side_effect=embed),contextlib.redirect_stdout(io.StringIO()):
+            result=run_flow._finish(data,par,pl,cs,ns,ix,'small',self.destination,
+                options=saved_routing_options(data),routed_result=routed,
+                simplify_seconds=0,embed_passives=True)
+        self.assertEqual(events,['cleanup','embed','cleanup'])
+        self.assertEqual(result['placement'],self.original['placement'])
+        self.assertEqual(result['routes'],self.original['routes'])
+        self.assertEqual(self.saved_bytes,self.saved.read_bytes())
+
+    def test_passive_result_quality_is_recomputed_even_if_cleanup_is_disabled(self):
+        from netlist2schematic.plugins.passive_embedding import safe_postroute
+        from netlist2schematic.common.sa_saved import load_placement,saved_routing_options
+        data,_,par,pl,cs,ns,ix=load_placement(self.saved)
+        data['quality']['score']=-12345
+        from netlist2schematic.routing.sa_routing import validate_final_routes
+        routed=validate_final_routes(par,ns,pl,ix,list(data['routes'].items()),options=saved_routing_options(data))
+        def embed(par,pl,cs,ns,ix,data,routed,*args,**kwargs):
+            return pl,dict(data,passive_embedding=dict(applied=True)),routed
+        with patch.object(safe_postroute,'optimize',side_effect=embed),contextlib.redirect_stdout(io.StringIO()):
+            result=run_flow._finish(data,par,pl,cs,ns,ix,'small',self.destination,
+                options=saved_routing_options(data),routed_result=routed,
+                simplify_routes='off',embed_passives=True)
+        self.assertNotEqual(result['quality']['score'],-12345)
+        self.assertEqual(result['quality']['score'],result['quality']['details']['score'])
+        self.assertEqual(result['quality']['candidate_metrics_stage'],'before_passive_embedding')
+        self.assertEqual(result['quality']['candidates'],data['quality']['candidates'])
+
     def test_bus_is_revalidated_but_not_simplified(self):
         with contextlib.redirect_stdout(io.StringIO()):
             data = run_flow.run(self.source, iterations=0, fallback='only',

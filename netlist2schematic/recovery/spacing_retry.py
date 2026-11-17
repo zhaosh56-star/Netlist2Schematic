@@ -104,6 +104,18 @@ def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60):
         'geometry_change': 'axis_gaps_only', 'logical_cells_preserved': True,
         'orientations_preserved': True, 'local_pin_geometry_preserved': True,
     }
+    if getattr(placement,'passive_module_guides',None):
+        from netlist2schematic.plugins.passive_skeleton.module_connections import rebase_after_axis_expansion
+        module_plan=metadata.get('passive_skeleton',{}).get('plan')
+        if not module_plan:
+            raise ValueError('Inserted passive modules are missing their recovery plan')
+        report['passive_modules']=rebase_after_axis_expansion(context[0],placement,index,module_plan,
+                                                            grid_step=options.grid_step)
+        report['geometry_change']='axis_gaps_and_rigid_module_translation'
+        report['module_route_cache_cleared']=True
+        previous=metadata['passive_skeleton'].pop('module_connections',None)
+        if previous is not None:
+            metadata['passive_skeleton']['module_connections_before_spacing']=previous
     source_optimization = {key: metadata.pop(key) for key in
                            ('energy', 'optimization_metrics') if key in metadata}
     if source_optimization:

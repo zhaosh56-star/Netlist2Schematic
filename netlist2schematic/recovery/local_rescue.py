@@ -24,8 +24,7 @@ from netlist2schematic.routing.sa_routing import RoutingValidationError, _verify
 
 
 def _free(scene, point):
-    return not any(point_in_rect(point, rect) for _, rect in
-                   scene.body_rects + scene.marker_rects)
+    return not any(point_in_rect(point, rect) for _, rect in scene.body_rects)
 
 
 def _occupied(scene, completed):
@@ -40,7 +39,8 @@ def _anchors(scene, net, pin, occupied, deadline):
 
     The declared pin and its fixed escape do not move.  An extension is tested
     as one ordinary segment against the *original* scene, including all foreign
-    pins, fixed stubs, branches, bodies and markers.
+    pins, fixed stubs, branches and bodies. Marker rectangles do not exclude
+    signal wires; their actual supply leads retain the normal wire rules.
     """
     prepared = scene.prepare_occupied(occupied)
     blocked = Counter()

@@ -201,9 +201,6 @@ def lead_error(scene, net, anchor, tip, routes, previous_labels=()):
     for owner, rect in scene.body_rects:
         if segment_hits_rect(anchor, tip, rect):
             return 'leader_body'
-    for owner, rect in scene.marker_rects:
-        if segment_hits_rect(anchor, tip, rect):
-            return 'leader_marker'
     wires = [(name, a, b) for name, lines in routes.items() for a, b in lines]
     wires += [(name, a, b) for name in scene.power_nets for a, b in scene.fixed_segments.get(name, ())]
     wires += [(row['net'], point(row['anchor']), point(row['tip'])) for row in previous_labels]

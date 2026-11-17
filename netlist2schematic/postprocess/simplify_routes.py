@@ -292,7 +292,7 @@ def _crossing_clearance_conflict(scene, net, candidate, occupied, deadline=None)
 
 
 def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=None, seconds=5,
-                    tradeoff='strict'):
+                    tradeoff='strict', max_candidates=None):
     """Return the last completely verified shortcut result and JSON-safe report.
 
     ``routed_result`` must already be a fully validated three-item result. A
@@ -303,6 +303,10 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
         raise ValueError('simplification seconds must be finite and non-negative')
     if tradeoff not in ('strict', 'balanced'):
         raise ValueError('simplification tradeoff must be strict or balanced')
+    if max_candidates is None:
+        max_candidates = MAX_CANDIDATES
+    if type(max_candidates) is not int or not 0 <= max_candidates <= MAX_CANDIDATES:
+        raise ValueError('simplification candidate limit must be an integer from 0 to 512')
     if not isinstance(routed_result, (tuple, list)) or len(routed_result) != 3:
         raise ValueError('simplification requires a validated route result')
     if not isinstance(routed_result[2], dict) or routed_result[2].get('valid') is not True:
@@ -311,7 +315,7 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
     deadline = started + seconds
     incumbent = deepcopy(tuple(routed_result))
     report = {'version': VERSION, 'budget_seconds': seconds,
-              'parameters': {'max_rounds': MAX_ROUNDS, 'max_candidates': MAX_CANDIDATES,
+              'parameters': {'max_rounds': MAX_ROUNDS, 'max_candidates': max_candidates,
                              'max_targets_per_branch': MAX_TARGETS_PER_BRANCH,
                              'max_tracks_per_axis': MAX_TRACKS_PER_AXIS,
                              'max_track_candidates_per_chain': MAX_TRACK_CANDIDATES_PER_CHAIN},
@@ -347,7 +351,7 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
     report['stages'] = [
         {'phase': phase, 'activated_operation': OPERATIONS[index],
          'time_fraction': (index+1)/len(OPERATIONS),
-         'candidate_limit': (MAX_CANDIDATES*(index+1)+len(OPERATIONS)-1)//len(OPERATIONS),
+         'candidate_limit': (max_candidates*(index+1)+len(OPERATIONS)-1)//len(OPERATIONS),
          'deadline_seconds': None, 'status': 'not_started', 'elapsed_seconds': 0.0,
          'candidate_counts': dict(report['candidate_counts']),
          'generation_calls': 0, 'generation_timeout': 0, 'validation_timeout': 0,
@@ -409,7 +413,7 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
         net_facts = {}
         for phase_index, stage in enumerate(report['stages'][:MAX_ROUNDS]):
             check_deadline(deadline, 'simplify_stage_start')
-            if report['candidate_counts']['considered'] >= MAX_CANDIDATES:
+            if report['candidate_counts']['considered'] >= max_candidates:
                 report['stop_reason'] = 'candidate_budget'
                 break
             report['rounds'] = phase_index+1
@@ -577,7 +581,7 @@ def simplify_routes(par, nets, placement, comp_index, routed_result, *, options=
                         break
             except _StageQuota:
                 stage['status'] = ('candidate_budget' if
-                    report['candidate_counts']['considered'] >= MAX_CANDIDATES else 'quota_yield')
+                    report['candidate_counts']['considered'] >= max_candidates else 'quota_yield')
                 if stage['status'] == 'candidate_budget':
                     report['stop_reason'] = 'candidate_budget'
             except RoutingFailure as exc:

@@ -105,13 +105,18 @@ class JunctionPatternTests(unittest.TestCase):
                 self.assertEqual(result[1]['wirelength'],220)
                 self.assertEqual(result[3]['patterns'][junctions.PATTERN]['accepted'],1)
 
-    def test_bodies_and_power_markers_reject_illegal_T(self):
-        for obstacle in ('body','marker'):
-            f=fixture(obstacle=obstacle);proposal=next(junctions.aligned_T_candidates(f[5],f[4][0]))
-            with self.assertRaises(RoutingValidationError):
-                _verify(*f[:4],[(proposal['net'],proposal['segments'])],f[5])
-            result=run_case(f,seconds=1);self.assert_valid(f,result)
-            self.assertEqual(result[3]['patterns'][junctions.PATTERN]['accepted'],0)
+    def test_bodies_still_reject_illegal_T(self):
+        f=fixture(obstacle='body');proposal=next(junctions.aligned_T_candidates(f[5],f[4][0]))
+        with self.assertRaises(RoutingValidationError):
+            _verify(*f[:4],[(proposal['net'],proposal['segments'])],f[5])
+        result=run_case(f,seconds=1);self.assert_valid(f,result)
+        self.assertEqual(result[3]['patterns'][junctions.PATTERN]['accepted'],0)
+
+    def test_supply_marker_does_not_reject_signal_T(self):
+        f=fixture(obstacle='marker');proposal=next(junctions.aligned_T_candidates(f[5],f[4][0]))
+        _verify(*f[:4],[(proposal['net'],proposal['segments'])],f[5])
+        result=run_case(f,seconds=1);self.assert_valid(f,result)
+        self.assertEqual(result[1]['wirelength'],220)
 
     def test_legal_existing_crossing_can_move_without_increasing_count(self):
         f=fixture(foreign='crossing');result=run_case(f,seconds=1)

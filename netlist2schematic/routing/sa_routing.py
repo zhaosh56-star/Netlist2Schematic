@@ -195,8 +195,15 @@ def final_route(par, nets, placement, comp_index, options=None, deadline=None):
     from netlist2schematic.routing.orthogonal_router import RoutingFailure, route_scene
     started = perf_counter()
     scene = build_scene(par, nets, placement, comp_index, options=options, deadline=deadline)
-    routed, diagnostics = (route_scene(scene) if deadline is None else
-                           route_scene(scene, deadline=deadline))
+    initial={}
+    if getattr(placement,'passive_module_guides',None):
+        from netlist2schematic.plugins.passive_skeleton.module_connections import complete_routes
+        initial=complete_routes(par,placement,nets,comp_index,scene,deadline=deadline)
+        scene.module_port_nets={net for guide in placement.passive_module_guides.values()
+                                for net in guide['routes'] if net in scene.pins}
+    arguments={'initial_routes':initial} if initial else {}
+    routed, diagnostics = (route_scene(scene,**arguments) if deadline is None else
+                           route_scene(scene, deadline=deadline,**arguments))
     try:
         routed, metrics, analysis = _verify(par, nets, placement, comp_index, routed, scene,
                                             deadline=deadline)

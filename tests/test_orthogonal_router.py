@@ -100,7 +100,7 @@ class OrthogonalSearchTests(unittest.TestCase):
         self.assertTrue(any(set(item['nets']) == {'a','b'} and item['point'] is not None
                             for item in violations))
 
-    def test_power_marker_is_an_immutable_obstacle(self):
+    def test_real_power_lead_remains_an_immutable_obstacle(self):
         scene=simple_scene({'a':[(0,0),(100,0)]})
         scene.marker_rects=[('vdd',(40,-10,60,10))]
         scene.power_nets={'vdd'}

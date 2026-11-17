@@ -247,9 +247,12 @@ class Scene:
         for component, rect in self.body_rects:
             if not self.body_allowed(net, a, b, component, rect):
                 blockers.add(f'body:{component}')
-        for owner, rect in self.marker_rects:
-            if segment_hits_rect(a, b, rect):
-                blockers.add(owner)
+        # Supply-marker rectangles are presentation geometry, not signal-wire
+        # keepouts. Real power leads and terminals remain protected below.
+        if net in self.power_nets:
+            for owner, rect in self.marker_rects:
+                if segment_hits_rect(a, b, rect):
+                    blockers.add(owner)
         for owner, segments in self.fixed_segments.items():
             if owner != net and any(segment_distance(a, b, c, d) < self.options.center_spacing - EPS
                                     for c, d in segments):
@@ -619,9 +622,6 @@ def analyze_routes(routed, scene, deadline=None):
                     check_deadline(deadline, 'geometry_validation')
                 if not scene.body_allowed(net, a, b, component, rect):
                     add('body', (net,), a, component=component, segment=(a, b))
-            for owner, rect in scene.marker_rects:
-                if segment_hits_rect(a, b, rect):
-                    add('marker', (net, owner), a, segment=(a, b))
     names = sorted(topologies)
     for i, net in enumerate(names):
         check_deadline(deadline, 'geometry_validation')

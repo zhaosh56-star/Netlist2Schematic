@@ -234,7 +234,7 @@ class ReadabilityFeedbackTests(unittest.TestCase):
         self.assertIn('without_signal_occupancy', risk['scope'])
         self.assertTrue(risk['escape_path'])
 
-    def test_risk_accounts_for_bodies_and_power_markers_on_the_l_path(self):
+    def test_risk_protects_bodies_without_treating_supply_markers_as_signal_obstacles(self):
         item = fixture()
         scene = deepcopy(item[6])
         branch = feedback.detouring_branches(scene, item[5][0], 120)[0]
@@ -245,7 +245,7 @@ class ReadabilityFeedbackTests(unittest.TestCase):
         crowded = feedback.escape_risk(scene, 'a', branch['port_groups'])
         self.assertGreater(crowded['key'][0], baseline['key'][0])
         self.assertIn('body:999', crowded['static_blockers'])
-        self.assertIn('vdd', crowded['static_blockers'])
+        self.assertNotIn('vdd', crowded['static_blockers'])
 
     def test_renaming_components_and_nets_does_not_select_a_special_example(self):
         item = fixture()

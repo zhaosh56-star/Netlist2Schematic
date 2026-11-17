@@ -328,7 +328,8 @@ class PlacementPreflightTests(unittest.TestCase):
         case = fixture()
         score = preflight._static_faults(PAR, case[0], case[2], case[3], RoutingOptions(), None)
         self.assertIn('marker_body_halo', {v['kind'] for v in score['violations']})
-        self.assertGreater(score['count'], 1)
+        self.assertEqual(score['count'], 1)
+        self.assertFalse(any(item[0] == 'signal_marker' for item in score['hard']))
         case[0].row_y[1] = 220
         score = preflight._static_faults(PAR, case[0], case[2], case[3], RoutingOptions(), None)
         self.assertIn('body_overlap', {v['kind'] for v in score['violations']})

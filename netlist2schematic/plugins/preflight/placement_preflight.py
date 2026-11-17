@@ -118,9 +118,6 @@ def _static_faults(par, pl, nets, index, options, deadline):
                 for component, body in scene.body_rects:
                     if not scene.body_allowed(net, a, b, component, body):
                         hard.add(('signal_body', net, component))
-                for number, (_, marker) in enumerate(scene.marker_rects):
-                    if segment_hits_rect(a, b, marker):
-                        hard.add(('signal_marker', net, number))
                 continue
             owners = {index[name] for name, pin in nets[net]
                       if tuple(pl.pin_world(index[name], pin)) in (a, b)}

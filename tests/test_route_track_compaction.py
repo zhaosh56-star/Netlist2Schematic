@@ -80,20 +80,21 @@ def track_case(*, turns=0, mirror=False, shift=(0, 0), rename=False,
         nets[name] = [('foreign_a', 'P'), ('foreign_b', 'P')]
         index.update(foreign_a=offset, foreign_b=offset+1)
         routes.append((name, [(positions[offset], positions[offset+1])]))
-    markers = [('guard_upper', rectangle((40, -10, 70, 10))),
-               ('guard_lower', rectangle((90, 20, 150, 60)))]
+    # Use real body guards: supply-marker bounds no longer block signal wires.
+    guards = [rectangle((40, -10, 70, 10)), rectangle((90, 20, 150, 60))]
     if locked:
         # These guards leave the original route on x=240/y=-80 legal, while
         # covering the corridor through which either track would move inward.
-        markers.extend([('top_required', rectangle((32, -78, 238, -12))),
-                        ('right_required', rectangle((152, -78, 238, 78)))])
+        # Partition the same union into non-overlapping component rectangles.
+        guards.extend([rectangle((32, -78, 238, -12)),
+                       rectangle((152, -12, 238, 78))])
     scene = Scene(options=RoutingOptions(), pins=pins,
                   all_pins={name: [pin.point for pin in members] for name, members in pins.items()},
                   fixed_segments={name: [pin.stub for pin in members if pin.point != pin.escape]
                                   for name, members in pins.items()},
                   body_rects=[(0, rectangle((8, 2, 32, 32))),
-                              (1, rectangle((88, 68, 118, 92)))],
-                  marker_rects=markers)
+                              (1, rectangle((88, 68, 118, 92))),
+                              *[(1000+i, rect) for i, rect in enumerate(guards)]])
     placement = SimpleNamespace(comps=[], pin_world=lambda i, pin: positions[i])
 
     def crossing(a, b, c, d):

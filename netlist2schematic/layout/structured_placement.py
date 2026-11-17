@@ -155,7 +155,7 @@ def _relations(devices, structs, index, row_of):
 class StructuredPlacement(legacy.LayeredPlacement):
     def allowed_orientations(self, i):
         if (i in getattr(self, 'terminal_orientation_ids', ())
-                and self.comps[i]['symbol'] in ('resistor', 'capacitor', 'inductor')):
+                and self.comps[i]['symbol'] in ('resistor', 'capacitor', 'inductor', 'diode')):
             return list(range(self.n_orients(i)))
         if (i in getattr(self, 'source_orientation_ids', ())
                 and self.comps[i]['symbol'] in ('voltage-source', 'current-source')):
@@ -872,8 +872,9 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                       passive_layout='flexible', include_legacy=False,
                       structure_layout='off', structure_phase=3, region_layout='off',
                       readability_layout='off', readability_phase=5, routing_options=None,
-                      attachment_layout='off'):
-    """Yield three structured seeds, optionally preceded by legacy candidate 0.
+                      attachment_layout='off', passive_skeleton='off', skeleton_columns=True,
+                      candidate_ids=None, candidate_deadlines=None):
+    """Yield requested structured seeds lazily, keeping their original IDs.
 
     Structured seeds retain IDs 1--3, independent random streams and their
     existing proposal budgets. Legacy parsing/SA runs only when explicitly
@@ -882,8 +883,15 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
     """
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
+    if candidate_ids is None:
+        candidate_ids = (1, 2, 3)
+    if (not candidate_ids or len(set(candidate_ids)) != len(candidate_ids)
+            or any(type(i) is not int or i not in (1, 2, 3) for i in candidate_ids)):
+        raise ValueError('candidate_ids must contain distinct structured IDs 1, 2, 3')
     if passive_layout not in ('flexible', 'fixed'):
         raise ValueError('passive_layout must be flexible or fixed')
+    if passive_skeleton not in ('off','auto'):
+        raise ValueError('passive_skeleton must be off or auto')
     if type(include_legacy) is not bool:
         raise ValueError('include_legacy must be boolean')
     if structure_layout not in ('off', 'auto'):
@@ -902,6 +910,9 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
     from netlist2schematic.flow.run_flow import _validate_attachment_policy
     _validate_attachment_policy(attachment_layout, passive_layout=passive_layout,
         readability=readability_layout, region=region_layout, structure=structure_layout)
+    from netlist2schematic.flow.run_flow import _validate_passive_skeleton
+    _validate_passive_skeleton(passive_skeleton,'layered','structured',passive_layout,
+        structure_layout,region_layout,readability_layout,attachment_layout)
     if type(structure_phase) is not int or structure_phase not in (1, 2, 3):
         raise ValueError('structure_phase must be 1, 2 or 3')
     if deadline is not None and time.perf_counter() >= deadline:
@@ -943,17 +954,57 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
     region_plan = region_evidence = region_relations = None
     readability_plan = None
     attachment_plan = None
+    skeleton_plan = None
     if structure_layout == 'auto':
         from netlist2schematic.plugins.layout_shared.layout_intent import build_intent
         evidence, evidence_relations = build_intent(
             path, cell, devices, structs, comps, nets, index, structure_phase)
-    for variant in range(3):
-        if deadline is not None and time.perf_counter() >= deadline:
+    overall_deadline = deadline
+    for identifier in candidate_ids:
+        variant = identifier - 1
+        if overall_deadline is not None and time.perf_counter() >= overall_deadline:
             return
+        deadline = ((candidate_deadlines or {}).get(str(identifier), overall_deadline))
+        if overall_deadline is not None and deadline is not None:
+            deadline = min(deadline, overall_deadline)
         candidate_seed = seed + (variant + 1) * 104729
         layout_relations = row_plan = None
         candidate_structs = structs
         attachment_initialization = attachment_budget = None
+        skeleton_attempt = None
+        if passive_skeleton == 'auto' and variant:
+            from netlist2schematic.plugins.passive_skeleton.plan import compile_plan
+            from netlist2schematic.plugins.passive_skeleton.candidates import create_candidate
+            from netlist2schematic.routing.routing_rules import RoutingOptions
+            if skeleton_plan is None:
+                skeleton_plan=compile_plan(par,devices,comps,nets,structs)
+            if skeleton_plan['applicable']:
+                from netlist2schematic.routing.orthogonal_router import RoutingFailure
+                try:
+                    result,skeleton_attempt=create_candidate(devices,comps,nets,index,levels,att,
+                        structs,candidate_seed,variant,skeleton_plan,routing_options or RoutingOptions(),
+                        iterations=iterations//3,deadline=deadline,columns=skeleton_columns)
+                except RoutingFailure as exc:
+                    if (candidate_deadlines is None
+                            or exc.diagnostics.get('reason') != 'quality_time_budget'):
+                        raise
+                    # A local generation timeout consumes its own slot only.
+                    # Keep this generator alive for the next preferred seed.
+                    result = None
+                    skeleton_attempt = dict(applied=False, plan=copy.deepcopy(skeleton_plan),
+                        stop_reason='candidate_time_budget', diagnostics=copy.deepcopy(exc.diagnostics))
+                if result is not None:
+                    yield result
+                    continue
+                # Never discard a completed active skeleton to run mixed SA
+                # again. A skipped proposal cannot reach routing or output.
+                yield (None,comps,nets,index,dict(candidate_id=variant+1,
+                    candidate_seed=candidate_seed,layout_style='structured',
+                    generation_skipped=True,passive_skeleton=copy.deepcopy(skeleton_attempt)))
+                continue
+            else:
+                skeleton_attempt=dict(applied=False,plan=copy.deepcopy(skeleton_plan),
+                    stop_reason='no_supported_active_attachment_plan')
         if attachment_layout != 'off' and variant:
             if attachment_plan is None:
                 from netlist2schematic.plugins.attachment.attachment_integration import build_attachment_plan
@@ -1219,4 +1270,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
             metadata['passive_layout'] = {'version': 'fixed-rows-v1', 'policy': 'fixed',
                                           'reason': 'requested_fixed' if passive_layout == 'fixed'
                                           else 'no_passive_devices'}
+        if skeleton_attempt is not None:
+            metadata['passive_skeleton']=copy.deepcopy(skeleton_attempt)
+            metadata['passive_skeleton']['fallback_to_original_candidate']=True
         yield placement, comps, nets, index, metadata

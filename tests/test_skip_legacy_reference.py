@@ -205,7 +205,8 @@ class StructuredOnlySelectionTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             # These scheduler-only candidates have no physical geometry; the
             # default-on preflight has its own real-symbol integration tests.
-            data = run_flow.run(source, iterations=0, out_dir=root / 'result', port_preflight='off')
+            data = run_flow.run(source, iterations=0, out_dir=root / 'result', port_preflight='off',
+                                passive_skeleton='off')
         rescued.assert_not_called()
         self.assertEqual('2', data['quality']['selected_candidate'])
         self.assertEqual('normal', data['routing_stage'])

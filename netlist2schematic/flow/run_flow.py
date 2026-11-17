@@ -35,7 +35,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
         candidate_budget='sequential', port_preflight=DEFAULT_PORT_PREFLIGHT, presentation='legacy', net_labels='off',
         region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5,
-        attachment_layout='off', column_layout=None):
+        attachment_layout='off', column_layout=None, passive_embedding='off', passive_skeleton=None):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -54,6 +54,12 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         structure=structure_layout, symmetry=symmetry_layout)
     column_layout = _resolve_column_policy(column_layout, mode, layout_style, structure_layout,
                             symmetry_layout, region_layout, readability_layout, attachment_layout)
+    _validate_passive_embedding(passive_embedding, mode, layout_style, passive_layout,
+        structure_layout, symmetry_layout, region_layout, readability_layout, attachment_layout)
+    passive_skeleton = _resolve_skeleton_policy(passive_skeleton, mode, layout_style, passive_layout,
+        structure_layout, symmetry_layout, region_layout, readability_layout, attachment_layout, passive_embedding)
+    _validate_passive_skeleton(passive_skeleton,mode,layout_style,passive_layout,
+        structure_layout,symmetry_layout,region_layout,readability_layout,attachment_layout,passive_embedding)
     if readability_layout == 'auto' and (mode != 'layered' or layout_style != 'structured'
                                          or passive_layout != 'flexible'):
         raise ValueError('readability layout requires structured layered layouts with flexible passives')
@@ -123,6 +129,9 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                                         region_layout=region_layout, readability_layout=readability_layout,
                                         readability_phase=readability_phase, route_tradeoff=route_tradeoff,
                                         attachment_layout=attachment_layout,
+                                        **({'passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
+                                        **({'simplify_policy':simplify_routes,'simplify_seconds':simplify_seconds}
+                                           if passive_skeleton=='auto' else {}),
                                         **({'column_layout': column_layout} if column_layout != 'off' else {}))
             except ROUTING_FAILURES as exc:
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
@@ -134,9 +143,14 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                 context = deepcopy(getattr(exc, 'retry_context', None))
                 checkpoint = deepcopy(getattr(exc, '_rescue_context', None))
                 retry_options = getattr(exc, 'retry_options', None) or options
-                result = _try_local_rescue(context, checkpoint, retry_options,
-                    rescue_policy, rescue_seconds, stages,
-                    **({'postroute_regions':True} if region_layout=='auto' else {}))
+                recovery_candidates = getattr(exc, '_recovery_candidates', None)
+                if recovery_candidates:
+                    result = _try_candidate_rescues(recovery_candidates, rescue_policy,
+                        rescue_seconds, stages, postroute_regions=region_layout=='auto')
+                else:
+                    result = _try_local_rescue(context, checkpoint, retry_options,
+                        rescue_policy, rescue_seconds, stages,
+                        **({'postroute_regions':True} if region_layout=='auto' else {}))
                 _check_source(source, source_hash)
                 if result is None and policy == 'off':
                     if stages[-1]['status'] == 'failed':
@@ -198,13 +212,16 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
             'requested_readability_phase': readability_phase} if readability_layout != 'off' else {}),
         **({'requested_attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
         **({'requested_column_layout': column_layout} if column_layout != 'off' else {}),
+        **({'requested_passive_embedding': passive_embedding} if passive_embedding != 'off' else {}),
+        **({'requested_passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
         **({'presentation':{'style':'clean'}} if presentation=='clean' else {}),
         'placement': _saved_positions(placement, comps),
     }
     return _finish(data, par, placement, comps, nets, comp_index, base, destination,
                    protected_paths={source}, options=options, routed_result=routed_result,
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
-                   net_labels=net_labels, route_tradeoff=route_tradeoff)
+                   net_labels=net_labels, route_tradeoff=route_tradeoff,
+                   **({'embed_passives':True} if passive_embedding=='auto' else {}))
 
 
 def _validate_region_policy(region_layout, structure_layout='off', symmetry_layout='off'):
@@ -241,6 +258,28 @@ def _validate_attachment_policy(policy, *, mode='layered', layout_style='structu
         raise ValueError('attachment layout requires structured layered layouts with flexible passives')
 
 
+def _validate_passive_embedding(policy, mode='layered', style='structured', mobility='flexible', *others):
+    if policy not in ('off', 'auto'):
+        raise ValueError('passive_embedding must be off or auto')
+    if policy == 'auto' and (mode != 'layered' or style != 'structured' or mobility != 'flexible' or any(p != 'off' for p in others)):
+        raise ValueError('passive embedding requires structured flexible layouts with other layout experiments off')
+
+
+def _resolve_skeleton_policy(policy, mode='layered', style='structured', mobility='flexible',
+                             *others, saved=False):
+    if policy is not None:
+        return policy
+    return ('auto' if not saved and mode == 'layered' and style == 'structured'
+            and mobility == 'flexible' and all(p == 'off' for p in others) else 'off')
+
+
+def _validate_passive_skeleton(policy,mode='layered',style='structured',mobility='flexible',*others):
+    if policy not in ('off','auto'):
+        raise ValueError('passive_skeleton must be off or auto')
+    if policy=='auto' and (mode!='layered' or style!='structured' or mobility!='flexible' or any(p!='off' for p in others)):
+        raise ValueError('passive skeleton requires structured flexible layouts with other layout experiments off')
+
+
 def _resolve_column_policy(policy, mode='layered', style='structured', *others, saved=False):
     """Default new structured layouts to columns; saved and other modes stay put."""
     if policy is None:
@@ -264,7 +303,8 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    symmetry_layout='off', structure_layout='off', structure_phase=3,
                    candidate_budget='sequential',port_preflight='off', region_layout='off',
                    readability_layout='off', readability_phase=5, route_tradeoff='strict',
-                   attachment_layout='off', column_layout='off'):
+                   attachment_layout='off', column_layout='off', passive_skeleton='off',
+                   simplify_policy='safe', simplify_seconds=5):
     if mode == 'layered' and layout_style == 'structured':
         from netlist2schematic.flow.aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
@@ -276,6 +316,9 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                              readability_layout=readability_layout, readability_phase=readability_phase,
                              route_tradeoff=route_tradeoff,
                              **({'attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
+                             **({'passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
+                             **({'simplify_policy':simplify_policy,'simplify_seconds':simplify_seconds}
+                                if passive_skeleton=='auto' else {}),
                              **({'column_layout': column_layout} if column_layout != 'off' else {}))
     elif mode == 'layered':
         layered = load_local('place_layered', 'place-layered.py')
@@ -371,8 +414,8 @@ def _simplification_context_sha256(data, par):
 
 def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_result,
                         options, policy, seconds, *, allow_verified_replay=False,
-                        route_tradeoff='strict'):
-    """Postprocess one selected route; candidate selection is already finished."""
+                        route_tradeoff='strict', candidate_limit=None):
+    """Safely finish one validated route for comparison or publication."""
     routed, metrics, validation = routed_result
     _validate_route_tradeoff(route_tradeoff)
     data = deepcopy(data)
@@ -414,6 +457,7 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
     if (allow_verified_replay and isinstance(previous, dict)
             and previous.get('version') == VERSION
             and previous.get('tradeoff', {}).get('policy', 'strict') == route_tradeoff
+            and previous.get('parameters',{}).get('max_candidates') == (512 if candidate_limit is None else candidate_limit)
             and selection_matches
             and previous.get('routing_parameters') == routing_parameters
             and previous.get('context_sha256') == context_sha
@@ -429,6 +473,7 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
     simplified, final_metrics, checked, report = simplify(
         par, nets, placement, comp_index, routed_result,
         options=effective_options, seconds=allocated_seconds,
+        **({'max_candidates':candidate_limit} if candidate_limit is not None else {}),
         **({'tradeoff': route_tradeoff} if route_tradeoff != 'strict' else {}))
     final_validation = deepcopy(validation)
     final_validation.update(checked)
@@ -455,7 +500,55 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
     return data, (simplified, final_metrics, final_validation)
 
 
-def _try_local_rescue(context, checkpoint, options, policy, seconds, stages,*,postroute_regions=False):
+def _try_candidate_rescues(candidates, policy, seconds, stages, *, postroute_regions=False):
+    """Try independent normal failures within one cumulative rescue budget."""
+    if policy == 'off' or seconds == 0:
+        return _try_local_rescue(None, None, None, policy, seconds, stages)
+    from netlist2schematic.recovery.candidate_rescue import VERSION, rank_candidates
+    started = perf_counter()
+    deadline = started + seconds
+    ranked = rank_candidates(candidates)
+    report = dict(version=VERSION, budget_seconds=seconds,
+                  policy='primary_then_completed_terminals_shared_budget',
+                  candidates=[summary for _, summary in ranked], attempts=[])
+    for position, (candidate, summary) in enumerate(ranked):
+        remaining = deadline - perf_counter()
+        if remaining <= 0:
+            break
+        # Reserve a fair opportunity for each remaining scene. Unused time
+        # carries forward; no attempt receives a fresh full-stage budget.
+        allowance = remaining / (len(ranked) - position)
+        attempt_deadline = min(deadline, perf_counter() + allowance)
+        attempt_stages = []
+        print(f"Local rescue candidate {summary['candidate_id']}: "
+              f"{summary['completed_nets']}/{summary['total_nets']} nets complete, "
+              f"budget={allowance:.2f}s", flush=True)
+        result = _try_local_rescue(candidate['context'], candidate['checkpoint'],
+            candidate['options'], policy, allowance, attempt_stages,
+            postroute_regions=postroute_regions, deadline=attempt_deadline)
+        attempt = attempt_stages[-1]
+        attempt.update(candidate_id=summary['candidate_id'], allocated_seconds=allowance,
+                       progress=deepcopy(summary))
+        report['attempts'].append(attempt)
+        if result is not None:
+            report.update(status='valid', selected_candidate=summary['candidate_id'],
+                          elapsed_seconds=round(perf_counter()-started, 6),
+                          stop_reason='first_verified_result')
+            stages.append({**_valid_stage('local_rescue', result, perf_counter()-started),
+                           'candidate_recovery': deepcopy(report)})
+            result[4]['local_rescue'].update(candidate_recovery=deepcopy(report),
+                                             prior_stages=deepcopy(stages[:-1]))
+            return result
+    report.update(status='failed', elapsed_seconds=round(perf_counter()-started, 6),
+                  stop_reason='time_budget' if perf_counter() >= deadline else 'scenes_exhausted')
+    failure = RoutingFailure('No saved candidate completed within the local rescue budget',
+        {'reason': 'candidate_rescue_exhausted', 'candidate_recovery': report})
+    stages.append(_failed_stage('local_rescue', failure, perf_counter()-started))
+    return None
+
+
+def _try_local_rescue(context, checkpoint, options, policy, seconds, stages,*,postroute_regions=False,
+                      deadline=None):
     """Only the top-level failed-normal path may invoke this recovery stage."""
     reason = ('disabled' if policy == 'off' or seconds == 0 else
               'no_attempted_layout' if context is None else
@@ -466,19 +559,25 @@ def _try_local_rescue(context, checkpoint, options, policy, seconds, stages,*,po
     from netlist2schematic.recovery.local_rescue import rescue_routing
     print(f'Normal routing failed; local rescue, budget={seconds:g}s', flush=True)
     started = perf_counter()
+    end = min(started + seconds, deadline) if deadline is not None else started + seconds
     try:
-        result = rescue_routing(deepcopy(context), deepcopy(checkpoint),
-                                routing_options=deepcopy(options), seconds=seconds)
+        frozen_context, frozen_checkpoint, frozen_options = deepcopy((context, checkpoint, options))
+        available = seconds if deadline is None else end - perf_counter()
+        if available <= 0:
+            raise RoutingFailure('Local rescue preparation exhausted its allocated time',
+                                 {'reason': 'quality_time_budget', 'stage': 'rescue_preparation'})
+        result = rescue_routing(frozen_context, frozen_checkpoint,
+                                routing_options=frozen_options, seconds=available)
         if not result[5][2].get('valid', False):
             raise RoutingFailure('Local rescue did not pass final validation',
                                  {'reason': 'local_rescue_validation'})
-        if postroute_regions and perf_counter()<started+seconds:
+        if postroute_regions and perf_counter()<end:
             from netlist2schematic.flow.aesthetic_flow import _postroute_regions
             placement,comps,nets,index,metadata,routed=result
             par=load_local('place_and_route','place-and-route.py')
             placement,metadata,routed=_postroute_regions(
                 par,placement,comps,nets,index,metadata,routed,options=options,
-                deadline=started+seconds,stage='local_rescue')
+                deadline=end,stage='local_rescue')
             # The source route/score remains history; exported quality describes
             # the current verified geometry before the existing simplifier.
             if metadata.get('layout_regions',{}).get('postroute_budget'):
@@ -575,7 +674,7 @@ def _record_failure(exc, diagnostic_path, source):
 def _finish(data, par, placement, comps, nets, comp_index, base, destination,
             *, protected_paths=(), options=None, routed_result=None,
             simplify_routes='safe', simplify_seconds=5, allow_verified_replay=False,
-            input_hashes=None, net_labels='off', route_tradeoff='strict'):
+            input_hashes=None, net_labels='off', route_tradeoff='strict',embed_passives=False):
     """Route and validate before staging any success artifacts."""
     destination = Path(destination).resolve()
     _validate_simplification(simplify_routes, simplify_seconds)
@@ -594,10 +693,46 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
     _check_source(source, expected_hash)
     data = deepcopy(data)
     data['source_sha256'] = expected_hash
+    candidate_cleanup = data.pop('_candidate_cleanup', None)
+    cleanup_seconds = simplify_seconds
+    cleanup_candidate_limit = None
+    if candidate_cleanup is not None:
+        # Selection already spent this run's shared cleanup budget. Revalidate
+        # its fingerprint through the ordinary replay guard instead of charging
+        # another full budget to the winner. The private marker is never saved.
+        if (candidate_cleanup['policy'] != simplify_routes
+                or candidate_cleanup['requested_seconds'] != simplify_seconds):
+            raise ValueError('Candidate cleanup policy changed before output')
+        cleanup_seconds = candidate_cleanup['allocated_seconds']
+        cleanup_candidate_limit = candidate_cleanup['allocated_candidates']
+        allow_verified_replay = True
     data, (routed, metrics, validation) = _postprocess_routes(
         data, par, placement, comps, nets, comp_index, (routed, metrics, validation), options,
-        simplify_routes, simplify_seconds, allow_verified_replay=allow_verified_replay,
+        simplify_routes, cleanup_seconds, allow_verified_replay=allow_verified_replay,
+        **({'candidate_limit':cleanup_candidate_limit} if cleanup_candidate_limit is not None else {}),
         route_tradeoff=route_tradeoff)
+    if embed_passives and not is_bus_layout(data):
+        from netlist2schematic.plugins.passive_embedding.safe_postroute import optimize
+        def clean_proposal(proposal, trial, candidate, remaining):
+            proposal=deepcopy(proposal)
+            proposal['route_simplification_before_passive_embedding']=proposal.pop('route_simplification',None)
+            proposal['placement']=_saved_positions(trial,comps)
+            return _postprocess_routes(proposal,par,trial,comps,nets,comp_index,candidate,options,
+                simplify_routes,min(2.,remaining) if simplify_seconds!=0 else 0.,route_tradeoff=route_tradeoff)
+        placement,data,(routed,metrics,validation)=optimize(par,placement,comps,nets,comp_index,data,
+            (routed,metrics,validation),options,seconds=5.,postprocess=clean_proposal)
+        data['placement']=_saved_positions(placement,comps)
+        if data.get('passive_embedding',{}).get('applied'):
+            # Recompute even with wire simplification disabled: these routes
+            # belong to new passive coordinates, not the original SA winner.
+            from netlist2schematic.layout.layout_quality import evaluate_quality
+            final_quality=evaluate_quality(par,placement,comps,nets,comp_index,
+                routed,metrics,data.get('structs',[]))
+            quality=deepcopy(data.get('quality',{}))
+            quality.update(score=final_quality['score'],details=final_quality,
+                candidate_metrics_stage='before_passive_embedding')
+            data['quality']=quality
+        _check_source(source,expected_hash)
     if isinstance(data.get('layout_hierarchy'), dict):
         from netlist2schematic.layout.structure_hierarchy import hierarchy_report
         data['layout_hierarchy'] = hierarchy_report(placement, data['layout_hierarchy'])
@@ -607,6 +742,14 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         data['layout_columns']['current'] = measure_columns(placement, comp_index, data['layout_columns']['plan'])
         data['layout_columns']['measurement_stage'] = 'final_output'
         data['layout_columns']['routing_stage'] = data.get('routing_stage', 'normal')
+    if isinstance(data.get('passive_embedding'), dict) and data['passive_embedding'].get('plan'):
+        from netlist2schematic.plugins.passive_embedding.passive_embedding import measure
+        data['passive_embedding']['current'] = measure(placement, comps, comp_index, data['passive_embedding']['plan'])
+        data['passive_embedding']['measurement_stage'] = 'final_output'
+    if isinstance(data.get('passive_skeleton'),dict) and data['passive_skeleton'].get('plan'):
+        from netlist2schematic.plugins.passive_skeleton.plan import measure
+        data['passive_skeleton']['current']=measure(placement,comps,comp_index,data['passive_skeleton']['plan'])
+        data['passive_skeleton']['measurement_stage']='final_output'
     if isinstance(data.get('series_alignment'), dict) and 'relations' in data['series_alignment']:
         from netlist2schematic.layout.series_alignment import measure_series
         data['series_alignment']['current'] = measure_series(
@@ -887,11 +1030,15 @@ def main(argv=None, default_mode='layered'):
                         help='Joint host/attachment placement in candidates 2/3; all also places source devices')
     parser.add_argument('--column-layout', choices=('off', 'auto'), default=None,
                         help='Conduction columns in candidates 2/3; default auto for new structured layouts, off for saved/legacy/other layout experiments')
+    parser.add_argument('--passive-embedding', choices=('off', 'auto'), default='off',
+                        help='Try one reversible passive-only layout/routing improvement after a legal result; default off')
+    parser.add_argument('--passive-skeleton',choices=('off','auto'),default=None,
+                        help='Active-first passive modules; default auto for new structured/flexible layouts, off for saved/legacy/other experiments. Try 2/3 first and seed 1 only if both fail')
     parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=3,
                         help='Replay a structure rollout phase; ignored when structure-layout is off')
     parser.add_argument('--quality-seconds', type=float, default=300)
     parser.add_argument('--candidate-budget',choices=('sequential','reserved'),default='sequential',
-                        help='Optional 70/85/100 percent deadlines; default preserves sequential routing')
+                        help='Old-path sequential or 70/85/100 cutoffs; the default preferred-candidate path reserves 40/80/100 for IDs 2/3/1')
     parser.add_argument('--port-preflight',choices=('off','repair'),default=None,
                         help='Repair fixed-port/marker conflicts before routing; default: repair for netlists, off for saved layouts')
     parser.add_argument('--presentation',choices=('legacy','clean'),
@@ -935,6 +1082,19 @@ def main(argv=None, default_mode='layered'):
         args.column_layout = _resolve_column_policy(args.column_layout, args.mode, args.layout_style, args.structure_layout,
             args.symmetry_layout, args.region_layout, args.readability_layout, args.attachment_layout,
             saved=bool(args.simplify_placement or args.reroute_placement))
+        _validate_passive_embedding(args.passive_embedding, args.mode, args.layout_style, args.passive_layout,
+            args.structure_layout, args.symmetry_layout, args.region_layout, args.readability_layout, args.attachment_layout)
+        args.passive_skeleton = _resolve_skeleton_policy(args.passive_skeleton,
+            args.mode, args.layout_style, args.passive_layout, args.structure_layout,
+            args.symmetry_layout, args.region_layout, args.readability_layout,
+            args.attachment_layout, args.passive_embedding,
+            saved=bool(args.simplify_placement or args.reroute_placement))
+        _validate_passive_skeleton(args.passive_skeleton,args.mode,args.layout_style,args.passive_layout,
+            args.structure_layout,args.symmetry_layout,args.region_layout,args.readability_layout,args.attachment_layout,args.passive_embedding)
+        if args.passive_skeleton!='off' and (args.simplify_placement or args.reroute_placement):
+            parser.error('saved-layout operations preserve coordinates; they cannot request passive skeleton layout')
+        if args.passive_embedding != 'off' and (args.simplify_placement or args.reroute_placement):
+            parser.error('saved-layout operations preserve coordinates; they cannot request passive embedding')
         if args.column_layout != 'off' and (args.simplify_placement or args.reroute_placement):
             parser.error('saved-layout operations preserve coordinates; they cannot request column layout')
         if sum(map(bool, (args.netlist, args.reroute_placement, args.simplify_placement))) != 1:
@@ -981,6 +1141,8 @@ def main(argv=None, default_mode='layered'):
                 readability_layout=args.readability_layout, readability_phase=args.readability_phase,
                 attachment_layout=args.attachment_layout,
                 column_layout=args.column_layout,
+                **({'passive_embedding':args.passive_embedding} if args.passive_embedding != 'off' else {}),
+                passive_skeleton=args.passive_skeleton,
                 structure_phase=args.structure_phase,
                 candidate_budget=args.candidate_budget,port_preflight=args.port_preflight,
                 presentation=args.presentation or 'legacy',

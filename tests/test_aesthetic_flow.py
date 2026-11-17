@@ -186,7 +186,7 @@ class CandidateSelectionTests(unittest.TestCase):
     def test_only_three_candidates_are_routed(self):
         chosen, routed = self.select([candidate(i) for i in range(1, 7)], [route_result()] * 3)
         self.assertEqual(3, routed.call_count)
-        self.assertEqual('candidate_limit', chosen[4]['quality']['stop_reason'])
+        self.assertEqual('candidates_exhausted', chosen[4]['quality']['stop_reason'])
         self.assertEqual(3, len(chosen[4]['quality']['candidates']))
 
     def test_no_successful_candidate_never_claims_a_valid_best(self):
