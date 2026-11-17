@@ -18,6 +18,8 @@ Set-Location D:\gongzuo
 
 信号线现已取消对供电标记矩形保护区的避让：A*、救援、缩线、预检和保存后复验统一允许经过该区域。真实电源引线、异网端子、器件本体，以及供电标记与器件重叠的检查继续执行。此规则默认生效，无需新增开关；旧输出文件不会自动更新。
 
+默认失败恢复已取消总线重排：当次局部救援、扩距仍失败后，保留当前器件行列、朝向及合法局部连接，用同名网标接通剩余局部组。允许多端网有超过四组，逐组验收原始端子；必要时只扩大物理间距。算法不读取历史布局或GT坐标。新结果记录 `routing_stage: labeled_recovery`、`route_representation: wires_and_labels`；独立重绘会重新验收。`--label-seconds 60` 控制此阶段；旧 `--fallback only` 不再生成新图。详见[恢复链说明](docs/flow-guide.md#失败后的局部救援与恢复链)。
+
 新网表的结构化主flow也默认开启长列／短旁支规整（`--column-layout auto`）：候选1保留参照，候选2/3在布线前尝试连续长列和相邻短支路，再执行原串接对齐；两步共用局部预算，不增加A*次数。可用 `--column-layout off` 做对照。已有JSON、baseline／legacy及其他显式布局实验不隐式重摆或叠加；依据、取舍和21图实测见[结构布局结果](docs/structure-layout-results.md)。
 
 安全缩线默认仍为固定5秒。需要按首次合法线路的复杂度自动分配5～30秒时，可加 `--simplify-seconds auto`；估计后只执行一次缩线，候选上限仍是512。使用方式和实测见[自动缩线预算说明](docs/auto-simplify-budget.md)。

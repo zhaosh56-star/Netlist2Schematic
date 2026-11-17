@@ -21,6 +21,7 @@ from netlist2schematic.routing.sa_routing import final_route, validate_final_rou
 from netlist2schematic.common.sa_geometry import validate_geometry
 from netlist2schematic.common.sa_saved import load_placement, saved_routing_options, is_bus_layout, BUS_ROUTER
 from netlist2schematic.routing.orthogonal_router import RoutingFailure
+from netlist2schematic.recovery.labeled_geometry import is_labeled_layout
 
 ROUTING_FAILURES = (RoutingFailure, RoutingValidationError)
 DEFAULT_PORT_PREFLIGHT = 'repair'
@@ -30,7 +31,7 @@ DEFAULT_COLUMN_LAYOUT = 'auto'
 def run(path, *, mode='layered', iterations=20000, seed=20261029,
         out_dir=None, cell=None, analog_canvas_root=None, routing_options=None,
         layout_style='structured', quality_seconds=300, candidate_id=None,
-        fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
+        fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60, label_seconds=None,
         local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
         candidate_budget='sequential', port_preflight=DEFAULT_PORT_PREFLIGHT, presentation='legacy', net_labels='off',
@@ -81,13 +82,16 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         raise ValueError('candidate_id is available only for structured layered layouts')
     if fallback not in (None, 'auto', 'off', 'only'):
         raise ValueError('fallback must be auto, off or only')
+    if fallback == 'only':
+        raise ValueError('Bus generation is disabled; use fallback auto for layout-preserving label recovery')
+    label_seconds = fallback_seconds if label_seconds is None else label_seconds
+    if type(label_seconds) not in (int,float) or not isfinite(label_seconds) or label_seconds <= 0:
+        raise ValueError('label_seconds must be finite and positive')
     policy = fallback if fallback is not None else ('off' if candidate_id is not None else 'auto')
     rescue_policy = _rescue_policy(local_rescue, policy == 'auto')
     _validate_rescue_seconds(rescue_seconds)
     _validate_simplification(simplify_routes, simplify_seconds)
     _validate_route_tradeoff(route_tradeoff)
-    if policy == 'only' and candidate_id is not None:
-        raise ValueError('fallback only cannot be combined with candidate_id')
     for name, value, minimum, inclusive in (
             ('quality_seconds', quality_seconds, 0, False),
             ('spacing_scale', spacing_scale, 1, False),
@@ -115,71 +119,61 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         options = options or RoutingOptions(crossing_cost=500.0, bend_cost=30.0)
     stages = []
     try:
-        if policy == 'only':
-            result = _bus_result(source, cell, seed, options, fallback_seconds, stages,
-                                 trigger='forced')
-        else:
-            started = perf_counter()
-            try:
-                result = _normal_result(source, par, mode, layout_style, cell, iterations,
-                                        seed, quality_seconds, candidate_id, options,
-                                        passive_layout=passive_layout, symmetry_layout=symmetry_layout,
-                                        structure_layout=structure_layout, structure_phase=structure_phase,
-                                        candidate_budget=candidate_budget,port_preflight=port_preflight,
-                                        region_layout=region_layout, readability_layout=readability_layout,
-                                        readability_phase=readability_phase, route_tradeoff=route_tradeoff,
-                                        attachment_layout=attachment_layout,
-                                        **({'passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
-                                        **({'simplify_policy':simplify_routes,'simplify_seconds':simplify_seconds}
-                                           if passive_skeleton=='auto' else {}),
-                                        **({'column_layout': column_layout} if column_layout != 'off' else {}))
-            except ROUTING_FAILURES as exc:
-                if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
-                    raise
-                _check_source(source, source_hash)
-                stages.append(_failed_stage('normal', exc, perf_counter() - started))
-                if policy == 'off' and rescue_policy == 'off':
-                    raise
-                context = deepcopy(getattr(exc, 'retry_context', None))
-                checkpoint = deepcopy(getattr(exc, '_rescue_context', None))
-                retry_options = getattr(exc, 'retry_options', None) or options
-                recovery_candidates = getattr(exc, '_recovery_candidates', None)
-                if recovery_candidates:
-                    result = _try_candidate_rescues(recovery_candidates, rescue_policy,
-                        rescue_seconds, stages, postroute_regions=region_layout=='auto')
-                else:
-                    result = _try_local_rescue(context, checkpoint, retry_options,
-                        rescue_policy, rescue_seconds, stages,
-                        **({'postroute_regions':True} if region_layout=='auto' else {}))
-                _check_source(source, source_hash)
-                if result is None and policy == 'off':
-                    if stages[-1]['status'] == 'failed':
-                        raise RoutingFailure('No verified route completed in the recovery stages',
-                            {'reason': 'recovery_failed', 'stages': deepcopy(stages)}) from exc
-                    raise
-                if result is None and context is not None and spacing_seconds > 0:
-                    from netlist2schematic.recovery.spacing_retry import retry_spacing
-                    print(f'Normal routing failed; spacing retry x{spacing_scale:g}, '
-                          f'budget={spacing_seconds:g}s', flush=True)
-                    started = perf_counter()
-                    try:
-                        result = retry_spacing(deepcopy(context), routing_options=retry_options,
-                                               scale=spacing_scale, seconds=spacing_seconds)
-                    except ROUTING_FAILURES as retry_exc:
-                        stages.append(_failed_stage('spacing_retry', retry_exc,
-                                                    perf_counter() - started))
-                    else:
-                        stages.append(_valid_stage('spacing_retry', result,
-                                                   perf_counter() - started))
-                elif result is None:
-                    stages.append({'stage': 'spacing_retry', 'status': 'skipped',
-                                   'reason': 'disabled' if spacing_seconds == 0 else 'no_attempted_layout'})
-                _check_source(source, source_hash)
-                if result is None:
-                    result = _bus_result(source, cell, seed, options, fallback_seconds, stages,
-                                         trigger='normal_routing_failed')
+        started = perf_counter()
+        try:
+            result = _normal_result(source, par, mode, layout_style, cell, iterations,
+                                    seed, quality_seconds, candidate_id, options,
+                                    passive_layout=passive_layout, symmetry_layout=symmetry_layout,
+                                    structure_layout=structure_layout, structure_phase=structure_phase,
+                                    candidate_budget=candidate_budget,port_preflight=port_preflight,
+                                    region_layout=region_layout, readability_layout=readability_layout,
+                                    readability_phase=readability_phase, route_tradeoff=route_tradeoff,
+                                    attachment_layout=attachment_layout,
+                                    **({'passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
+                                    **({'simplify_policy':simplify_routes,'simplify_seconds':simplify_seconds}
+                                       if passive_skeleton=='auto' else {}),
+                                    **({'column_layout': column_layout} if column_layout != 'off' else {}))
+        except ROUTING_FAILURES as exc:
+            if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
+                raise
+            _check_source(source, source_hash)
+            stages.append(_failed_stage('normal', exc, perf_counter() - started))
+            if policy == 'off' and rescue_policy == 'off':
+                raise
+            context = deepcopy(getattr(exc, 'retry_context', None))
+            checkpoint = deepcopy(getattr(exc, '_rescue_context', None))
+            retry_options = getattr(exc, 'retry_options', None) or options
+            recovery_candidates = getattr(exc, '_recovery_candidates', None)
+            if recovery_candidates:
+                result = _try_candidate_rescues(recovery_candidates, rescue_policy,
+                    rescue_seconds, stages, postroute_regions=region_layout=='auto')
             else:
-                stages.append(_valid_stage('normal', result, perf_counter() - started))
+                result = _try_local_rescue(context, checkpoint, retry_options,
+                    rescue_policy, rescue_seconds, stages,
+                    **({'postroute_regions':True} if region_layout=='auto' else {}))
+            label_candidates = list(recovery_candidates or ()) + list(getattr(exc, '_layout_candidates', ()))
+            _check_source(source, source_hash)
+            if result is None and policy == 'off':
+                if stages[-1]['status'] == 'failed':
+                    raise RoutingFailure('No verified route completed in the recovery stages',
+                        {'reason': 'recovery_failed', 'stages': deepcopy(stages)}) from exc
+                raise
+            if result is None and context is not None and spacing_seconds > 0:
+                result, expanded_candidates = _try_spacing_chain(context, retry_options,
+                    spacing_scale, spacing_seconds, stages)
+                label_candidates.extend(expanded_candidates)
+            elif result is None:
+                stages.append({'stage': 'spacing_retry', 'status': 'skipped',
+                               'reason': 'disabled' if spacing_seconds == 0 else 'no_attempted_layout'})
+            _check_source(source, source_hash)
+            if result is None:
+                result = _try_label_recovery(context, label_candidates, retry_options,
+                                             label_seconds, source, stages, cell=cell)
+                if result is None:
+                    raise RoutingFailure('No geometry-safe layout-preserving result completed',
+                        {'reason':'recovery_failed','bus_disabled':True,'stages':deepcopy(stages)}) from exc
+        else:
+            stages.append(_valid_stage('normal', result, perf_counter() - started))
         _check_source(source, source_hash)
     except ROUTING_FAILURES as exc:
         _record_failure(exc, diagnostic_path, source)
@@ -193,7 +187,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         'reason': 'deterministic_bus' if metadata['routing_stage'] == 'bus_fallback'
                   else 'saved_candidate'})
     metadata['recovery'] = {'policy': policy, 'local_rescue': rescue_policy,
-                            'rescue_seconds': rescue_seconds, 'stages': stages}
+                            'rescue_seconds': rescue_seconds, 'label_seconds': label_seconds,
+                            'bus_disabled': True, 'stages': stages}
     if len(set(placement.cell_of)) != len(comps) or any(p is None for p in placement.cell_of):
         raise ValueError('Placement contains unassigned or duplicate cells')
     data = {
@@ -500,6 +495,52 @@ def _postprocess_routes(data, par, placement, comps, nets, comp_index, routed_re
     return data, (simplified, final_metrics, final_validation)
 
 
+def _try_spacing_chain(context, options, scale, seconds, stages):
+    """Two axis-only retries share the original spacing stage's one budget."""
+    from netlist2schematic.recovery.spacing_retry import retry_spacing
+    started=perf_counter();deadline=started+seconds
+    scales=(scale,max(4.,scale)) if scale<4 else (scale,)
+    attempts=[];contexts=[]
+    for number, factor in enumerate(scales):
+        remaining=deadline-perf_counter()
+        if remaining<=0:break
+        allowance=remaining/(len(scales)-number)
+        print(f'Spacing retry x{factor:g}, shared budget remaining={remaining:.2f}s',flush=True)
+        at=perf_counter()
+        try:
+            result=retry_spacing(deepcopy(context),routing_options=options,scale=factor,
+                                 seconds=allowance,deadline=min(deadline,at+allowance))
+        except ROUTING_FAILURES as exc:
+            if getattr(exc,'diagnostics',{}).get('reason')=='power_connections':raise
+            attempts.append(dict(scale=factor,**_failed_stage('spacing_retry',exc,perf_counter()-at)))
+            expanded=getattr(exc,'retry_context',None)
+            if expanded is not None:
+                contexts.append(dict(context=deepcopy(expanded),
+                    checkpoint=deepcopy(getattr(exc,'_rescue_context',None)),options=deepcopy(options),
+                    candidate_id=str(expanded[4].get('candidate_id','unknown')),attempt_index=-1))
+        else:
+            stages.append(dict(**_valid_stage('spacing_retry',result,perf_counter()-started),
+                               attempts=attempts+[dict(scale=factor,status='valid')]))
+            return result,contexts
+    stages.append(dict(stage='spacing_retry',status='failed',elapsed_seconds=perf_counter()-started,
+        diagnostics=dict(reason='spacing_retries_exhausted',attempts=attempts)))
+    return None,contexts
+
+
+def _try_label_recovery(context, candidates, options, seconds, source, stages, *, cell=None):
+    from netlist2schematic.recovery.labeled_recovery import recover
+    started=perf_counter()
+    try:
+        result=recover(deepcopy(context),candidates=deepcopy(candidates),
+                       routing_options=options,seconds=seconds,source=source,cell=cell)
+    except ROUTING_FAILURES as exc:
+        if getattr(exc,'diagnostics',{}).get('reason')=='power_connections':raise
+        stages.append(_failed_stage('labeled_recovery',exc,perf_counter()-started))
+        return None
+    stages.append(_valid_stage('labeled_recovery',result,perf_counter()-started))
+    return result
+
+
 def _try_candidate_rescues(candidates, policy, seconds, stages, *, postroute_regions=False):
     """Try independent normal failures within one cumulative rescue budget."""
     if policy == 'off' or seconds == 0:
@@ -622,24 +663,6 @@ def _valid_stage(stage, result, seconds):
             'metrics': deepcopy(result[5][1])}
 
 
-def _bus_result(source, cell, seed, options, seconds, stages, *, trigger):
-    from netlist2schematic.recovery.fallback_bus import create_fallback
-    print(f'Constructive bus fallback: budget={seconds:g}s; no SA or A*', flush=True)
-    started = perf_counter()
-    try:
-        result = create_fallback(source, cell=cell, seed=seed, routing_options=options,
-                                 deadline=started + seconds)
-    except ROUTING_FAILURES as exc:
-        stages.append(_failed_stage('bus_fallback', exc, perf_counter() - started))
-        raise RoutingFailure('No verified route completed in the recovery stages',
-                             {'reason': 'recovery_failed', 'stages': deepcopy(stages)}) from exc
-    stages.append(_valid_stage('bus_fallback', result, perf_counter() - started))
-    result[4].setdefault('fallback', {}).update(trigger=trigger, budget_seconds=seconds,
-        elapsed_seconds=round(perf_counter() - started, 6),
-        prior_stages=deepcopy(stages[:-1]))
-    return result
-
-
 def _output_targets(base, mode, destination, protected_paths=()):
     """Check every artifact path before routing or recording a failure."""
     destination = Path(destination).resolve()
@@ -693,6 +716,7 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
     _check_source(source, expected_hash)
     data = deepcopy(data)
     data['source_sha256'] = expected_hash
+    labeled = is_labeled_layout(data)
     candidate_cleanup = data.pop('_candidate_cleanup', None)
     cleanup_seconds = simplify_seconds
     cleanup_candidate_limit = None
@@ -706,12 +730,18 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         cleanup_seconds = candidate_cleanup['allocated_seconds']
         cleanup_candidate_limit = candidate_cleanup['allocated_candidates']
         allow_verified_replay = True
-    data, (routed, metrics, validation) = _postprocess_routes(
-        data, par, placement, comps, nets, comp_index, (routed, metrics, validation), options,
-        simplify_routes, cleanup_seconds, allow_verified_replay=allow_verified_replay,
-        **({'candidate_limit':cleanup_candidate_limit} if cleanup_candidate_limit is not None else {}),
-        route_tradeoff=route_tradeoff)
-    if embed_passives and not is_bus_layout(data):
+    if labeled:
+        from netlist2schematic.recovery.labeled_geometry import verify_saved
+        routed, metrics, validation = verify_saved(par,nets,placement,comp_index,data,options=options)
+        data['route_simplification'] = dict(mode=simplify_routes,skipped=True,
+            reason='labeled_recovery_preserves_physical_groups')
+    else:
+        data, (routed, metrics, validation) = _postprocess_routes(
+            data, par, placement, comps, nets, comp_index, (routed, metrics, validation), options,
+            simplify_routes, cleanup_seconds, allow_verified_replay=allow_verified_replay,
+            **({'candidate_limit':cleanup_candidate_limit} if cleanup_candidate_limit is not None else {}),
+            route_tradeoff=route_tradeoff)
+    if embed_passives and not is_bus_layout(data) and not labeled:
         from netlist2schematic.plugins.passive_embedding.safe_postroute import optimize
         def clean_proposal(proposal, trial, candidate, remaining):
             proposal=deepcopy(proposal)
@@ -853,7 +883,8 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
                        staging / name, clean=clean,
                        structs=(data.get('layout_evidence', {}).get('structures', [])
                                 if data.get('structure_display') == 'validated' else data.get('structs', [])),
-                       validation=validation)
+                       validation=validation,
+                       **({'net_label_view':data['labeled_recovery']['view']} if labeled else {}))
         write_json(staging / names[2], data)
         _check_source(source, expected_hash)
         for path, expected in (input_hashes or {}).items():
@@ -869,7 +900,7 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
           f"seconds={validation.get('routing_seconds', 0):.3f}", flush=True)
     for name in names:
         print(f'Wrote {destination / name}', flush=True)
-    if net_labels == 'auto':
+    if net_labels == 'auto' and not labeled:
         # This optional view runs only after the original successful artifacts
         # are saved.  Display failures cannot replace their validation/Q.
         try:
@@ -912,7 +943,10 @@ def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opti
     options = routing_options or saved_routing_options(data)
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     routed_result = None
-    if is_bus_layout(data):
+    if is_labeled_layout(data):
+        from netlist2schematic.recovery.labeled_geometry import verify_saved
+        routed_result = verify_saved(par,nets,placement,comp_index,data,options=options)
+    elif is_bus_layout(data):
         from netlist2schematic.recovery.fallback_bus import reroute_fallback
         routed_result = reroute_fallback(par, placement, comps, nets, comp_index, metadata,
                                           routing_options=options, deadline=perf_counter() + 60)
@@ -979,8 +1013,12 @@ def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opt
         for net, segments in data['routes'].items():
             if not isinstance(segments, list):
                 raise ValueError(f'Saved routes for {net} must be a list of segments')
-        routed_result = validate_final_routes(par, nets, placement, comp_index,
-            list(sorted(data['routes'].items())), options=options)
+        if is_labeled_layout(data):
+            from netlist2schematic.recovery.labeled_geometry import verify_saved
+            routed_result=verify_saved(par,nets,placement,comp_index,data,options=options)
+        else:
+            routed_result = validate_final_routes(par, nets, placement, comp_index,
+                list(sorted(data['routes'].items())), options=options)
     except (TypeError, IndexError) as exc:
         raise ValueError('Malformed saved routes') from exc
     except ValueError as exc:
@@ -1047,8 +1085,8 @@ def main(argv=None, default_mode='layered'):
                         help='Optional extra net-label view after verified full routes (default: off)')
     parser.add_argument('--candidate-id',
                         help='Replay candidate 1, 2 or 3; 0 explicitly runs the legacy reference')
-    parser.add_argument('--fallback', choices=('auto', 'off', 'only'),
-                        help='Default: auto for netlists, off for candidate replay')
+    parser.add_argument('--fallback', choices=('auto', 'off'),
+                        help='Layout-preserving recovery with labels; no bus generation. Default auto for netlists')
     parser.add_argument('--local-rescue', choices=('auto', 'off'),
                         help='Failure-only local routing; defaults to fallback policy, off for saved rerouting')
     parser.add_argument('--rescue-seconds', type=float, default=60)
@@ -1061,6 +1099,8 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--spacing-scale', type=float, default=1.5)
     parser.add_argument('--spacing-seconds', type=float, default=60)
     parser.add_argument('--fallback-seconds', type=float, default=60)
+    parser.add_argument('--label-seconds',type=float,
+                        help='Failure-only net-label recovery budget; defaults to fallback-seconds (60)')
     parser.add_argument('--iterations', type=int, default=20000)
     parser.add_argument('--seed', type=int, default=20261029)
     parser.add_argument('--out-dir', help='Output directory (default: project/output/<netlist label>)')
@@ -1148,6 +1188,7 @@ def main(argv=None, default_mode='layered'):
                 presentation=args.presentation or 'legacy',
                 fallback=args.fallback, spacing_scale=args.spacing_scale,
                 spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
+                label_seconds=args.label_seconds,
                 local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
                 simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                 net_labels=args.net_labels, route_tradeoff=args.route_tradeoff)

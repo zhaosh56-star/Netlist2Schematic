@@ -17,7 +17,11 @@ def render(jpath, out=None, *, analog_canvas_root=None, presentation=None):
     data, source_netlist, par, pl, comps, nets, comp_index = load_placement(
         source_json, analog_canvas_root=analog_canvas_root)
     options = saved_routing_options(data)
-    if 'routes' in data:
+    from netlist2schematic.recovery.labeled_geometry import is_labeled_layout,verify_saved
+    labeled=is_labeled_layout(data)
+    if labeled:
+        routed,metrics,validation=verify_saved(par,nets,pl,comp_index,data,options=options)
+    elif 'routes' in data:
         routed, metrics, validation = validate_final_routes(
             par, nets, pl, comp_index, list(data['routes'].items()), options=options)
     else:
@@ -45,7 +49,8 @@ def render(jpath, out=None, *, analog_canvas_root=None, presentation=None):
                clean=True,
                structs=(data.get('layout_evidence', {}).get('structures', [])
                         if data.get('structure_display') == 'validated' else data.get('structs', [])),
-               validation=validation)
+               validation=validation,
+               **({'net_label_view':data['labeled_recovery']['view']} if labeled else {}))
     print(f'Wrote {destination.resolve()}  {metrics}', flush=True)
     return metrics
 

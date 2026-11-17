@@ -56,7 +56,7 @@ def _expanded_axis(values, scale, grid_step):
     return result
 
 
-def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60):
+def expanded_context(context, *, routing_options=None, scale=1.5, seconds=60):
     """Expand a copied five-tuple and return it with one verified routing result.
 
     Logical cells, orientations and symbol-local pin geometry remain unchanged.
@@ -127,8 +127,18 @@ def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60):
     for key in ('routes', 'metrics', 'validation'):
         metadata.pop(key, None)
     metadata['spacing_retry'] = report
+    return placement, comps, nets, index, metadata
+
+
+def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60, deadline=None):
+    """One fresh route, after expanding only the current layout's axes."""
+    started = perf_counter()
+    options = deepcopy(routing_options if routing_options is not None else RoutingOptions())
+    placement, comps, nets, index, metadata = expanded_context(
+        context, routing_options=options, scale=scale, seconds=seconds)
+    report = metadata['spacing_retry']
     par = load_local('place_and_route', 'place-and-route.py')
-    deadline = perf_counter() + seconds
+    deadline = min(started + seconds, deadline) if deadline is not None else started + seconds
     try:
         routed, metrics, validation = final_route(par, nets, placement, index,
                                                   options=options, deadline=deadline)
@@ -140,7 +150,11 @@ def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60):
         diagnostics = deepcopy(getattr(exc, 'diagnostics', {}))
         diagnostics.update(routing_stage='spacing_retry', spacing_retry=deepcopy(report),
                            parameters=asdict(options))
-        raise RoutingFailure('Spacing retry failed: ' + str(exc), diagnostics) from exc
+        failure = RoutingFailure('Spacing retry failed: ' + str(exc), diagnostics)
+        failure.retry_context = deepcopy((placement, comps, nets, index, metadata))
+        failure.retry_options = deepcopy(options)
+        failure._rescue_context = deepcopy(getattr(exc, '_rescue_context', None))
+        raise failure from exc
     quality = evaluate_quality(par, placement, comps, nets, index,
                                routed, metrics, metadata.get('structs', []))
     report['elapsed_seconds'] = round(perf_counter() - started, 6)

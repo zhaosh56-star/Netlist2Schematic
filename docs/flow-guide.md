@@ -42,7 +42,7 @@
 | 可选器件对称规整 | `symmetry_layout.py` | 仅显式 `--symmetry-layout auto` 时，候选2/3在A*前规整器件位置与朝向；局部轴、组合核心及独立对称指标 |
 | 布局与基础布线 | `place-layered.py`、`place-and-route.py` | 旧布局参考、分层挂位、符号坐标及快速布线估价 |
 | 最终布线 | `sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 统一几何规则、正交图 A*、拆网重布、原引脚连接检查及最终统计 |
-| 失败恢复 | `local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 保持布局局部救援；扩大物理间距重试一次；必要时构造大画布总线图 |
+| 失败恢复 | `local_rescue.py`、`spacing_retry.py`、`labeled_recovery.py`、`labeled_geometry.py` | 保持当次布局局部救援、有限扩距，最后保留局部线路并用同名网标连接远端；不生成总线 |
 | 最终安全简化 | `simplify_routes.py`、`route_reattachment.py`、`route_patterns.py`、`route_tracks.py` | 分阶段调度局部捷径、叶支路重接、三段式候选及原轨道收紧；各项均不增加 |
 | 可选成品无源整理 | `plugins/passive_embedding/passive_embedding.py`、`safe_postroute.py` | 由真实端口编译串并联组，局部坐标试摆；一次重布后仍不劣才采用，失败保留原成品，默认关闭 |
 | 可选自动缩线预算 | `simplify_budget.py` | 按已合法线路的复杂度选5～30秒，一次执行；默认仍固定5秒 |
@@ -70,9 +70,9 @@ Set-Location D:\gongzuo
 默认使用结构化分层布局，`--iterations 20000`、种子 `20261029`，每张图的
 正常优化预算为 `--quality-seconds 300`。预算包括候选生成和最终布线；默认先比较编号2、3，
 只有两份都失败才运行候选1。累计截止点分别为40%、80%、100%。有合格结果就退出恢复链；
-完全失败时默认再尝试60秒局部救援、60秒扩距布线、60秒总线后备，优化预算合计约480秒。
+完全失败时默认再尝试60秒局部救援、60秒有限扩距、60秒保留布局的网标恢复，优化预算合计约480秒。
 合法候选在选图前共用独立的最多5秒、512案安全简化；输出不重复执行。它不占用原SA、A*或恢复链预算。
-按各项预算上限合计约485秒；总线后备不执行安全简化。
+按各项预算上限合计约485秒；网标恢复使用独立验收，不执行要求全网物理连通的原全局简化。
 资源检查、文件输出及系统调度可能另有少量耗时。结果位于：
 
 - `output/3/3-placement.json`：位置、朝向、层级、结构、布线和指标。
@@ -164,7 +164,7 @@ foreach ($caseId in 1..4) {
 需要先评估候选1、2来恢复反馈依据；其他编号仅对指定候选执行最终布线。
 指定编号重放时默认 `--fallback off`；该候选没能完成验收就报告失败，不以其他编号替代。
 显式添加 `--local-rescue auto` 可允许候选失败后在原坐标下局部救援；
-显式添加 `--fallback auto` 则允许完整恢复链，后续可能扩距或重新排布。
+显式添加 `--fallback auto` 则允许完整恢复链，后续可能扩大物理间距或采用局部连线加网标，器件行列和朝向保持。
 恢复结果会明确记录其执行阶段。
 
 本轮默认跳过0的回归共362项全部通过。另对8种电路、fixed/flexible两种策略、3种结构种子共48套布局逐项比较，跳过0前后的位置、朝向、物理轴、随机状态、能量和元数据一致。编号3的反馈判断使用实际ID，不再依赖生成序列中的下标；全部失败时仍保存最后实际进入布线的候选现场，不要求存在0。正常选优的 `quality` 及正常失败诊断记录 `candidate_policy`、`candidate_limit`、`legacy_reference_enabled`，恢复结果可从前序正常阶段诊断追溯该策略。
@@ -183,42 +183,47 @@ foreach ($caseId in 1..4) {
 默认 `--fallback auto` 按顺序执行，前一阶段已获得合格结果就不会进入下一阶段：
 
 1. **正常优化，默认 300 秒。** 保留已通过验收的最佳候选；不因后续候选失败而丢弃成功结果。
-2. **局部救援，额外默认60秒。** 使用最后实际失败候选的安全检查点，保持逻辑行列、朝向和物理坐标，
+2. **局部救援，额外默认60秒。** 各候选分别保存当次安全检查点，共享预算；保持逻辑行列、朝向和物理坐标，
    冻结已完成网络，先尝试接通失败网和待布网络。对临时出线接口沿原方向添加普通导线，
    同时检查源端和目标端；不能接入的目标会在搜索前返回 `no_safe_goal`。
    必要时只对失败网及最多两个已完成的阻挡网作事务重布；其余网络不动，失败事务全部撤销。
    真实引脚、固定出线段、分支、器件和实际电源引线继续使用几何保护，延长部分不享受额外豁免。供电标记的矩形范围不再作为信号线障碍。
    正常候选只要已有合格结果，就不会执行这一阶段。无布局、无检查点、显式关闭或预算为0时跳过。
-3. **扩距重试一次，额外默认60秒。** 复制原正常阶段最后实际进入最终布线的失败候选，保留 row、col、orient，
-   将 `column_x/row_y` 的相邻间距乘以 `--spacing-scale 1.5`，按路由网格（默认 2 px）向上取整，首坐标不变。
+3. **有限扩距，共用默认60秒。** 复制原正常阶段最后实际进入最终布线的失败候选，保留 row、col、orient，
+   分别尝试默认1.5倍、4倍物理间距；两次共用预算，未用时间顺延，均从原坐标开始，网格向上取整、首坐标不变。
    符号大小、halo 和引脚局部坐标不缩放。从空路线和空搜索历史开始重新 A*，不运行 SA。
    若没有可复用的失败布局，或设置 `--spacing-seconds 0`，跳过此阶段。
-4. **确定性总线后备，额外默认60秒。** 保留有源器件上下导通层级，重新安排横坐标；
-   每器件独占竖向区域，每引脚独占通道，多端信号网通过上方水平 bus 完整连接。
-   MOS/BJT 保持正常或左右镜像；电源/地标记可以移动并使用折线连接，但符号和所属网络保持。
-   此阶段不运行 SA 或全局 A*，版本为 `constructive-bus-v1`。
+4. **保持布局的网标恢复，额外默认60秒。** 只使用当次生成的布局和现场，不读取历史成品或GT坐标。
+   保留器件行列、朝向、有源骨架以及合法局部连接；困难网暂挂，继续尝试其余网，附近局部组尝试直线／L形互连。
+   未接通的各局部组接同名网标，逐组覆盖多端网，不采用展示插件的四组上限。
+   无安全标签位置时，先撤回相关网的自由线路，再尝试局部短连接，必要时退到合法短出线。
+   可在同一预算内进一步扩大公共间距，但不重排为总线。算法版本为 `labeled-recovery-v1`。
 
-扩距可能打开拥挤通道，也可能增加线长或搜索耗时，不能保证这一阶段成功。总线后备以正确连接为目标，
-会产生大画布、长线和较多合法交叉，不适用正常布局的美观验收目标。每个成功阶段仍必须通过完整几何验收。
+扩距只放大物理轴，不缩放符号、真实引脚和安全间距。网标恢复记录 `route_representation: wires_and_labels`、
+`routing_stage: labeled_recovery`；它通过独立的导线＋同名网标验收，不将断开的物理线冒充完整导线。
+`recovery/labeled_geometry.py` 按实际引脚重建连接组，拒绝错标、漏标、悬空标记、端子遗漏、异网误接及供电错误。
+两种SVG共用相同线路和标签；保存后重绘、重布和单独简化均复验并重现保存方案，不重新摆件或重选标签。
+`source_placement`、`final_placement` 可核对行列、朝向与实际坐标。`scale` 是网标阶段相对输入现场的倍率；
+若前面已经扩距，还需同时查看 `spacing_retry`。新网表路径完全取消总线生成，旧总线JSON仅保留读取兼容。
 
 ```powershell
 # 自动执行必要的恢复阶段；四个阶段使用独立预算。
-.\.venv\Scripts\python.exe .\run_flow.py .\examples\5.cir --cell dut --fallback auto --quality-seconds 300 --rescue-seconds 60 --spacing-scale 1.5 --spacing-seconds 60 --fallback-seconds 60
+.\.venv\Scripts\python.exe .\run_flow.py .\examples\5.cir --cell dut --fallback auto --quality-seconds 300 --rescue-seconds 60 --spacing-scale 1.5 --spacing-seconds 60 --label-seconds 60
 
-# 严格观察正常算法的失败，默认同时关闭局部救援、扩距和总线后备。
+# 严格观察正常算法的失败，默认同时关闭局部救援、扩距和网标恢复。
 .\.venv\Scripts\python.exe .\run_flow.py .\examples\5.cir --cell dut --fallback off --out-dir .\output\5-dut-normal-only
 
 # 只增加局部救援，保留原布局；失败后不会扩大间距或重新排布。
 .\.venv\Scripts\python.exe .\run_flow.py .\examples\5.cir --cell dut --fallback off --local-rescue auto --rescue-seconds 60 --out-dir .\output\5-dut-local-only
 
-# 直接生成大画布后备图；跳过正常优化、局部救援和扩距，也不执行 SA/A*。
-.\.venv\Scripts\python.exe .\run_flow.py .\examples\5.cir --cell dut --fallback only --iterations 0 --fallback-seconds 60 --out-dir .\output\5-dut-bus
+# 限制最后的网标恢复预算；不改变器件逻辑行列和朝向。
+.\.venv\Scripts\python.exe .\run_flow.py .\examples\5.cir --cell dut --label-seconds 30 --out-dir .\output\5-dut-recovery
 
 # 显式允许指定候选失败后恢复；结果可能改变其物理间距或横向排布。
 .\.venv\Scripts\python.exe .\run_flow.py .\examples\5.cir --cell dut --candidate-id 2 --fallback auto --out-dir .\output\5-dut-replay
 ```
 
-`--fallback only` 不能与 `--candidate-id` 同时使用。上述 300 秒正常阶段预算针对默认结构化流程；
+`--fallback` 只提供 `auto|off`，旧 `only` 已拒绝。`--fallback-seconds` 仍作为网标预算兼容别名；新命令建议使用 `--label-seconds`。上述300秒预算针对默认结构化流程；
 `legacy/baseline` 保留原迭代行为，严格复现时建议使用 `--fallback off`。
 
 局部救援只在正常阶段全部失败后执行，因而不会让失败候选取代正常阶段已有的成功候选。
@@ -267,11 +272,11 @@ v7的轨道候选按链轮转：每轮每条自由链最多取一个有界候选
 
 v8在四类候选共用的提交路径补充交叉净区预筛。先合并同网走线、裁剪无锚悬尾，检查固定段、环路与形状改进；再用完整候选和真实引脚提取规范拓扑，与最后已接受整图的异网拓扑检查真实十字交点。交点距双方真实折角、分支或引脚小于原净区时提前拒绝，公式与独立最终验收一致。没有交点的普通10单位平行拐角仍可行，临时出口和人工切点不额外变成保护点。预筛通过仍需原完整验收及整图指标比较，只有真正提交后才更新占用缓存。`candidate_precheck`记录检查次数及部分冲突位置，`crossing_rejected`单独统计早期拒绝，不冒充完成了整图验收。详见[v8说明及顶部绕线实测](candidate-clearance-v8.md)。
 
-完整执行顺序为：正常候选选择 → 若正常阶段全失败则按原顺序局部救援、扩距、总线后备 → 选定并验收整图结果 → 统一安全简化 → JSON和彩色/黑白SVG。总线后备跳过简化。`--simplify-placement` 先重新验收已保存的线路，再进入同一简化器，不运行布局、SA、A*或恢复链。
+完整执行顺序为：正常候选选择 → 若正常阶段全失败则依次局部救援、有限扩距、保留布局的网标恢复 → 选定并验收整图结果 → 普通完整布线执行安全简化 → JSON和彩色/黑白SVG。网标恢复保存独立的连接等价证明，不进入要求整网实体连通的简化器。`--simplify-placement` 对普通布线先复验再简化；对网标恢复结果复验并重绘保存方案，不重新选接点。
 保存阶段使用简化器返回的最新线路与指标，不再回用简化前的路由结果；JSON和两种SVG共用这一份结果。包含 `routes` 的成功JSON独立重绘时，只复验与绘制保存线路，不再次运行优化。
 
 这一步不运行SA或A*，不改变正常阶段的候选胜者、恢复顺序、路由权重或 `routing_stage`。
-总线后备直接跳过；`--simplify-routes off` 或 `--simplify-seconds 0` 也会跳过。
+网标恢复结果及历史总线文件直接跳过；`--simplify-routes off` 或 `--simplify-seconds 0` 也会跳过。
 最终 `metrics`、质量评分和两种SVG均使用简化后的线路；原候选评分和原路由搜索诊断作为来源记录保留。
 
 自动预算由 `simplify_budget.py` 估计，不调用SA或A*。特征提取自身最多0.5秒，超时仅分配保守的30秒上限并如实标记特征未完成，不修改几何规则。JSON中的 `budget_seconds`始终是实际传给缩线器的数值；`budget_selection`保存预算模式、估计版本与配置、输入线路指纹、特征和估计耗时。自动保存结果回放时先检查策略和几何指纹，命中后复用历史预算，不对已经缩短的路线重估或继续优化；自动与固定模式也不会混用缓存。旧固定预算JSON继续兼容。详见[自动预算说明与同输入对照](auto-simplify-budget.md)。
@@ -393,7 +398,7 @@ v4最初只将图7主图更新，其余样例当时仅作只读回归。此后�
 网表位置参数与 `--reroute-placement` 互斥；重布线保留原先的分层、结构和优化信息，
 用 `rerouted_from` 记录输入 JSON。旧布局存在已保存的路由参数时按相同参数重布线。
 
-`--reroute-placement` 不触发扩距或重新排布，因此不能与 `--fallback auto/only` 组合。
+`--reroute-placement` 不触发扩距或重新排布，因此不能与 `--fallback auto` 组合。网标恢复JSON会复验并恢复保存的线路和标签，不运行A*。
 固定布局重布默认不启动局部救援；可以显式开启，救援预算从原 A* 失败后独立开始：
 
 ```powershell
@@ -403,7 +408,7 @@ v4最初只将图7主图更新，其余样例当时仅作只读回归。此后�
 该冻结回归命令输出 `5-candidate2-placement.json`、`5-candidate2-layered.svg` 和 `5-candidate2-clean.svg`，
 保持原 JSON 的文件名前缀；源子电路仍为 `dut`。该冻结回归结果的源网表继续指向 `tests/fixtures/junction-clearance/5.cir`。
 当前 `output/5-dut/` 已由后续完整重跑更新，真实源为 `examples/5.cir --cell dut`，本次在正常阶段候选0超时后经局部救援完成；不能与冻结候选2的固定布局回归混同。
-普通布局沿用 A*；总线布局按保存的 `constructive-bus-v1` 通道重建信号线，保留全部物理坐标、朝向及
+普通布局沿用 A*；仅为兼容历史文件，总线布局按保存的 `constructive-bus-v1` 通道重建信号线，保留全部物理坐标、朝向及
 `power_connections` 的 anchor 和折线路径，不重新运行 SA/A*，也不重新摆放电源标记：
 
 ```powershell
@@ -425,7 +430,7 @@ v4最初只将图7主图更新，其余样例当时仅作只读回归。此后�
 | `--symmetry-layout` | `off` 跳过额外器件对称规整和S选优，按原Q选择；显式 `auto` 才规整结构候选2/3并启用对称选优；不要求导线镜像 | `off` |
 | `--quality-seconds` | `structured` 每张图的候选优化及最终布线时间预算，必须为正数 | `300` |
 | `--candidate-id` | 重放一个结构化候选编号，编号以保存的 JSON 为准 | 自动比较候选 |
-| `--fallback` | `auto`：必要时局部救援、扩距及总线恢复；`off`：默认仅正常流程；`only`：直接总线构造 | 网表输入为 `auto`；指定候选为 `off` |
+| `--fallback` | `auto`：局部救援、有限扩距及保持布局的网标恢复；`off`：默认仅正常流程 | 网表输入为 `auto`；指定候选为 `off` |
 | `--local-rescue` | `auto`：正常阶段全部失败后尝试局部救援；`off`：禁用；显式开启可与 `--fallback off` 配合 | 跟随 `--fallback`；固定布局重布为 `off` |
 | `--rescue-seconds` | 独立局部构造、搜索和完整验收预算；0表示跳过 | `60` |
 | `--simplify-routes` | `safe`：在最终结果选定后安全简化；`off`：保留原路由线路 | `safe` |
@@ -433,7 +438,8 @@ v4最初只将图7主图更新，其余样例当时仅作只读回归。此后�
 | `--simplify-placement` | 对已有合法 `routes` 单独简化；不重新布局、布线或恢复 | 不启用 |
 | `--spacing-scale` | 扩距时相邻物理行列间距的倍率，必须大于 1 | `1.5` |
 | `--spacing-seconds` | 独立扩距 A* 的预算；0 表示跳过扩距阶段 | `60` |
-| `--fallback-seconds` | 独立总线构造和完整验收预算，必须大于 0 | `60` |
+| `--label-seconds` | 独立网标构造、局部搜索及完整验收预算，必须大于0 | `60` |
+| `--fallback-seconds` | 未指定label-seconds时作为其兼容预算别名；不生成总线 | `60` |
 | `--iterations` | 非负整数，控制 SA 提案预算；0 表示只比较初排候选；结构化分配到多个种子 | `20000` |
 | `--seed` | 随机种子 | `20261029` |
 | `--out-dir` | 生成物目录 | 工具目录下的 `output/` 子目录 |
@@ -549,7 +555,7 @@ E3 output 0 plus minus 1e6
 均不会标为成功。
 
 外围通道可依次扩大至包围盒外 150、300、600；单分支搜索最多展开 200,000 个状态，
-坐标图最多 100,000 个节点。单次 A* 固定本次器件位置；`auto` 后续可能扩距或重新排布，但不降低几何间距。
+坐标图最多 100,000 个节点。单次 A* 固定本次器件位置；`auto` 后续可能扩大物理间距，但不改器件行列和朝向，不降低几何间距。
 最终仍失败时以非零状态退出，并写 `routing-diagnostics.json` 列出各阶段、网络、位置或预算原因，
 不覆盖已有成功产物。预算内未找到路线不等于数学上无解。重布线耗时记录在 `validation.routing_seconds`。
 
@@ -564,12 +570,13 @@ JSON 的主要字段：
 - `optimization_metrics`、`energy`：SA 优化时粗布线的统计及目标值，可能与最终指标不同。
 - `source_netlist`、`source_sha256`、`source_cell`、`mode`、`seed`、`iterations`：复现输入及原始字节哈希。
 - `validation`：最终几何检查、路由参数、搜索统计和耗时。
-- `routing_stage`：`normal`、`local_rescue`、`spacing_retry` 或 `bus_fallback`；`recovery.stages` 保存各阶段结果、耗时和失败诊断。
+- `routing_stage`：`normal`、`local_rescue`、`spacing_retry` 或 `labeled_recovery`；`recovery.stages` 保存各阶段结果、耗时和失败诊断。历史文件仍可出现 `bus_fallback`。
 - `local_rescue`：构造版本、来源候选、安全接口延长、被重布网络、耗时和实际最终质量；检查点运行对象不写入JSON。
 - `route_simplification`：版本、独立预算、简化前后指标、改变的网络、候选计数、耗时及停止原因；`quality_before` 保留原质量与原候选记录，`quality_after` 对应最终线路。
 - `quality.score/details` 在安全简化后重新计算；`quality.candidates` 仍描述原候选选择，`candidate_metrics_stage: before_route_simplification` 明确其来源阶段。`validation.search` 保留原路由搜索记录。
 - `spacing_retry`：来源候选、扩距倍率、原/新物理轴和原优化记录；扩距后最终指标重新计算。
-- `fallback`：总线版本、pitch、器件顺序、bus 坐标和构造参数。
+- `labeled_recovery`：当次候选来源、原/最终器件位置、扩距倍率、局部连接、标签及依赖指纹；`route_representation: wires_and_labels` 明确连接包含同名标签。此时 `quality.score` 为 null，可见线长不能当作完整A*线长的改善。
+- `fallback`：仅历史总线文件中的版本、pitch、器件顺序、bus 坐标和构造参数。
 - `power_connections`：逐端口保存 `component_id/pin/net/symbol/anchor/segments`；anchor 是 glyph **真实引脚的世界坐标**，
   glyph 原点按 `anchor − 本地引脚坐标` 计算（VDD 引脚为 `(0,20)`，ground 为 `(0,-10)`）。segments 是从原器件引脚
   到该 anchor 的完整有序正交路径。恢复、验收和两种 SVG 共用这份电源几何。

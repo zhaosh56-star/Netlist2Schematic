@@ -15,6 +15,7 @@ from netlist2schematic.routing.orthogonal_router import RoutingFailure
 from netlist2schematic.routing.routing_rules import RoutingOptions
 from netlist2schematic.common.sa_common import load_local
 from netlist2schematic.common.sa_saved import load_placement
+from tests.legacy_bus_fixture import saved_bus
 
 
 class RecoveryFlowTests(unittest.TestCase):
@@ -50,6 +51,10 @@ class RecoveryFlowTests(unittest.TestCase):
         return {name: (self.destination / name).read_bytes() for name in
                 ('small-layered.svg', 'small-clean.svg', 'small-placement.json')}
 
+    def legacy_bus(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return saved_bus(self.source,self.destination)
+
     def test_normal_success_never_attempts_either_recovery(self):
         with patch('netlist2schematic.flow.run_flow._normal_result', return_value=deepcopy(self.normal)), \
                 patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('extra rescue')), \
@@ -70,7 +75,8 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual('spacing_retry', data['routing_stage'])
         self.assertEqual(1, retry.call_count)
         self.assertEqual(1.75, retry.call_args.kwargs['scale'])
-        self.assertEqual(7, retry.call_args.kwargs['seconds'])
+        self.assertGreater(retry.call_args.kwargs['seconds'], 0)
+        self.assertLessEqual(retry.call_args.kwargs['seconds'], 3.5)
         self.assertEqual(['failed', 'skipped', 'valid'], [s['status'] for s in data['recovery']['stages']])
         self.assertEqual('no_failure_checkpoint', data['recovery']['stages'][1]['reason'])
 
@@ -121,7 +127,8 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(original_cells, spacing.call_args.args[0][0].cell_of)
         self.assertNotIn('uncommitted', spacing.call_args.args[0][4])
         self.assertEqual(original_cells, failure.retry_context[0].cell_of)
-        self.assertEqual(9, spacing.call_args.kwargs['seconds'])
+        self.assertGreater(spacing.call_args.kwargs['seconds'], 0)
+        self.assertLessEqual(spacing.call_args.kwargs['seconds'], 4.5)
         self.assertEqual(['normal', 'local_rescue', 'spacing_retry'],
                          [s['stage'] for s in data['recovery']['stages']])
         self.assertEqual('no_safe_goal', data['recovery']['stages'][1]['diagnostics']['reason'])
@@ -163,7 +170,7 @@ class RecoveryFlowTests(unittest.TestCase):
                     self.generate(**kwargs)
 
     def test_local_only_failure_preserves_success_artifacts_and_both_diagnostics(self):
-        self.generate(fallback='only')
+        self.legacy_bus()
         previous = self.artifacts()
         with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(checkpoint=True)), \
                 patch('netlist2schematic.recovery.local_rescue.rescue_routing', side_effect=RoutingFailure(
@@ -175,27 +182,29 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(['normal', 'local_rescue'],
                          [s['stage'] for s in diagnostic['diagnostics']['stages']])
 
-    def test_failed_normal_and_spacing_use_verified_bus_and_keep_diagnostics(self):
+    def test_failed_normal_and_spacing_use_layout_preserving_labels_and_keep_diagnostics(self):
         with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()), \
                 patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=RoutingFailure(
                     'spacing blocked', {'reason': 'no_path', 'net': 'output'})) as retry:
             data = self.generate()
-        self.assertEqual(1, retry.call_count)
-        self.assertEqual('bus_fallback', data['routing_stage'])
-        self.assertEqual('constructive-bus-v1', data['validation']['router'])
+        self.assertEqual(2, retry.call_count)
+        self.assertEqual('labeled_recovery', data['routing_stage'])
+        self.assertEqual('labeled-recovery-v1', data['validation']['router'])
         self.assertTrue(data['validation']['valid'])
-        self.assertEqual(['normal', 'local_rescue', 'spacing_retry', 'bus_fallback'],
+        self.assertEqual(['normal', 'local_rescue', 'spacing_retry', 'labeled_recovery'],
                          [s['stage'] for s in data['recovery']['stages']])
-        self.assertEqual('no_path', data['recovery']['stages'][2]['diagnostics']['reason'])
+        self.assertEqual('no_path', data['recovery']['stages'][2]['diagnostics']['attempts'][0]['diagnostics']['reason'])
         self.assertEqual(self.original, self.source.read_bytes())
 
     def test_no_attempted_layout_skips_spacing(self):
         with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(context=False)), \
                 patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('no layout')):
-            data = self.generate()
-        self.assertEqual('no_attempted_layout', data['recovery']['stages'][1]['reason'])
-        self.assertEqual('no_attempted_layout', data['recovery']['stages'][2]['reason'])
-        self.assertEqual('bus_fallback', data['routing_stage'])
+            with self.assertRaises(RoutingFailure) as caught:
+                self.generate()
+        stages=caught.exception.diagnostics['stages']
+        self.assertEqual('no_attempted_layout', stages[1]['reason'])
+        self.assertEqual('no_attempted_layout', stages[2]['reason'])
+        self.assertEqual('labeled_recovery', stages[3]['stage'])
 
     def test_zero_spacing_budget_skips_retry(self):
         with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()), \
@@ -203,22 +212,19 @@ class RecoveryFlowTests(unittest.TestCase):
             data = self.generate(spacing_seconds=0)
         self.assertEqual('disabled', data['recovery']['stages'][2]['reason'])
 
-    def test_only_skips_normal_and_spacing_and_uses_separate_bus_deadline(self):
+    def test_only_is_rejected_without_constructing_a_bus(self):
         from netlist2schematic.recovery import fallback_bus
         actual = fallback_bus.create_fallback
         with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=AssertionError('normal called')), \
                 patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('rescue called')), \
                 patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=AssertionError('spacing called')), \
                 patch('netlist2schematic.recovery.fallback_bus.create_fallback', wraps=actual) as bus:
-            data = self.generate(fallback='only', quality_seconds=.001, fallback_seconds=10)
-        self.assertEqual(1, bus.call_count)
-        self.assertGreater(bus.call_args.kwargs['deadline'], 0)
-        self.assertEqual('forced', data['fallback']['trigger'])
-        self.assertEqual(10, data['fallback']['budget_seconds'])
-        self.assertEqual(1, len(data['recovery']['stages']))
+            with self.assertRaisesRegex(ValueError,'Bus generation is disabled'):
+                self.generate(fallback='only', quality_seconds=.001, fallback_seconds=10)
+        bus.assert_not_called()
 
     def test_off_preserves_failure_and_previous_success_files(self):
-        self.generate(fallback='only')
+        self.legacy_bus()
         originals = self.artifacts()
         with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()), \
                 patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('disabled')):
@@ -229,11 +235,11 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual('time_budget', diagnostic['diagnostics']['reason'])
 
     def test_candidate_replay_defaults_to_off_but_explicit_auto_recovers(self):
-        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure(context=False)):
+        with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()):
             with self.assertRaises(RoutingFailure):
                 self.generate(candidate_id='1')
-            data = self.generate(candidate_id='1', fallback='auto')
-        self.assertEqual('bus_fallback', data['routing_stage'])
+            data = self.generate(candidate_id='1', fallback='auto', spacing_seconds=0, local_rescue='off')
+        self.assertEqual('labeled_recovery', data['routing_stage'])
         self.assertFalse((self.destination / 'routing-diagnostics.json').exists())
 
     def test_nonrouting_error_does_not_start_recovery(self):
@@ -254,22 +260,23 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
 
     def test_all_stages_failed_preserve_previous_success_and_record_all_reasons(self):
-        self.generate(fallback='only')
+        self.legacy_bus()
         originals = self.artifacts()
         with patch('netlist2schematic.flow.run_flow._normal_result', side_effect=self.failure()), \
                 patch('netlist2schematic.recovery.spacing_retry.retry_spacing', side_effect=RoutingFailure('spacing', {'reason': 'no_path'})), \
-                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=RoutingFailure('bus timeout', {'reason': 'quality_time_budget'})):
+                patch('netlist2schematic.recovery.labeled_recovery.recover', side_effect=RoutingFailure('labels timeout', {'reason': 'quality_time_budget'})), \
+                patch('netlist2schematic.recovery.fallback_bus.create_fallback', side_effect=AssertionError('bus forbidden')):
             with self.assertRaises(RoutingFailure):
                 self.generate()
         self.assertEqual(originals, self.artifacts())
         diagnostic = json.loads((self.destination / 'routing-diagnostics.json').read_text(encoding='utf-8'))
         self.assertEqual('recovery_failed', diagnostic['diagnostics']['reason'])
-        self.assertEqual(['normal', 'local_rescue', 'spacing_retry', 'bus_fallback'],
+        self.assertEqual(['normal', 'local_rescue', 'spacing_retry', 'labeled_recovery'],
                          [s['stage'] for s in diagnostic['diagnostics']['stages']])
         self.assertEqual(self.original, self.source.read_bytes())
 
     def test_saved_bus_redraw_and_fixed_reroute_preserve_all_geometry(self):
-        data = self.generate(fallback='only')
+        data = self.legacy_bus()
         saved = self.destination / 'small-placement.json'
         renderer = load_local('render_clean', 'render-clean.py')
         with patch('netlist2schematic.routing.orthogonal_router.route_scene', side_effect=AssertionError('A* in saved bus')), \
@@ -284,7 +291,7 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertIn(b'bus fallback', (self.destination / 'small-clean.svg').read_bytes())
 
     def test_saved_bus_cannot_silently_fall_back_to_legacy_power_stubs(self):
-        data = self.generate(fallback='only')
+        data = self.legacy_bus()
         for invalid in ('missing', None, 'not a list'):
             with self.subTest(invalid=invalid):
                 altered = deepcopy(data)
@@ -298,7 +305,7 @@ class RecoveryFlowTests(unittest.TestCase):
                     load_placement(path)
 
     def test_changed_source_values_are_rejected_before_independent_redraw(self):
-        self.generate(fallback='only')
+        self.legacy_bus()
         saved = self.destination / 'small-placement.json'
         renderer = load_local('render_clean', 'render-clean.py')
         destination = self.directory / 'protected.svg'
@@ -311,7 +318,7 @@ class RecoveryFlowTests(unittest.TestCase):
         self.assertEqual(b'previous drawing', destination.read_bytes())
 
     def test_router_only_bus_marker_still_uses_strict_saved_power_contract(self):
-        data = self.generate(fallback='only')
+        data = self.legacy_bus()
         data.pop('layout_style')
         data.pop('routing_stage')
         saved = self.directory / 'router-only.json'
@@ -328,7 +335,7 @@ class RecoveryFlowTests(unittest.TestCase):
 
     def test_saved_bus_requires_physical_grid_even_without_power_connections(self):
         self.source.write_bytes(b'R1 a b 1k\nR2 b c 2k\n')
-        data = self.generate(fallback='only')
+        data = self.legacy_bus()
         self.assertEqual([], data['power_connections'])
         data.pop('layout_grid')
         saved = self.directory / 'missing-grid.json'

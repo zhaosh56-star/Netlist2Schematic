@@ -117,6 +117,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     valid_results = []
     retry_context = retry_options = rescue_context = None
     recovery_candidates = []
+    layout_candidates = []
     candidate_data_error = False
     effective_options = routing_options if routing_options is not None else RoutingOptions()
     include_legacy = str(candidate_id) == '0'
@@ -479,6 +480,12 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 from netlist2schematic.plugins.passive_skeleton.plan import measure
                 metadata.setdefault('passive_skeleton',dict(applied=False,plan=deepcopy(shared_skeleton_plan)))['current']=measure(placement,comps,index,shared_skeleton_plan)
                 record['passive_skeleton']=deepcopy(metadata['passive_skeleton'])
+            # Label recovery can use a freshly generated frame even when its
+            # normal routing slot expired. This is always the current run's
+            # layout, never a saved historical drawing.
+            layout_candidates.append(dict(context=deepcopy((placement, comps, nets, index, metadata)),
+                checkpoint=None, options=deepcopy(effective_options),
+                candidate_id=identifier, attempt_index=len(records)))
             if reserved_budget and routing_at >= candidate_deadline:
                 global_expired = routing_at >= deadline
                 reason = 'quality_time_budget' if global_expired else 'candidate_time_budget'
@@ -619,6 +626,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 failure._recovery_candidates = recovery_candidates
                 failure.diagnostics['recovery_candidate_ids'] = [
                     row['candidate_id'] for row in recovery_candidates]
+            if layout_candidates:
+                failure._layout_candidates = layout_candidates
         raise failure
     # Feedback above deliberately uses the original-Q incumbent.  Only after
     # all routing attempts do device symmetry and the 125% wire cap choose the
