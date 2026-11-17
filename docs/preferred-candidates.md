@@ -25,11 +25,11 @@
 
 先对所有合法候选使用同一套安全缩线，比较最终实际线路。默认共用5秒、最多512个缩线试案；没有把每份分别加上5秒、512案。前一份未用完的额度留给后一份。选中后输出复验已有结果，不再给胜者重复收费。
 
-候选筛选仍保留防止线路严重退步的护栏：以本轮候选2／3中原综合质量最好的合法结果为参考，线长不超过其115%；参考零交叉时仍为零，其余最多增加1处。这些限制不再针对旧候选1或历史图。
+通过完整连接与几何验收的候选，严格按 **折角数 → 交叉数 → 信号线长** 升序选择。只有前一项相同才比较下一项；三项完全相同按候选编号稳定决定。
 
-在护栏内，优先保持主列连续、支路左右顺序和无关器件不侵入，再比较附件的方向、串并联形状、接入距离，最后比较原综合质量。**折角作为综合评分的软代价，不再仅因多一两个折角就否定结构改善。** 没有可靠组织关系时，仍由实际线长、交叉、折角、绕行等综合质量择优。电气和几何安全始终是硬要求。
+旧的115%线长、零交叉保持及最多增加1处交叉门槛不再用于最终候选筛选。折角更少的合法图可以在线长、交叉更多时胜出；折角相同则优先少交叉。这是明确的排序，不是加权打分。
 
-算法不读取GT坐标，不按文件名、实例编号或网名选图。结构组织指标是可读性的近似；不能代替人工审美检查。
+主列保护、子结构归属和无源模块规整继续用于布局，相关指标及原Q分数仍计算、保存，用于诊断和原有布局反馈。它们不能改变最后的排序；旧布局偏好建议记录在 `quality.layout_preference_diagnostics`，标记 `used_for_selection: false`。算法不读取GT坐标，也不按实例名或网名设置选图例外。详见[最终选图规则](candidate-selection.md)。
 
 ## 时间不会无限增加
 
@@ -71,7 +71,7 @@ C24仍有未解决的寻路困难：候选3静态端口冲突被提前拒绝；6
 ## 兼容与复现
 
 ```powershell
-# 显式关闭模块，恢复原候选1→2→3及原选图策略
+# 显式关闭模块，恢复原候选1→2→3生成顺序；最终仍按折角、交叉、线长排序
 .\.venv\Scripts\python.exe .\run_flow.py .\examples\7.cir --passive-skeleton off
 
 # 只回放一个新候选，跳过另外两份和恢复链
@@ -80,7 +80,9 @@ C24仍有未解决的寻路困难：候选3静态端口冲突被提前拒绝；6
 
 默认推广仅适用于新网表的 `layered + structured + flexible`。baseline、legacy、固定无源行及其他显式布局实验继续各自原路径，不隐式叠加模块。保存JSON的重布、单独缩线、独立重绘保持保存位置。显式请求不兼容的模块开关仍报错。RSI冻结引擎不变。
 
-JSON 的 `quality` 记录计划顺序 `candidate_order`、实际 `candidates`、`reference_fallback_only`、`reference_fallback_used`、有效预算及共享缩线账本。候选记录中 `routing_metrics` 是缩线前，`metrics` 是本次用于比较的缩线后结果；`quality.score` 保持原综合质量含义。模块构造版本仍是v3，新的选择策略版本为 `active-first-primary-selection-v1`。
+JSON 的 `quality` 记录计划顺序 `candidate_order`、实际 `candidates`、`reference_fallback_only`、`reference_fallback_used`、有效预算及共享缩线账本。候选记录中 `routing_metrics` 是缩线前，`metrics` 是本次用于比较的缩线后结果；`quality.score` 保持原综合质量含义，但不参与最终选图。`quality.selection_policy` 为 `bends-crossings-wirelength-v1`，`routing_selection` 保存实际排序与各候选指标；显式编号回放仍为 `explicit_candidate_replay`。
+
+下面的推广样例与旧115%护栏描述是此前版本的历史记录，不代表当前排序规则。
 
 核心代码：`flow/aesthetic_flow.py` 调度及共用缩线，`flow/candidate_budget.py` 分配截止点，`layout/structured_placement.py` 按稳定编号惰性生成，`plugins/passive_skeleton/selection.py` 比较主列和附件，`flow/run_flow.py` 解析默认值并复验输出。`postprocess/simplify_routes.py` 只新增向下限制候选名额的参数，默认原算法不变。
 

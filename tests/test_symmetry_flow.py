@@ -123,10 +123,10 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
         self.assertEqual([2, 3], [call.args[5]['candidate_id'] for call in regularized.call_args_list])
         for identifier in (2, 3):
             self.assertLess(events.index(('regularize', identifier)), events.index(('route', identifier)))
-        self.assertEqual('device-symmetry-v1', result[4]['quality']['selection_policy'])
+        self.assertEqual('bends-crossings-wirelength-v1', result[4]['quality']['selection_policy'])
         self.assertTrue(all('layout_symmetry' in row for row in result[4]['quality']['candidates']))
 
-    def test_off_does_not_even_measure_and_keeps_original_quality_selection(self):
+    def test_off_does_not_even_measure_and_keeps_routing_selection(self):
         results = []
         for _ in range(2):
             result, events, regularized, measured, _ = self.choose(
@@ -134,8 +134,8 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
             self.assertFalse(any(event[0] in ('regularize', 'measure') for event in events))
             regularized.assert_not_called()
             measured.assert_not_called()
-            self.assertEqual(2, result[0].identifier)
-            self.assertEqual('balanced-v1', result[4]['quality']['selection_policy'])
+            self.assertEqual(1, result[0].identifier)
+            self.assertEqual('bends-crossings-wirelength-v1', result[4]['quality']['selection_policy'])
             results.append((result[0].__dict__, result[5]))
         self.assertEqual(*results)
 
@@ -152,55 +152,59 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
             # policy argument; choose() above intentionally opts into auto.
             chosen = aesthetic_flow.select_layout('unused.cir', iterations=0)
         self.assertEqual([1, 2, 3], [call.args[2].identifier for call in router.call_args_list])
-        self.assertEqual(2, chosen[0].identifier)
-        self.assertEqual(10, chosen[4]['quality']['score'])
-        self.assertEqual('balanced-v1', chosen[4]['quality']['selection_policy'])
+        self.assertEqual(1, chosen[0].identifier)
+        self.assertEqual(30, chosen[4]['quality']['score'])
+        self.assertEqual('bends-crossings-wirelength-v1', chosen[4]['quality']['selection_policy'])
         self.assertNotIn('symmetry_selection', chosen[4]['quality'])
         self.assertNotIn('layout_symmetry', chosen[4])
         self.assertTrue(all('layout_symmetry' not in row for row in chosen[4]['quality']['candidates']))
 
-    def test_better_symmetry_can_win_despite_worse_original_quality(self):
+    def test_better_symmetry_is_diagnostic_and_cannot_override_shorter_wires(self):
         result, *_ = self.choose([item(1), item(2)], scores={1: 10, 2: 30},
             reports={1: symmetry(failed=1, bucket=4, residual=4), 2: symmetry()},
             routes={1: routed(100), 2: routed(120)})
-        self.assertEqual(2, result[0].identifier)
-        self.assertEqual(30, result[4]['quality']['score'])
-        self.assertEqual(120, result[5][1]['wirelength'])
-        selection = result[4]['quality']['symmetry_selection']
+        self.assertEqual(1, result[0].identifier)
+        self.assertEqual(10, result[4]['quality']['score'])
+        self.assertEqual(100, result[5][1]['wirelength'])
+        selection = result[4]['quality']['layout_preference_diagnostics']['symmetry']
         self.assertEqual('1', selection['reference_candidate'])
         self.assertEqual(100, selection['reference_wirelength'])
         self.assertEqual(10, selection['reference_score'])
         self.assertEqual(1.25, selection['length_ratio'])
         self.assertEqual(125, selection['wirelength_limit'])
         self.assertEqual('before_route_simplification', selection['reference_stage'])
-        self.assertEqual('2', selection['selected_candidate'])
+        self.assertEqual('2', selection['proposed_candidate'])
+        self.assertFalse(selection['used_for_selection'])
 
-    def test_wirelength_guard_includes_exact_125_percent_boundary(self):
+    def test_legacy_symmetry_boundary_remains_a_diagnostic(self):
         result, *_ = self.choose([item(1), item(2)], scores={1: 10, 2: 30},
             reports={1: symmetry(failed=1), 2: symmetry()},
-            routes={1: routed(100), 2: routed(125)})
+            routes={1: routed(100, bends=1), 2: routed(125)})
         self.assertEqual(2, result[0].identifier)
-        self.assertEqual(['1', '2'], result[4]['quality']['symmetry_selection']['eligible_candidates'])
+        self.assertEqual(['1', '2'], result[4]['quality']['layout_preference_diagnostics']['symmetry']['eligible_candidates'])
 
-    def test_wirelength_guard_excludes_better_symmetry_beyond_boundary(self):
+    def test_legacy_symmetry_guard_does_not_exclude_a_fewer_bend_result(self):
         result, *_ = self.choose([item(1), item(2)], scores={1: 10, 2: 30},
             reports={1: symmetry(failed=1), 2: symmetry()},
-            routes={1: routed(100), 2: routed(125.01)})
-        self.assertEqual(1, result[0].identifier)
-        self.assertEqual(['2'], result[4]['quality']['symmetry_selection']['excluded_candidates'])
+            routes={1: routed(100, bends=1), 2: routed(125.01)})
+        self.assertEqual(2, result[0].identifier)
+        diagnostic = result[4]['quality']['layout_preference_diagnostics']['symmetry']
+        self.assertEqual(['2'], diagnostic['excluded_candidates'])
+        self.assertFalse(diagnostic['used_for_selection'])
 
-    def test_failed_relation_count_precedes_residual_bucket(self):
+    def test_failed_symmetry_relations_do_not_override_a_routing_tie(self):
         result, *_ = self.choose([item(1), item(2)], scores={1: 10, 2: 20},
             reports={1: symmetry(failed=1, bucket=0), 2: symmetry(failed=0, bucket=9)})
-        self.assertEqual(2, result[0].identifier)
+        self.assertEqual(1, result[0].identifier)
+        self.assertEqual('2', result[4]['quality']['layout_preference_diagnostics']['symmetry']['proposed_candidate'])
 
-    def test_lower_residual_bucket_precedes_original_quality(self):
+    def test_symmetry_residual_does_not_override_a_routing_tie(self):
         result, *_ = self.choose([item(1), item(2)], scores={1: 10, 2: 20},
             reports={1: symmetry(bucket=2), 2: symmetry(bucket=1)})
-        self.assertEqual(2, result[0].identifier)
+        self.assertEqual(1, result[0].identifier)
 
-    def test_same_bucket_uses_original_quality_instead_of_raw_residual(self):
-        result, *_ = self.choose([item(1), item(2)], scores={1: 10, 2: 20},
+    def test_same_routing_uses_stable_id_instead_of_quality_or_symmetry_residual(self):
+        result, *_ = self.choose([item(1), item(2)], scores={1: 20, 2: 10},
             reports={1: symmetry(bucket=1, residual=1.9), 2: symmetry(bucket=1, residual=1.1)})
         self.assertEqual(1, result[0].identifier)
 
@@ -210,10 +214,10 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
             routes={1: routed(100, crossings=1), 2: routed(120), 3: routed(110)})
         self.assertEqual(3, result[0].identifier)
 
-    def test_no_relations_keeps_original_quality_selection(self):
+    def test_no_relations_keeps_routing_selection(self):
         result, *_ = self.choose([item(1), item(2)], scores={1: 20, 2: 10},
             reports={1: symmetry(count=0), 2: symmetry(count=0)})
-        self.assertEqual(2, result[0].identifier)
+        self.assertEqual(1, result[0].identifier)
 
     def test_explicit_candidate_replay_is_not_overridden_by_symmetry_selection(self):
         result, events, *_ = self.choose([item(i) for i in (1, 2, 3)],
@@ -257,7 +261,7 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
         self.assertEqual(1, feedback_mock.call_args.args[0].identifier)
         self.assertLess(events.index(('feedback', 1)), events.index(('regularize', 99)))
         self.assertNotIn(('regularize', 3), events)
-        self.assertEqual(2, result[0].identifier)
+        self.assertEqual(1, result[0].identifier)
 
     def test_regularized_failure_checkpoint_belongs_to_last_attempt_and_is_private(self):
         first = RoutingFailure('first blocked', {'reason': 'no_path'})
@@ -298,7 +302,7 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
 
     def test_all_valid_candidates_are_complete_snapshots_not_just_original_q_best(self):
         items = [item(i) for i in (1, 2, 3)]
-        shared_routes, shared_metrics, shared_validation = routed()
+        shared_routes, shared_metrics, shared_validation = routed(90)
         regularized_metadata = {}
 
         def regularizer(par, placement, comps, nets, index, metadata, **options):
@@ -310,7 +314,7 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
         def generate():
             yield items[0]
             yield items[1]
-            # Candidate 2 is worse by Q but will win symmetry selection. It
+            # Candidate 2 is worse by Q but has shorter actual wiring. It
             # must remain frozen even while the producer/third router runs.
             items[1][0].positions[0] = (999, 999)
             items[1][1][0]['id'] = 'changed_by_producer'
@@ -328,7 +332,7 @@ class SymmetryCandidateFlowTests(unittest.TestCase):
         self.assertEqual((0, 0), result[0].positions[0])
         self.assertEqual('R1', result[1][0]['id'])
         self.assertEqual(0, result[4]['layout_symmetry']['current']['failed_relations'])
-        self.assertEqual(routed(), result[5])
+        self.assertEqual(routed(90), result[5])
 
     def test_new_regularization_transaction_does_not_reuse_source_before_measurement(self):
         from netlist2schematic.plugins.symmetry.symmetry_layout import regularize_symmetry

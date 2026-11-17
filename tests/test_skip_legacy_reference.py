@@ -139,8 +139,8 @@ class StructuredOnlySelectionTests(unittest.TestCase):
         self.assertEqual([1, 2, 99], observed)
         self.assertEqual(1, feedback.call_count)
         self.assertEqual(2, feedback.call_args.args[0].identifier)
-        self.assertEqual(3, result[4]['candidate_id'])
-        self.assertEqual('3', result[4]['quality']['selected_candidate'])
+        self.assertEqual(1, result[4]['candidate_id'])
+        self.assertEqual('1', result[4]['quality']['selected_candidate'])
         self.assertEqual(['1', '2', '3'], [row['candidate_id'] for row in result[4]['quality']['candidates']])
 
     def test_three_candidates_share_one_300_second_deadline(self):

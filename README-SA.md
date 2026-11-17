@@ -28,4 +28,4 @@ Set-Location D:\gongzuo
 
 另有保守的无源整理 `--passive-embedding auto`，默认关闭：在原成品完成后，用独立5秒尝试一次无源局部重排和重布。MOS/BJT及其他非无源位置、朝向保持；只有线长、交叉、折角均不增加且附件组织改善才采用，否则恢复原图。它兼容默认长列策略，不需要开启旧附件实验；用法及边界见[说明](docs/attachment-integration.md)，本地最终对照为 `output/passive-embedding-goal/safe/index.html`。
 
-普通新网表默认开启 **`--passive-skeleton auto`**：先跑候选2、3，完成有源主列后插入串联、并联及嵌套串并联小模块。两份都失败才运行原候选1兜底；成功候选共用原5秒、512案安全缩线后选图，优先主列完整与附件组织，折角作为软代价。用 `--passive-skeleton off` 恢复原候选1→2→3。保存坐标操作和其他显式布局实验不隐式叠加。具体预算、选图和复现见[候选优先策略](docs/preferred-candidates.md)与[无源模块插入](docs/passive-modules.md)。
+普通新网表默认开启 **`--passive-skeleton auto`**：先跑候选2、3，完成有源主列后插入串联、并联及嵌套串并联小模块。两份都失败才运行原候选1兜底；成功候选共用原5秒、512案安全缩线后，严格按 **折角少 → 交叉少 → 信号线长短** 选择。结构规整继续用于摆件，原Q分数及旧结构偏好仅作诊断。用 `--passive-skeleton off` 恢复原候选1→2→3生成顺序，最终仍遵守新排序。保存坐标操作和其他显式布局实验不隐式叠加。具体规则见[选图说明](docs/candidate-selection.md)、[候选调度](docs/preferred-candidates.md)与[无源模块插入](docs/passive-modules.md)。

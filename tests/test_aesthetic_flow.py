@@ -124,7 +124,7 @@ class CandidateSelectionTests(unittest.TestCase):
                 self.assertEqual(str(identifier), chosen[4]['quality']['selected_candidate'])
                 self.assertEqual('replay_complete', chosen[4]['quality']['stop_reason'])
 
-    def feedback_selection(self, feedback_score, *, candidate_id=None, severe=True):
+    def feedback_selection(self, feedback_score, *, candidate_id=None, severe=True, better_routing=False):
         proposal = list(candidate(99))
         proposal[4]['feedback'] = {
             'source_candidate': '2', 'net': 'signal', 'row_cut': 0,
@@ -140,7 +140,9 @@ class CandidateSelectionTests(unittest.TestCase):
         with patch('netlist2schematic.layout.structured_placement.feedback_candidate', return_value=tuple(proposal)) as feedback, \
                 patch('netlist2schematic.layout.layout_quality.evaluate_quality', side_effect=scores):
             chosen, routed = self.select([candidate(i, energy=-i) for i in (1, 2, 3)],
-                                          [route_result()] * 3, candidate_id=candidate_id)
+                                          ([route_result(True), route_result(True), route_result()]
+                                           if better_routing else [route_result()] * 3),
+                                          candidate_id=candidate_id)
         return chosen, routed, feedback
 
     def test_measured_severe_detour_uses_last_slot_for_feedback_without_losing_incumbent(self):
@@ -149,29 +151,37 @@ class CandidateSelectionTests(unittest.TestCase):
         self.assertEqual([1, 2, 99], [call.args[2].identifier for call in routed.call_args_list])
         self.assertEqual(1, feedback.call_count)
         self.assertEqual(2, feedback.call_args.args[0].identifier)
-        self.assertEqual(2, chosen[0].identifier)
-        self.assertEqual('2', chosen[4]['quality']['selected_candidate'])
+        self.assertEqual(1, chosen[0].identifier)
+        self.assertEqual('1', chosen[4]['quality']['selected_candidate'])
         records = chosen[4]['quality']['candidates']
         self.assertEqual(['1', '2', '3'], [row['candidate_id'] for row in records])
         self.assertEqual('signal', records[2]['feedback']['net'])
         self.assertEqual('2', records[2]['feedback']['source_candidate'])
 
-    def test_better_feedback_can_win_the_last_routing_slot(self):
+    def test_better_feedback_score_cannot_override_equal_routing_metrics(self):
         chosen, routed, feedback = self.feedback_selection(feedback_score=5)
         self.assertEqual(3, routed.call_count)
         self.assertEqual(1, feedback.call_count)
+        self.assertEqual(1, chosen[0].identifier)
+        self.assertEqual(1, chosen[4]['candidate_id'])
+        self.assertEqual('1', chosen[4]['quality']['selected_candidate'])
+        self.assertEqual(30, chosen[4]['quality']['score'])
+        self.assertEqual('signal', chosen[4]['quality']['candidates'][2]['feedback']['net'])
+
+    def test_feedback_with_fewer_bends_wins_even_with_worse_old_score(self):
+        chosen, routed, feedback = self.feedback_selection(feedback_score=40, better_routing=True)
+        self.assertEqual(3, routed.call_count)
+        self.assertEqual(2, feedback.call_args.args[0].identifier)
         self.assertEqual(99, chosen[0].identifier)
-        self.assertEqual(3, chosen[4]['candidate_id'])
         self.assertEqual('3', chosen[4]['quality']['selected_candidate'])
-        self.assertEqual(5, chosen[4]['quality']['score'])
-        self.assertEqual('signal', chosen[4]['feedback']['net'])
+        self.assertEqual(40, chosen[4]['quality']['score'])
 
     def test_moderate_detour_keeps_normal_third_seed(self):
         chosen, routed, feedback = self.feedback_selection(feedback_score=5, severe=False)
         self.assertEqual(3, routed.call_count)
         self.assertEqual([1, 2, 3], [call.args[2].identifier for call in routed.call_args_list])
         feedback.assert_not_called()
-        self.assertEqual(3, chosen[0].identifier)
+        self.assertEqual(1, chosen[0].identifier)
 
     def test_replaying_feedback_candidate_evaluates_its_sources_and_selects_requested_result(self):
         chosen, routed, feedback = self.feedback_selection(feedback_score=40, candidate_id='3')

@@ -620,9 +620,9 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 failure.diagnostics['recovery_candidate_ids'] = [
                     row['candidate_id'] for row in recovery_candidates]
         raise failure
-    # Feedback above deliberately uses the original-Q incumbent.  Only after
-    # all routing attempts do device symmetry and the 125% wire cap choose the
-    # delivered candidate. Explicit replay always returns its requested ID.
+    # Feedback above deliberately uses the original-Q incumbent. Only after
+    # all routing attempts and shared cleanup do the final routing priorities
+    # choose the delivered candidate. Explicit replay keeps its requested ID.
     cleanup_selection = None
     if prefer_primary:
         preferred = [row for row in valid_results if row[8] in ('2', '3')]
@@ -694,6 +694,27 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         best, structure_selection = select_structured_result(valid_results)
     elif symmetry_layout == 'auto' and candidate_id is None:
         best, symmetry_selection = _select_symmetric_result(valid_results)
+    # Keep existing layout measurements and the original-Q feedback source,
+    # but do not let any optional layout preference override final routing
+    # priorities or discard a verified candidate via its old soft guardrails.
+    layout_preference_diagnostics = {}
+    for name, report in (('passive_skeleton', skeleton_selection),
+                         ('columns', column_selection),
+                         ('attachments', attachment_selection),
+                         ('readability', readability_selection),
+                         ('regions', region_selection),
+                         ('structures', structure_selection),
+                         ('symmetry', symmetry_selection)):
+        if report is not None:
+            diagnostic = deepcopy(report)
+            diagnostic['proposed_candidate'] = diagnostic.pop('selected_candidate', best[8])
+            diagnostic['used_for_selection'] = False
+            layout_preference_diagnostics[name] = diagnostic
+    routing_selection = None
+    if candidate_id is None:
+        from netlist2schematic.flow.candidate_selection import select_result
+        best, routing_selection = select_result(valid_results, stage=(
+            'after_shared_route_simplification' if prefer_primary else 'after_routing'))
     _, placement, comps, nets, index, metadata, routed_result, quality, identifier = best
     metadata.update(layout_style='structured', quality={
         'policy': 'balanced-v1', 'budget_seconds': quality_seconds,
@@ -709,28 +730,12 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         'selected_candidate': identifier, 'score': quality['score'],
         'details': quality, 'candidates': records})
     metadata['quality']['selection_policy'] = (
-        skeleton_selection['policy'] if skeleton_selection else
-        column_selection['policy'] if column_selection else
-        attachment_selection['policy'] if attachment_selection else
-        readability_selection['policy'] if readability_selection else
-        region_selection['policy'] if region_selection else
-        structure_selection['policy'] if structure_selection else
-        symmetry_selection['policy'] if symmetry_selection else
-        'explicit_candidate_replay' if candidate_id is not None else 'balanced-v1')
-    if symmetry_selection is not None:
-        metadata['quality']['symmetry_selection'] = symmetry_selection
-    if structure_selection is not None:
-        metadata['quality']['structure_selection'] = structure_selection
-    if region_selection is not None:
-        metadata['quality']['region_selection'] = region_selection
-    if readability_selection is not None:
-        metadata['quality']['readability_selection'] = readability_selection
-    if attachment_selection is not None:
-        metadata['quality']['attachment_selection'] = attachment_selection
-    if column_selection is not None:
-        metadata['quality']['column_selection'] = column_selection
-    if skeleton_selection is not None:
-        metadata['quality']['passive_skeleton_selection']=skeleton_selection
+        routing_selection['policy'] if routing_selection else 'explicit_candidate_replay')
+    if routing_selection is not None:
+        metadata['quality']['routing_selection'] = routing_selection
+        metadata['quality']['score_usage'] = 'diagnostics_and_layout_feedback_only'
+    if layout_preference_diagnostics:
+        metadata['quality']['layout_preference_diagnostics'] = layout_preference_diagnostics
     return placement, comps, nets, index, metadata, routed_result
 
 
