@@ -266,9 +266,9 @@ class SimplifyFlowTests(unittest.TestCase):
         self.assertEqual(result['quality']['candidates'],data['quality']['candidates'])
 
     def test_bus_is_revalidated_but_not_simplified(self):
-        from tests.legacy_bus_fixture import saved_bus
         with contextlib.redirect_stdout(io.StringIO()):
-            data = saved_bus(self.source,self.directory/'bus')
+            data = run_flow.run(self.source, iterations=0, fallback='only',
+                                out_dir=self.directory / 'bus', simplify_routes='off')
         saved = self.directory / 'bus' / 'small-placement.json'
         with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=AssertionError('bus skipped')):
             simplified = self.simplify(saved)

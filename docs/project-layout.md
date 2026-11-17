@@ -19,7 +19,7 @@ Netlist2Schematic/
 │  ├─ recognition/             # 导通分层、结构与角色识别
 │  ├─ layout/                  # 初排、SA、flexible 无源动作、质量测量
 │  ├─ routing/                 # 正交 A*、场景、统一几何验收
-│  ├─ recovery/                # 局部救援、扩距、保留布局的网标恢复；历史总线读取兼容
+│  ├─ recovery/                # 局部救援、扩距、确定性总线后备
 │  ├─ postprocess/             # 安全缩线、候选生成、缩线预算与交叉取舍
 │  ├─ rendering/               # SVG、文字及成品展示
 │  ├─ plugins/                 # 可选增强及它们共用的布局关系
@@ -67,7 +67,7 @@ Netlist2Schematic/
 | 默认模块布局 | `plugins/passive_skeleton/` | 候选2/3先排有源骨架，再插入真实串并联无源模块；失败才运行候选1 |
 | 基础布局能力 | `layout/place_layered.py`、`layout/place_and_route.py` | Placement、真实引脚坐标、快速估价和旧布局参考；结构化流程也会复用 |
 | 最终布线 | `routing/sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 正交 A*、拆网重布、真实引脚连通和几何验收 |
-| 失败恢复 | `recovery/candidate_rescue.py`、`local_rescue.py`、`spacing_retry.py`、`labeled_recovery.py`、`labeled_geometry.py` | 保存当次候选，局部救援、有限扩距、局部连线加同名网标；独立复验。`fallback_bus.py`只用于历史文件兼容 |
+| 失败恢复 | `recovery/candidate_rescue.py`、`local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 独立保留候选失败现场，在共享预算内救援，再按既定顺序扩距、总线恢复 |
 | 安全缩线 | `postprocess/simplify_routes.py`、`route_reattachment.py`、`route_patterns.py`、`route_tracks.py` | 在已合法线路上生成、验收及提交更短的候选 |
 | 缩线策略与预算 | `postprocess/simplify_budget.py`、`route_tradeoff.py` | 固定或自动预算，以及 strict／balanced 的接受规则 |
 | 绘图 | `rendering/sa_render.py`、`presentation.py` | 同一份验收线路生成彩色和黑白 SVG，安排文字和端口展示 |

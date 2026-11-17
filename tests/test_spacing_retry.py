@@ -137,7 +137,7 @@ class SpacingRetryTests(unittest.TestCase):
             result, routed = self.retry(seconds=60)
         self.assertEqual(1, routed.call_count)
         self.assertEqual({'options', 'deadline'}, set(routed.call_args.kwargs))
-        self.assertEqual(160., routed.call_args.kwargs['deadline'])
+        self.assertEqual(170., routed.call_args.kwargs['deadline'])
         self.assertEqual(12., result[4]['spacing_retry']['elapsed_seconds'])
 
     def test_current_quality_uses_new_routes_and_old_energy_becomes_source_history(self):

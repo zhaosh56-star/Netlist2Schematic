@@ -200,7 +200,7 @@ class StructuredOnlySelectionTests(unittest.TestCase):
                     RoutingFailure('last blocked', {'reason': 'no_path'})]), \
                 patch('netlist2schematic.layout.layout_quality.evaluate_quality', side_effect=quality), \
                 patch('netlist2schematic.flow.run_flow._try_local_rescue', side_effect=AssertionError('early recovery')) as rescued, \
-                patch('netlist2schematic.recovery.labeled_recovery.recover', side_effect=AssertionError('unnecessary fallback')), \
+                patch('netlist2schematic.flow.run_flow._bus_result', side_effect=AssertionError('unnecessary fallback')), \
                 patch('netlist2schematic.flow.run_flow._finish', side_effect=finish), \
                 contextlib.redirect_stdout(io.StringIO()):
             # These scheduler-only candidates have no physical geometry; the

@@ -155,9 +155,9 @@ class AutoBudgetFlowTests(unittest.TestCase):
             self.assertEqual('skipped', data['route_simplification']['status'])
 
     def test_auto_does_not_simplify_constructive_bus_routes(self):
-        from tests.legacy_bus_fixture import saved_bus
         with contextlib.redirect_stdout(io.StringIO()):
-            original = saved_bus(self.source,self.directory/'bus')
+            original = run_flow.run(self.source, iterations=0, fallback='only',
+                                    out_dir=self.directory / 'bus', simplify_routes='off')
         with patch('netlist2schematic.postprocess.simplify_routes.simplify_routes', side_effect=AssertionError('bus simplified')), \
                 patch('netlist2schematic.postprocess.simplify_budget.estimate_simplify_budget',
                       side_effect=AssertionError('bus routes estimated simplification work')):

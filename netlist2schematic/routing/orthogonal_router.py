@@ -238,7 +238,7 @@ def _route_net(scene, net, occupied, margin, history, statistics, shared_free=No
         if _rescue_state is not None:
             _rescue_state['branch'] = {'net': net, 'component': pin.component,
                                        'pin': pin.pin, 'point': pin.point,
-                                       'escape': pin.escape, 'tree': list(tree)}
+                                       'escape': pin.escape}
         if any(_on(pin.point,a,b) for a,b in tree):
             continue
         paths, blocked = _find_path(scene,net,pin.escape,tree,occupied,margin,history,statistics,
