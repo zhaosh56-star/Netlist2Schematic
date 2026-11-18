@@ -209,7 +209,8 @@ def segs_to_paths(segments):
 
 
 def render_svg(par, placement, comps, nets, comp_index, routed, metrics, out,
-               *, clean=False, structs=(), validation=None, net_label_view=None):
+               *, clean=False, structs=(), validation=None, net_label_view=None,
+               presentation_hints=None):
     if net_label_view is not None:
         from netlist2schematic.plugins.net_labels.net_label_validation import display_routes
         from netlist2schematic.routing.routing_rules import canonical_topology
@@ -218,7 +219,7 @@ def render_svg(par, placement, comps, nets, comp_index, routed, metrics, out,
         routed = [(net, canonical_topology(lines)['segments'])
                   for net, lines in display_routes(net_label_view)]
         metrics = net_label_view['display_metrics']
-    clean_presentation = (net_label_view is not None or
+    clean_presentation = (presentation_hints is not None or net_label_view is not None or
         clean and getattr(placement, 'presentation_style', 'legacy') == 'clean')
     wire_width = (validation or {}).get('parameters', {}).get('wire_width', 2.5)
     stage = getattr(placement, 'routing_stage', 'normal')
@@ -332,6 +333,10 @@ def render_svg(par, placement, comps, nets, comp_index, routed, metrics, out,
             component_text, supply_text = hints['component_text'], hints['supply_text']
             tagged = {label['net'] for label in net_label_view['labels']}
             port_text = [label for label in hints['port_text'] if label['net'] not in tagged]
+        elif presentation_hints is not None:
+            component_text = presentation_hints['component_text']
+            supply_text = presentation_hints['supply_text']
+            port_text = presentation_hints['port_text']
         else:
             component_text, supply_text, port_text = _presentation_labels(
                 par, placement, comps, nets, comp_index, routed, stubs, power_markers,

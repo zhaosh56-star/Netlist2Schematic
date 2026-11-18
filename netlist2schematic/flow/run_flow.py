@@ -35,7 +35,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
         candidate_budget='sequential', port_preflight=DEFAULT_PORT_PREFLIGHT, presentation='legacy', net_labels='off',
         region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5,
-        attachment_layout='off', column_layout=None, passive_embedding='off', passive_skeleton=None):
+        attachment_layout='off', column_layout=None, passive_embedding='off', passive_skeleton=None,
+        power_rails='off'):
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -75,6 +76,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         raise ValueError('presentation must be legacy or clean')
     if net_labels not in ('off', 'auto'):
         raise ValueError('net_labels must be off or auto')
+    if power_rails not in ('off', 'auto'):
+        raise ValueError('power_rails must be off or auto')
     if mode not in ('baseline', 'layered'):
         raise ValueError(f'Unknown layout mode: {mode}')
     if candidate_id is not None and (mode != 'layered' or layout_style != 'structured'):
@@ -221,6 +224,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                    protected_paths={source}, options=options, routed_result=routed_result,
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
                    net_labels=net_labels, route_tradeoff=route_tradeoff,
+                   **({'power_rails':power_rails} if power_rails != 'off' else {}),
                    **({'embed_passives':True} if passive_embedding=='auto' else {}))
 
 
@@ -674,13 +678,16 @@ def _record_failure(exc, diagnostic_path, source):
 def _finish(data, par, placement, comps, nets, comp_index, base, destination,
             *, protected_paths=(), options=None, routed_result=None,
             simplify_routes='safe', simplify_seconds=5, allow_verified_replay=False,
-            input_hashes=None, net_labels='off', route_tradeoff='strict',embed_passives=False):
+            input_hashes=None, net_labels='off', route_tradeoff='strict',embed_passives=False,
+            power_rails='off'):
     """Route and validate before staging any success artifacts."""
     destination = Path(destination).resolve()
     _validate_simplification(simplify_routes, simplify_seconds)
     _validate_route_tradeoff(route_tradeoff)
     if net_labels not in ('off', 'auto'):
         raise ValueError('net_labels must be off or auto')
+    if power_rails not in ('off', 'auto'):
+        raise ValueError('power_rails must be off or auto')
     names, diagnostic_path = _output_targets(base, data.get('mode', 'layered'), destination, protected_paths)
     try:
         routed, metrics, validation = (routed_result if routed_result is not None else
@@ -885,13 +892,28 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
                 'status': 'failed', 'source_placement': str(destination/names[2]),
                 'error': str(exc), 'full_route_result_preserved': True})
             print(f'Net-label view failed; full routes preserved: {exc}', flush=True)
+    if power_rails == 'auto':
+        # Independent extra view after native verification and shortening.
+        # A failed/unchanged view never modifies the native files or scoring.
+        try:
+            from netlist2schematic.plugins.power_rails.power_rails import generate
+            result = generate(destination/names[2], out_dir=destination/'power-rails')
+            plugin_diagnostics = destination/'power-rails'/'plugin-diagnostics.json'
+            if plugin_diagnostics.is_file():
+                plugin_diagnostics.unlink()
+            print(f"Shared VDD view: {result['view']['status']}; {result['artifacts']['json']}", flush=True)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            write_json(destination/'power-rails'/'plugin-diagnostics.json', {
+                'status': 'failed', 'source_placement': str(destination/names[2]),
+                'error': str(exc), 'native_result_preserved': True})
+            print(f'Shared VDD view failed; original preserved: {exc}', flush=True)
     return data
 
 
 def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
                       *, local_rescue=None, rescue_seconds=60,
                       simplify_routes='safe', simplify_seconds=5,presentation=None, net_labels='off',
-                      route_tradeoff='strict'):
+                      route_tradeoff='strict', power_rails='off'):
     rescue_policy = _rescue_policy(local_rescue, False)
     _validate_rescue_seconds(rescue_seconds)
     _validate_simplification(simplify_routes, simplify_seconds)
@@ -954,12 +976,13 @@ def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opti
                    protected_paths={source, source_json},
                    options=options, routed_result=routed_result,
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
-                   net_labels=net_labels, route_tradeoff=route_tradeoff)
+                   net_labels=net_labels, route_tradeoff=route_tradeoff,
+                   **({'power_rails':power_rails} if power_rails != 'off' else {}))
 
 
 def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
                        *, simplify_routes='safe', simplify_seconds=5,presentation=None, net_labels='off',
-                       route_tradeoff='strict'):
+                       route_tradeoff='strict', power_rails='off'):
     """Validate and simplify saved wires without invoking any layout/router."""
     _validate_simplification(simplify_routes, simplify_seconds)
     _validate_route_tradeoff(route_tradeoff)
@@ -1004,7 +1027,8 @@ def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opt
                    routed_result=(routed, metrics, validation),
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
                    allow_verified_replay=True, input_hashes={source_json: original_hash},
-                   net_labels=net_labels, route_tradeoff=route_tradeoff)
+                   net_labels=net_labels, route_tradeoff=route_tradeoff,
+                   **({'power_rails':power_rails} if power_rails != 'off' else {}))
 
 
 def main(argv=None, default_mode='layered'):
@@ -1045,6 +1069,8 @@ def main(argv=None, default_mode='layered'):
                         help='Clean publication labels and bounds; default keeps saved or legacy style')
     parser.add_argument('--net-labels', choices=('off', 'auto'), default='off',
                         help='Optional extra net-label view after verified full routes (default: off)')
+    parser.add_argument('--power-rails', choices=('off', 'auto'), default='off',
+                        help='Extra verified local shared-VDD view; original artifacts preserved (default: off)')
     parser.add_argument('--candidate-id',
                         help='Replay candidate 1, 2 or 3; 0 explicitly runs the legacy reference')
     parser.add_argument('--fallback', choices=('auto', 'off', 'only'),
@@ -1113,6 +1139,7 @@ def main(argv=None, default_mode='layered'):
                                analog_canvas_root=args.analog_canvas_root,
                                simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                                net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
+                               **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}),
                                **({'presentation':args.presentation} if args.presentation is not None else {}))
         elif args.reroute_placement:
             if args.attachment_layout != 'off':
@@ -1129,6 +1156,7 @@ def main(argv=None, default_mode='layered'):
                               local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
                               simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                               net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
+                              **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}),
                               **({'presentation':args.presentation} if args.presentation is not None else {}))
         else:
             run(args.netlist, mode=args.mode, iterations=args.iterations, seed=args.seed,
@@ -1150,7 +1178,8 @@ def main(argv=None, default_mode='layered'):
                 spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
                 local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
                 simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
-                net_labels=args.net_labels, route_tradeoff=args.route_tradeoff)
+                net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
+                **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}))
     except (ValueError, OSError, KeyError) as exc:
         parser.exit(2, f'Error: {exc}\n')
     return 0

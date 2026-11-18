@@ -1,5 +1,7 @@
 # SA Python 运行说明
 
+可选的局部共享VDD插件：`--power-rails auto`，默认关闭。原成品保存后，额外尝试把同网、同排、通道空闲的供电端连接为共享横线和一个VDD标记；器件及信号线路不动。独立处理旧JSON、适用边界和对照见 [共享VDD说明](docs/power-rails.md)。
+
 详细说明已集中到 [docs/flow-guide.md](docs/flow-guide.md)，包括完整流程、分层与结构化布局、A*和失败恢复、最终路线简化、支持的网表、几何规则及全部参数。
 
 日常运行与安装命令见 [README.md](README.md)。各脚本和资源的用途见 [docs/project-layout.md](docs/project-layout.md)。
