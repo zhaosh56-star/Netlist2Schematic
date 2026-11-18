@@ -8,10 +8,11 @@ from netlist2schematic.plugins.passive_skeleton.modules import build_modules
 VERSION = 'active-first-passive-modules-v3'
 ACTIVE = frozenset(('nmos', 'pmos', 'npn', 'pnp'))
 PASSIVE = frozenset(('resistor', 'capacitor', 'inductor', 'diode'))
+INLINE_ROLES = frozenset(('conduction_inline', 'capacitive_inline'))
 CHANNELS = {'nmos': ('D', 'S'), 'pmos': ('D', 'S'), 'npn': ('C', 'E'), 'pnp': ('C', 'E')}
 
 
-def _conduction_bridges(devices, comps):
+def _conduction_bridges(devices, comps, *, include_capacitors=False):
     """Resolve a unique channel host independently of its control fanout.
 
     Only endpoint control taps are projected out while inferring R/L order.
@@ -20,6 +21,7 @@ def _conduction_bridges(devices, comps):
     """
     from netlist2schematic.plugins.layout_shared.branch_levels import _rl_chains, _visible_incidence, _rail
     incidence = _visible_incidence(comps)
+    kinds = ('R', 'L', 'C') if include_capacitors else ('R', 'L')
     projected_ends = {}
     for net, terminals in incidence.items():
         if _rail(net):
@@ -35,21 +37,23 @@ def _conduction_bridges(devices, comps):
                     controls.append((name, pin))
                 else:
                     others.append((name, pin))
-            elif device['cls'] == 'PASSIVE' and device['type'] in ('R', 'L'):
+            elif device['cls'] == 'PASSIVE' and device['type'] in kinds:
                 passives.append((name, pin))
             else:
                 others.append((name, pin))
         if len(conductive) == len(passives) == 1 and controls and not others:
             projected_ends[net] = controls
-    if not projected_ends:
+    if not projected_ends and not include_capacitors:
         return _rl_chains(devices, comps)
     hidden = {terminal for values in projected_ends.values() for terminal in values}
     projected = [dict(comp, nodes={pin: net for pin, net in comp['nodes'].items()
                                   if (comp['id'], pin) not in hidden}) for comp in comps]
-    bridges, skipped = _rl_chains(devices, projected)
+    bridges, skipped = (_rl_chains(devices, projected, include_capacitors=True)
+                        if include_capacitors else _rl_chains(devices, projected))
     accepted = []
     for bridge in bridges:
-        if not any(net in projected_ends for net in (bridge['start'], bridge['end'])):
+        if (not bridge.get('layout_only')
+                and not any(net in projected_ends for net in (bridge['start'], bridge['end']))):
             accepted.append(bridge)
             continue
         hosts, controls = {}, {}
@@ -84,23 +88,32 @@ def _conduction_bridges(devices, comps):
 
 
 def compile_plan(par, devices, comps, nets, structs):
-    """Keep every real terminal; only unambiguous R/L edges imply row order.
+    """Keep real terminals; unique R/L/C host relations may imply display order.
 
-    C, D, feedback and sense paths remain typed two-ended attachments. In
-    particular, two sense resistors never merge two output nodes in this view.
+    Capacitors supply display evidence only. D, ambiguous feedback and sense
+    paths remain two-ended attachments; no original electrical node is merged.
     """
     from netlist2schematic.plugins.layout_shared.branch_levels import _conduction_orders
     result = build_modules(par, comps, nets)
     parts = {c['id']: c for c in comps}
     bridges, skipped = _conduction_bridges(devices, comps)
     _, bridges, cycles, _ = _conduction_orders(devices, bridges)
-    unique_rl = {frozenset(b['members']): b for b in bridges}
+    if any(d['cls'] == 'PASSIVE' and d['type'] == 'C' for d in devices.values()):
+        expanded, rejected = _conduction_bridges(devices, comps, include_capacitors=True)
+        capacitive = [b for b in expanded if b.get('layout_only')]
+        # A new display-only relation cannot invalidate an established R/L
+        # continuation. Reject capacitive contributors to a cycle instead.
+        _, accepted, cap_cycles, _ = _conduction_orders(devices, bridges + capacitive)
+        bridges += [b for b in accepted if b.get('layout_only')]
+        skipped += [b for b in rejected if b.get('layout_only')]
+        cycles += [b for b in cap_cycles if b.get('layout_only')]
+    inline_by_members = {frozenset(b['members']): b for b in bridges}
     for group in result['groups']:
         group['role'] = 'bridge'
         live = [n for n in group['ends'] if group['anchors'][n]]
-        bridge = unique_rl.get(frozenset(group['members']))
+        bridge = inline_by_members.get(frozenset(group['members']))
         if bridge is not None:
-            group['role'] = 'conduction_inline'
+            group['role'] = 'capacitive_inline' if bridge.get('layout_only') else 'conduction_inline'
             group['conduction'] = deepcopy(bridge)
         elif len(live) == 1:
             rail = next((n for n in group['ends'] if par.power_marker_sym(n)), None)
@@ -225,7 +238,7 @@ def measure(pl, comps, index, plan):
     base['group_count']=len(plan['groups'])
     inline = []
     for g in plan['groups']:
-        if g['role'] != 'conduction_inline':
+        if g['role'] not in INLINE_ROLES:
             continue
         ports = g.get('conduction', {}).get('conduction_ports')
         hosts = (list(ports.values()) if ports else

@@ -1,0 +1,8 @@
+* Layout regression only: capacitor joins two unique conduction-host ports.
+.model PM pmos
+.model NM nmos
+MUP top top vdd vdd PM
+MLOW bottom bottom 0 0 NM
+MFAN out top vdd vdd PM
+CJOIN top bottom 10p
+.end

@@ -10,7 +10,7 @@
 
 当前实现位于 `netlist2schematic/`：`flow/`、`common/`、`netlist/`、`recognition/`、`layout/`、`routing/`、`recovery/`、`postprocess/`、`rendering/` 按主流程职责分类；`plugins/` 保存可选增强及共享关系。根目录保留六个兼容命令入口，旧文件名对应的新路径见 [source_map.json](netlist2schematic/source_map.json)。本地交付包收在 `dist/`，手工笔记收在 `notes/`，日常命令和实验默认值保持原样。
 
-跨R/L且端点带G/B抽头的有源支路，默认无源骨架现能区分“导通宿主”和“控制扇出”，复用原主列及模块插入安排上下关系。单端电源附件仍走原预排，旧JSON不自动重摆；通用触发条件、保护顺序及六图对照见[跨无源支路说明](docs/inline-passive-branches.md)。
+跨R/L/C且端点带G/B抽头的有源支路，默认无源骨架现能区分“导通宿主”和“控制扇出”，复用原主列及模块插入安排上下关系。C和含C串链仅建立显示关系，不改电气层级；单端电源附件仍走原预排，旧JSON不自动重摆。通用条件、保护顺序及实测见[跨无源支路说明](docs/inline-passive-branches.md)。
 
 ```powershell
 Set-Location D:\gongzuo

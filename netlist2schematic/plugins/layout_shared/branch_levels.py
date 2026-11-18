@@ -76,10 +76,15 @@ def _endpoint(net, chain, devices, incidence):
     return next(iter(directions)), None
 
 
-def _rl_chains(devices, comps):
-    """Split only at real terminals; a supply rail is always an endpoint."""
+def _rl_chains(devices, comps, *, include_capacitors=False):
+    """Split at real terminals; optional C bridges describe display order only.
+
+    Legacy callers retain the original R/L projection. Capacitive records are
+    explicitly marked layout_only, never added to device_leveling's DC graph.
+    """
+    kinds = ('R', 'L', 'C') if include_capacitors else ('R', 'L')
     rl = {name: device for name, device in devices.items()
-          if device['cls'] == 'PASSIVE' and device['type'] in ('R', 'L')}
+          if device['cls'] == 'PASSIVE' and device['type'] in kinds}
     adjacency = defaultdict(list)
     for name, device in rl.items():
         adjacency[device['a']].append((device['b'], name))
@@ -106,10 +111,14 @@ def _rl_chains(devices, comps):
                 path.append(other)
                 visited.add(name)
                 current, previous = other, name
-            record = {'id': 'rl:' + '|'.join(sorted(members)),
+            capacitive = any(rl[name]['type'] == 'C' for name in members)
+            record = {'id': ('rlc:' if capacitive else 'rl:') + '|'.join(sorted(members)),
                       'members': members, 'path': path}
+            if capacitive:
+                record.update(layout_only=True, dc_path=False,
+                              passive_kinds=sorted({rl[name]['type'] for name in members}))
             if path[0] == path[-1] or current in internal:
-                skipped.append(dict(record, reason='rl_cycle'))
+                skipped.append(dict(record, reason='rlc_cycle' if capacitive else 'rl_cycle'))
                 continue
             first_kind, first_error = _endpoint(path[0], set(members), devices, incidence)
             last_kind, last_error = _endpoint(path[-1], set(members), devices, incidence)
@@ -143,13 +152,18 @@ def _rl_chains(devices, comps):
             for net in (rl[name]['a'], rl[name]['b']):
                 pending.extend(other for _, other in adjacency[net]
                                if other in remaining)
-        skipped.append({'id': 'rl:' + '|'.join(sorted(component)),
-                        'members': sorted(component), 'reason': 'rl_cycle'})
+        capacitive = any(rl[name]['type'] == 'C' for name in component)
+        record = {'id': ('rlc:' if capacitive else 'rl:') + '|'.join(sorted(component)),
+                  'members': sorted(component), 'reason': 'rlc_cycle' if capacitive else 'rl_cycle'}
+        if capacitive:
+            record.update(layout_only=True, dc_path=False,
+                          passive_kinds=sorted({rl[name]['type'] for name in component}))
+        skipped.append(record)
     return accepted, skipped
 
 
 def _conduction_orders(devices, bridges):
-    """Use original net SCCs; R/L arcs have no additional device-level step."""
+    """Build a display partial order without changing original electrical SCCs."""
     edges = dl.build_active_edges(devices)
     nodes = set(dl.active_terminal_nets(devices))
     nodes.update(net for bridge in bridges for net in (bridge['start'], bridge['end']))
@@ -170,12 +184,17 @@ def _conduction_orders(devices, bridges):
         if original[a] == original[b]:
             skipped.append(dict(bridge, reason='within_original_scc'))
         elif combined[a] == combined[b] and len(old_in_new[combined[a]]) > 1:
-            skipped.append(dict(bridge, reason='bridge_would_create_conduction_cycle'))
+            skipped.append(dict(bridge, reason=('bridge_would_create_layout_cycle'
+                if bridge.get('layout_only') else 'bridge_would_create_conduction_cycle')))
         else:
             accepted.append(bridge)
     zero = defaultdict(set)
+    noncapacitive = defaultdict(set)
     for bridge in accepted:
         zero[original[bridge['start']]].add(original[bridge['end']])
+        if not bridge.get('layout_only'):
+            noncapacitive[original[bridge['start']]].add(original[bridge['end']])
+    has_capacitive = any(bridge.get('layout_only') for bridge in accepted)
     active = sorted(name for name, device in devices.items() if device['cls'] in _ACTIVE)
     endpoints = {name: (original[dl.in_terminal(devices[name])],
                         original[dl.out_terminal(devices[name])]) for name in active}
@@ -191,10 +210,19 @@ def _conduction_orders(devices, bridges):
                 if child not in reached:
                     reached.add(child)
                     pending.append(child)
+        dc_reached = reached
+        if has_capacitive:
+            dc_reached, pending = {outgoing}, [outgoing]
+            while pending:
+                for child in noncapacitive[pending.pop()]:
+                    if child not in dc_reached:
+                        dc_reached.add(child)
+                        pending.append(child)
         for lower in active:
             if lower != upper and endpoints[lower][0] in reached:
                 orders.append({'upper': upper, 'lower': lower,
                                'reason': 'conduction' if endpoints[lower][0] == outgoing
+                               else 'capacitive_layout_continuation' if endpoints[lower][0] not in dc_reached
                                else 'rl_continuation'})
     sccs = []
     for component in sorted(set(original.values())):
@@ -418,7 +446,8 @@ def _plan_attachments(devices, comps, bridges, base_rows, union):
         connections = []
 
         def connect(net, first, second):
-            connections.append({'kind': 'rl_bridge_axis', 'net': net,
+            connections.append({'kind': ('capacitive_bridge_axis' if bridge.get('layout_only')
+                                        else 'rl_bridge_axis'), 'net': net,
                                 'pins': [list(first), list(second)]})
 
         if upper is not None:

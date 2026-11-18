@@ -13,7 +13,7 @@ from time import perf_counter
 
 from netlist2schematic.plugins.passive_embedding.passive_embedding import VECTORS
 from netlist2schematic.plugins.passive_skeleton.module_geometry import template
-from netlist2schematic.plugins.passive_skeleton.plan import ACTIVE, PASSIVE, host_pairs, measure
+from netlist2schematic.plugins.passive_skeleton.plan import ACTIVE, PASSIVE, INLINE_ROLES, host_pairs, measure
 from netlist2schematic.plugins.attachment.attachment_physical import body_rect
 from netlist2schematic.routing.routing_rules import _escape, _inflate
 
@@ -154,7 +154,7 @@ def _anchor_geometry(par, pl, comps, index, group, options):
     a,b=group['ends']
     live=[n for n in (a,b) if group['anchors'][n]]
     if len(live)==2:
-        if group['role'] in ('conduction_inline','source_control_chain'):
+        if group['role'] in INLINE_ROLES or group['role']=='source_control_chain':
             aa,bb=host_pairs(pl,comps,index,group)[0]
             # Ordering follows real heights, so PMOS duals need no special case.
             pa,pb=(pl.pin_world(index[n],p) for n,p in (aa,bb))
@@ -348,7 +348,7 @@ def slot_trials(par, pl, comps, index, group, options):
         pad=options.halo+options.center_spacing+2*step
         contact=list(ea)
         ground_shunt=(any(par.power_marker_sym(n)=='ground' for n in group['ends'])
-                      and a[1] in ('D','C') and group['role'] not in ('conduction_inline','terminal_bank'))
+                      and a[1] in ('D','C') and group['role'] not in INLINE_ROLES | {'terminal_bank'})
         if direction==outer and not ground_shunt:
             contact=[ea[k]+outer[k]*pad for k in range(2)]
         elif axis==0:
@@ -367,7 +367,7 @@ def slot_trials(par, pl, comps, index, group, options):
             if direction[0]:contact[0]=ea[0]+direction[0]*pad
         target=[contact[k]-end*vector[k]*extent for k in range(2)]
         targets=[target]
-        if group['role'] not in ('terminal_bank','conduction_inline'):
+        if group['role'] not in INLINE_ROLES | {'terminal_bank'}:
             for delta in (-options.center_spacing*2,options.center_spacing*2):
                 shifted=list(target);shifted[transverse]+=delta;targets.append(shifted)
     # Derive additional channels from real obstacle edges, instead of trying
@@ -492,7 +492,7 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
     by_id={g['id']:g for g in groups};batches=[];used=set()
     for family in plan['families']:
         batches.append([by_id[gid] for gid in family['groups']]);used.update(family['groups'])
-    singles=sorted((g for g in groups if g['id'] not in used),key=lambda g:(g['role']!='conduction_inline',g['role']=='rail_attachment',-len(g['members'])))
+    singles=sorted((g for g in groups if g['id'] not in used),key=lambda g:(g['role'] not in INLINE_ROLES,g['role']=='rail_attachment',-len(g['members'])))
     batches.extend([g] for g in singles)
     placed=[]
     def batch_trials(state,batch,position=0):

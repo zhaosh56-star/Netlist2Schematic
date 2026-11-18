@@ -89,11 +89,14 @@ class InlinePassiveEvidenceTests(unittest.TestCase):
         self.assertEqual(ports['node_bias'],[rename['upper'],'D'])
         self.assertEqual(ports['node_bottom'],[rename['lower'],'D'])
 
-    def test_capacitor_and_diode_stay_two_ended_accessories(self):
-        for kind in ('C','D'):
-            devices=bias_devices();devices['R']['type']=kind
-            plan=model(devices)[3]
-            self.assertFalse(any(g.get('conduction') for g in plan['groups']))
+    def test_capacitor_display_bridge_and_diode_accessory_are_distinct(self):
+        devices=bias_devices();devices['R']['type']='C'
+        group=model(devices)[3]['groups'][0]
+        self.assertEqual(group['role'],'capacitive_inline')
+        self.assertTrue(group['conduction']['layout_only'])
+        self.assertFalse(group['conduction']['dc_path'])
+        devices['R']['type']='D'
+        self.assertFalse(any(g.get('conduction') for g in model(devices)[3]['groups']))
 
     def test_control_tapped_supply_load_keeps_original_attachment_policy(self):
         devices=bias_devices()

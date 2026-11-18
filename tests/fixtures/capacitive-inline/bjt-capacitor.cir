@@ -1,0 +1,8 @@
+* Layout regression only: use real C/E hosts and retain B control fanout.
+.model PN pnp
+.model NN npn
+QUP top top vdd PN
+QLOW bottom bottom 0 NN
+QFAN out top vdd PN
+CJOIN top bottom 10p
+.end

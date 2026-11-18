@@ -3,7 +3,7 @@ from copy import deepcopy
 from bisect import bisect_left
 from time import perf_counter
 
-from netlist2schematic.plugins.passive_skeleton.plan import ACTIVE, PASSIVE, measure
+from netlist2schematic.plugins.passive_skeleton.plan import ACTIVE, PASSIVE, INLINE_ROLES, measure
 from netlist2schematic.plugins.passive_skeleton.placement import pack
 
 
@@ -12,12 +12,12 @@ def _core_records(structs, names):
 
 
 def _align_rl(par, core, comps, nets, index, plan):
-    """Unique R/L conduction chains inherit a column, not an arbitrary side slot."""
+    """Resolved inline R/L/C modules inherit their hosts' display column."""
     from netlist2schematic.layout.series_alignment import _fixed_ids
     from netlist2schematic.plugins.preflight.placement_preflight import _wire_estimate
     fixed = _fixed_ids(core, comps); actions=[]
     for group in plan['groups']:
-        if group['role'] != 'conduction_inline':continue
+        if group['role'] not in INLINE_ROLES:continue
         ports = group.get('conduction', {}).get('conduction_ports')
         terminals = (list(ports.values()) if ports else
                      [t for ts in group['anchors'].values() for t in ts
@@ -156,7 +156,7 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
             key='__layout_attachment_edge_'+str(k)
             while key in estimate_nets:key+='_'  # Never overwrite a real net.
             estimate_nets[key]=terminals;aux.append(dict(id=key,group=g['id'],terminals=[list(t) for t in terminals],projection_only=True))
-        if g['role']=='conduction_inline':
+        if g['role'] in INLINE_ROLES:
             ports = g.get('conduction', {}).get('conduction_ports')
             active = ([ci[n] for n,p in ports.values()] if ports else
                       [ci[n] for n,p in terminals if cc[ci[n]]['symbol'] in ACTIVE])
@@ -207,6 +207,10 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     if inline_bridges:
         report['inline_port_policy'] = 'unique-conduction-hosts-with-control-taps-v1'
         report['terminal_row_preferences'] = terminal_rows
+        capacitive = [b for b in inline_bridges if b.get('layout_only')]
+        if capacitive:
+            report['capacitive_layout_bridges'] = deepcopy(capacitive)
+            report['capacitor_policy'] = 'unique-two-host-display-order-v1'
         metadata.update({key: deepcopy(context[key]) for key in ('layout_columns','series_alignment')
                          if key in context})
     return (packed,comps,nets,index,metadata),report

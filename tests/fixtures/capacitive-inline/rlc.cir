@@ -1,0 +1,10 @@
+* Layout regression only: preserve the real R-C-L series connections.
+.model PM pmos
+.model NM nmos
+MUP top top vdd vdd PM
+MLOW bottom bottom 0 0 NM
+MFAN out top vdd vdd PM
+RJOIN top middle_a 1k
+CJOIN middle_b middle_a 10p
+LJOIN middle_b bottom 1u
+.end

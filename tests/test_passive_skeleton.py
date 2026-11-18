@@ -70,10 +70,11 @@ class PassiveSkeletonEvidenceTests(unittest.TestCase):
         self.assertEqual({v for c in p['terminals'].values() for v in c['nodes'].values()},
                          {v for c in to_document(devices)['components'] for v in c['nodes'].values()})
 
-    def test_only_unique_rl_conduction_paths_define_inline_order(self):
-        for kind,inline in (('L',True),('R',True),('C',False),('D',False)):
+    def test_inline_roles_distinguish_rl_capacitive_layout_and_diodes(self):
+        for kind,role in (('L','conduction_inline'),('R','conduction_inline'),
+                          ('C','capacitive_inline'),('D','bridge')):
             devices={'a':mos('upper','ga','mid1'),'b':mos('mid2','gb'), 'p':resistor('mid1','mid2',kind)}
-            self.assertEqual(model(devices)['groups'][0]['role']=='conduction_inline',inline)
+            self.assertEqual(model(devices)['groups'][0]['role'],role)
         devices['p']=resistor('mid1','mid2','L');devices['tap']=mos('unrelated','mid1')
         group=model(devices)['groups'][0]
         self.assertEqual(group['role'],'conduction_inline')
