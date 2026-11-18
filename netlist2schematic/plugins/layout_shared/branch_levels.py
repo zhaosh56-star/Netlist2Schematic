@@ -378,6 +378,9 @@ def _plan_attachments(devices, comps, bridges, base_rows, union):
                 anchors.append((None, None))
                 continue
             users = [(name, pin) for name, pin in incidence[net] if name not in members]
+            if net in bridge.get('conduction_ports', {}):
+                host = tuple(bridge['conduction_ports'][net])
+                users = [host] if host in users else []
             if len(users) != 1 or devices[users[0][0]]['cls'] not in _ACTIVE:
                 error = 'ambiguous_attachment_endpoint'
                 break
@@ -485,7 +488,7 @@ def _plan_attachments(devices, comps, bridges, base_rows, union):
     return rows, attachment_rows, alignment, skipped, axis, insertions
 
 
-def plan_branch_rows(devices, levels, row_of, relations, comps, index):
+def plan_branch_rows(devices, levels, row_of, relations, comps, index, *, bridges=None):
     """Return a new row list and JSON-safe display-order evidence.
 
     ``levels`` is the unchanged result of ``device_leveling.compute_levels``.
@@ -520,7 +523,10 @@ def plan_branch_rows(devices, levels, row_of, relations, comps, index):
     if not any(device['cls'] in _ACTIVE for device in devices.values()):
         report['reason'] = 'no_active_devices'
         return list(row_of), report
-    bridges, rejected = _rl_chains(devices, comps)
+    if bridges is None:
+        bridges, rejected = _rl_chains(devices, comps)
+    else:
+        bridges, rejected = list(bridges), []
     orders, bridges, cycle_rejected, sccs = _conduction_orders(devices, bridges)
     union, same_row, skipped = _same_rows(relations, names, devices,
         {comp['id']: comp for comp in comps}, orders)

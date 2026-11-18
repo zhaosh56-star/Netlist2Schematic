@@ -75,6 +75,10 @@ class PassiveSkeletonEvidenceTests(unittest.TestCase):
             devices={'a':mos('upper','ga','mid1'),'b':mos('mid2','gb'), 'p':resistor('mid1','mid2',kind)}
             self.assertEqual(model(devices)['groups'][0]['role']=='conduction_inline',inline)
         devices['p']=resistor('mid1','mid2','L');devices['tap']=mos('unrelated','mid1')
+        group=model(devices)['groups'][0]
+        self.assertEqual(group['role'],'conduction_inline')
+        self.assertIn(['tap','G'],group['conduction']['control_taps']['mid1'])
+        devices['tap']=mos('mid1','unrelated')
         self.assertNotEqual(model(devices)['groups'][0]['role'],'conduction_inline')
 
     def test_unique_source_control_path_and_shared_node_are_distinct(self):

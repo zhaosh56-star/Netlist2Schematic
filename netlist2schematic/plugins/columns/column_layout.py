@@ -29,7 +29,10 @@ def _identity(prefix, names):
     return prefix + ':' + sha256(repr(tuple(sorted(names))).encode()).hexdigest()[:16]
 
 
-def build_column_plan(par, pl, comps, nets, index, structures=()):
+def build_column_plan(par, pl, comps, nets, index, structures=(), *, inline_bridges=()):
+    inline_bridges = tuple(inline_bridges)
+    protected = (build_column_plan(par, pl, comps, nets, index, structures)
+                 if inline_bridges else None)
     active = {c['id']: c for c in comps if c['symbol'] in CHANNELS}
     rows = {n: pl.cell_of[index[n]][0] for n in active}
     order = lambda n: (rows[n], pl.cell_of[index[n]][1])
@@ -79,6 +82,23 @@ def build_column_plan(par, pl, comps, nets, index, structures=()):
                 raw.append(dict(a=a, pin_a=pa, b=b, pin_b=pb, net=net,
                     unique=len(outgoing[net]) == len(incoming[net]) == 1,
                     explicit=(a, b, net) in preferred))
+    for bridge in inline_bridges:
+        hosts = bridge.get('conduction_ports', {})
+        upper = hosts.get(bridge['start'])
+        lower = hosts.get(bridge['end'])
+        if upper is None or lower is None:
+            continue
+        a, pa = upper
+        b, pb = lower
+        if (a not in active or b not in active or a == b or rows[a] >= rows[b]
+                or pa != _ports(active[a])[1] or pb != _ports(active[b])[0]
+                or active[a]['nodes'][pa] != bridge['start']
+                or active[b]['nodes'][pb] != bridge['end']):
+            skipped.append(dict(bridge=bridge['id'], reason='incompatible_inline_ports_or_rows'))
+            continue
+        raw.append(dict(a=a, pin_a=pa, b=b, pin_b=pb, net=None,
+            endpoint_nets=[bridge['start'], bridge['end']], via=list(bridge['members']),
+            bridge=bridge['id'], unique=True, explicit=False))
     raw.sort(key=lambda e: (order(e['a']), order(e['b'])))
     adjacent = defaultdict(list)
     for edge in raw:
@@ -132,7 +152,8 @@ def build_column_plan(par, pl, comps, nets, index, structures=()):
                 or sum(s == best_in for s, _ in entries) != 1):
             skipped.append(dict(e, reason='ambiguous_or_lower_supported_continuation'))
             continue
-        edges.append(dict(e, evidence='explicit_composite_ports' if e['explicit'] else
+        edges.append(dict(e, evidence='unique_rl_continuation' if e.get('via') else
+                          'explicit_composite_ports' if e['explicit'] else
                           'repeated_multilevel_controls' if score[1] else 'unique_active_continuation'))
     after = {e['a']: e['b'] for e in edges}
     predecessors = {e['b'] for e in edges}
@@ -148,6 +169,8 @@ def build_column_plan(par, pl, comps, nets, index, structures=()):
     by_id = {c['id']: c for c in columns}
     side, seen = [], set()
     for e in edges:
+        if e.get('via'):
+            continue
         host = owner[e['a']]
         for tap, pin in outgoing[e['net']]+incoming[e['net']]:
             child = owner[tap]
@@ -159,12 +182,15 @@ def build_column_plan(par, pl, comps, nets, index, structures=()):
                 side.append(dict(side=child, host=host, net=e['net'], tap=tap, pin=pin,
                                  anchor_devices=[e['a'], e['b']]))
     covered = sum(len(p) for p in paths if len(p) > 1)
-    return dict(version=VERSION, columns=columns, edges=edges, side_accesses=side,
+    result = dict(version=VERSION, columns=columns, edges=edges, side_accesses=side,
         corresponding_paths=cohorts, skipped=skipped, shared_junction_anchors=sorted(anchors),
         active_count=len(active), covered_active_count=covered,
         supported=bool(edges),
         terminal_contract={c['id']: dict(symbol=c['symbol'], nodes=deepcopy(c['nodes'])) for c in comps},
         active_rows=rows)
+    if protected is not None:
+        result['protected_plan'] = protected
+    return result
 
 
 def compatible_plan(plan, pl, comps, index):
@@ -211,9 +237,15 @@ def preserves_columns(before, trial, index):
     plan = getattr(before, 'column_plan', None)
     if plan is None:
         return True
-    a, b = measure_columns(before, index, plan), measure_columns(trial, index, plan)
-    return all(b[k] <= a[k]+EPS for k in ('column_breaks', 'order_reversals', 'side_intrusions',
-                                         'pin_error', 'column_spread', 'side_distance'))
+    plans = [plan]
+    if plan.get('protected_plan') is not None:
+        plans.append(plan['protected_plan'])
+    for item in plans:
+        a, b = measure_columns(before, index, item), measure_columns(trial, index, item)
+        if any(b[k] > a[k]+EPS for k in ('column_breaks', 'order_reversals', 'side_intrusions',
+                                        'pin_error', 'column_spread', 'side_distance')):
+            return False
+    return True
 
 
 def _proposals(pl, index, plan):
@@ -317,6 +349,8 @@ def refine_columns(par, pl, comps, nets, index, metadata, plan, options=None, *,
         for _ in range(4):
             incumbent = None
             old_metrics = measure_columns(current, index, plan)
+            protected_metrics = (measure_columns(current, index, plan['protected_plan'])
+                                 if plan.get('protected_plan') is not None else None)
             old_unique = measure_series(current, index, unique)['relations']
             for moved, cells in _proposals(current, index, plan):
                 if perf_counter() >= stop or report['trials'] >= max_trials:
@@ -330,6 +364,10 @@ def refine_columns(par, pl, comps, nets, index, metadata, plan, options=None, *,
                 metrics = measure_columns(trial, index, plan)
                 if column_key(metrics) >= column_key(old_metrics):
                     continue
+                if protected_metrics is not None:
+                    protected_trial = measure_columns(trial, index, plan['protected_plan'])
+                    if any(protected_trial[k] > v+EPS for k, v in protected_metrics.items()):
+                        continue
                 new_unique = measure_series(trial, index, unique)['relations']
                 if any(b['horizontal_error'] > a['horizontal_error']+EPS for a, b in zip(old_unique, new_unique)):
                     continue

@@ -432,7 +432,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 report = metadata.setdefault('layout_columns', dict(version=VERSION, policy='auto',
                     reference_candidate=identifier == '1', plan=deepcopy(shared_column_plan), applied=False,
                     trials=0, actions=[], stop_reason='reference_not_reorganized'))
-                report['current'] = measure_columns(placement, index, shared_column_plan)
+                report['current'] = measure_columns(placement, index, report['plan'])
                 report['measurement_stage'] = 'before_final_routing'
             if region_layout == 'auto' and shared_region_plan is not None:
                 metadata = _measure_region_candidate(placement, comps, index, metadata,
@@ -650,7 +650,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         from netlist2schematic.plugins.columns.column_layout import measure_columns, select_column_result
         for result in valid_results:
             report = result[5].setdefault('layout_columns', {'plan': deepcopy(shared_column_plan)})
-            report['current'] = measure_columns(result[1], result[4], shared_column_plan)
+            report['current'] = measure_columns(result[1], result[4], report['plan'])
             report['measurement_stage'] = 'before_route_simplification'
         if candidate_id is None:
             best, column_selection = select_column_result(valid_results, shared_column_plan)

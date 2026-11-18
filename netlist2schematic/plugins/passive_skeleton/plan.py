@@ -11,16 +11,88 @@ PASSIVE = frozenset(('resistor', 'capacitor', 'inductor', 'diode'))
 CHANNELS = {'nmos': ('D', 'S'), 'pmos': ('D', 'S'), 'npn': ('C', 'E'), 'pnp': ('C', 'E')}
 
 
+def _conduction_bridges(devices, comps):
+    """Resolve a unique channel host independently of its control fanout.
+
+    Only endpoint control taps are projected out while inferring R/L order.
+    Internal taps still split a chain, and every original port stays in the
+    module anchors used for actual placement, routing and verification.
+    """
+    from netlist2schematic.plugins.layout_shared.branch_levels import _rl_chains, _visible_incidence, _rail
+    incidence = _visible_incidence(comps)
+    projected_ends = {}
+    for net, terminals in incidence.items():
+        if _rail(net):
+            continue
+        conductive, controls, passives, others = [], [], [], []
+        for name, pin in terminals:
+            device = devices[name]
+            if device['cls'] in ('MOS', 'BJT'):
+                channel = ('D', 'S') if device['cls'] == 'MOS' else ('C', 'E')
+                if pin in channel:
+                    conductive.append((name, pin))
+                elif pin == ('G' if device['cls'] == 'MOS' else 'B'):
+                    controls.append((name, pin))
+                else:
+                    others.append((name, pin))
+            elif device['cls'] == 'PASSIVE' and device['type'] in ('R', 'L'):
+                passives.append((name, pin))
+            else:
+                others.append((name, pin))
+        if len(conductive) == len(passives) == 1 and controls and not others:
+            projected_ends[net] = controls
+    if not projected_ends:
+        return _rl_chains(devices, comps)
+    hidden = {terminal for values in projected_ends.values() for terminal in values}
+    projected = [dict(comp, nodes={pin: net for pin, net in comp['nodes'].items()
+                                  if (comp['id'], pin) not in hidden}) for comp in comps]
+    bridges, skipped = _rl_chains(devices, projected)
+    accepted = []
+    for bridge in bridges:
+        if not any(net in projected_ends for net in (bridge['start'], bridge['end'])):
+            accepted.append(bridge)
+            continue
+        hosts, controls = {}, {}
+        for net in (bridge['start'], bridge['end']):
+            if _rail(net):
+                continue
+            channels = []
+            taps = []
+            for name, pin in incidence[net]:
+                device = devices[name]
+                if device['cls'] not in ('MOS', 'BJT'):
+                    continue
+                if pin in (('D', 'S') if device['cls'] == 'MOS' else ('C', 'E')):
+                    channels.append([name, pin])
+                else:
+                    taps.append([name, pin])
+            if len(channels) != 1:
+                break
+            hosts[net] = channels[0]
+            controls[net] = taps
+        else:
+            # One-ended supply accessories already have an owner_port and a
+            # verified packing policy. Endpoint fanout does not justify
+            # changing their role or their active row plan.
+            if len(hosts) != 2:
+                skipped.append(dict(bridge, reason='control_tapped_rail_keeps_attachment_policy'))
+                continue
+            accepted.append(dict(bridge, conduction_ports=hosts, control_taps=controls))
+            continue
+        skipped.append(dict(bridge, reason='ambiguous_conduction_host'))
+    return accepted, skipped
+
+
 def compile_plan(par, devices, comps, nets, structs):
     """Keep every real terminal; only unambiguous R/L edges imply row order.
 
     C, D, feedback and sense paths remain typed two-ended attachments. In
     particular, two sense resistors never merge two output nodes in this view.
     """
-    from netlist2schematic.plugins.layout_shared.branch_levels import _rl_chains, _conduction_orders
+    from netlist2schematic.plugins.layout_shared.branch_levels import _conduction_orders
     result = build_modules(par, comps, nets)
     parts = {c['id']: c for c in comps}
-    bridges, skipped = _rl_chains(devices, comps)
+    bridges, skipped = _conduction_bridges(devices, comps)
     _, bridges, cycles, _ = _conduction_orders(devices, bridges)
     unique_rl = {frozenset(b['members']): b for b in bridges}
     for group in result['groups']:
@@ -91,6 +163,9 @@ def host_pairs(pl, comps, index, group):
     nearest gate would hide the actual span between the two active branches.
     """
     a, b = group['ends']
+    hosts = group.get('conduction', {}).get('conduction_ports', {})
+    if a in hosts and b in hosts:
+        return [(tuple(hosts[a]), tuple(hosts[b]))]
     first, last = group['anchors'][a], group['anchors'][b]
     def key(pair):
         (na, pa), (nb, pb) = pair
@@ -152,7 +227,9 @@ def measure(pl, comps, index, plan):
     for g in plan['groups']:
         if g['role'] != 'conduction_inline':
             continue
-        hosts = [t for ts in g['anchors'].values() for t in ts if comps[index[t[0]]]['symbol'] in ACTIVE]
+        ports = g.get('conduction', {}).get('conduction_ports')
+        hosts = (list(ports.values()) if ports else
+                 [t for ts in g['anchors'].values() for t in ts if comps[index[t[0]]]['symbol'] in ACTIVE])
         if len(hosts) == 2:
             a, b = (pl.pin_world(index[n], p) for n, p in hosts)
             points = [a, b] + [pl.pos_of(index[n]) for n in g['members']]

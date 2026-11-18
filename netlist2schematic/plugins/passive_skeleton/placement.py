@@ -105,6 +105,8 @@ def make_frame(par, core, comps, index, options):
     pl.fixed_cells={mapping[i]:cell for i,cell in getattr(core,'fixed_cells',{}).items()}
     pl.source_orientation_ids={mapping[i] for i in getattr(core,'source_orientation_ids',())}
     pl.terminal_orientation_ids=set(passive)
+    if getattr(core, 'column_plan', {}).get('protected_plan') is not None:
+        pl.column_plan = deepcopy(core.column_plan)
     pl.passive_local_offsets=[[0.,0.] for c in comps]
     # Unplaced guests never occupy an active slot or constrain core packing.
     far_x=max(core.column_x)+300; far_y=max(core.row_y)+300
@@ -536,6 +538,14 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
         j=index[c['id']]
         if frame.cell_of[j]!=core.cell_of[i] or frame.orient[j]!=core.orient[i]:
             raise AssertionError('Passive insertion changed the active skeleton identity or orientation')
+    if getattr(core, 'column_plan', {}).get('protected_plan') is not None:
+        from netlist2schematic.plugins.columns.column_layout import measure_columns
+        for item in (core.column_plan, core.column_plan['protected_plan']):
+            before = measure_columns(core, {c['id']:i for i,c in enumerate(core.comps)}, item)
+            after = measure_columns(frame, index, item)
+            if any(after[key] > value+EPS for key,value in before.items()):
+                return finish('column_contract_conflict')
+        report['column_contract_preserved'] = True
     report['active_core_preserved']=True
     report['module_connections']=deepcopy(frame.passive_module_guides)
     return finish('packed',frame)

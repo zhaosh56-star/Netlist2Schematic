@@ -72,7 +72,9 @@ def rebase_after_axis_expansion(before, after, index, plan, *, grid_step=2):
     records=[]
     for group in plan['groups']:
         terminals=[t for ts in group['anchors'].values() for t in ts]
-        if group.get('owner_port'):
+        if group.get('conduction', {}).get('conduction_ports'):
+            terminals=list(group['conduction']['conduction_ports'].values())
+        elif group.get('owner_port'):
             terminals=[group['owner_port']['terminal']]
         deltas=[tuple(after.pin_world(index[n],p)[k]-before.pin_world(index[n],p)[k]
                       for k in (0,1)) for n,p in terminals]

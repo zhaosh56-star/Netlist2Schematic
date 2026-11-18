@@ -1,5 +1,6 @@
 """Optimize an active skeleton first, then embed its typed passive edges."""
 from copy import deepcopy
+from bisect import bisect_left
 from time import perf_counter
 
 from netlist2schematic.plugins.passive_skeleton.plan import ACTIVE, PASSIVE, measure
@@ -17,7 +18,10 @@ def _align_rl(par, core, comps, nets, index, plan):
     fixed = _fixed_ids(core, comps); actions=[]
     for group in plan['groups']:
         if group['role'] != 'conduction_inline':continue
-        terminals=[t for ts in group['anchors'].values() for t in ts if t[0] in index and comps[index[t[0]]]['symbol'] in ACTIVE]
+        ports = group.get('conduction', {}).get('conduction_ports')
+        terminals = (list(ports.values()) if ports else
+                     [t for ts in group['anchors'].values() for t in ts
+                      if t[0] in index and comps[index[t[0]]]['symbol'] in ACTIVE])
         if len(terminals)!=2:continue
         a,b=(index[n] for n,p in terminals)
         if core.cell_of[a][0]==core.cell_of[b][0]:continue
@@ -29,6 +33,10 @@ def _align_rl(par, core, comps, nets, index, plan):
             if len(set(cells))!=len(cells) or any(cells[i]!=core.cell_of[i] for i in fixed):continue
             trial.set_state(cells,trial.orient)
             if not trial.blocks_contiguous():continue
+            if getattr(core, 'column_plan', {}).get('protected_plan') is not None:
+                from netlist2schematic.plugins.columns.column_layout import preserves_columns
+                if not preserves_columns(core, trial, index):
+                    continue
             reversed_role=False
             for block in core.role_orders:
                 for row in block:
@@ -104,10 +112,37 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     document=to_document(core_devices);cc,cn=document['components'],document['nets']
     ci={c['id']:i for i,c in enumerate(cc)}
     core_structs=_core_records(structs,set(ci))
+    inline_bridges = [g['conduction'] for g in plan['groups']
+                      if g.get('conduction', {}).get('conduction_ports')]
     # Derive directed R/L evidence on the real circuit first; compress away
     # passive reservation rows before building the ordinary active grid.
     original_rows,_=sp.legacy._allocate_rows(devices,comps,index,levels['net_levels'],levels['device_levels'],att)
-    _,rows=plan_branch_rows(devices,levels,original_rows,[],comps,index)
+    row_options = ({'bridges': [g['conduction'] for g in plan['groups']
+                               if g.get('conduction')]} if inline_bridges else {})
+    planning_rows = original_rows
+    terminal_rows = []
+    if inline_bridges:
+        # Old passive reservation gaps must not become new active tiers when
+        # an additional branch is inserted. Pack later reserves real space.
+        active_rows = sorted({original_rows[index[name]] for name in ci})
+        planning_rows = [bisect_left(active_rows, row) for row in original_rows]
+        from netlist2schematic.recognition.device_leveling import out_terminal
+        for bridge in inline_bridges:
+            lower = bridge['conduction_ports'].get(bridge['end'])
+            if lower is None:
+                continue
+            name = lower[0]
+            sink = out_terminal(devices[name])
+            if sp.par.power_marker_sym(sink) != 'ground':
+                continue
+            peers = [planning_rows[index[other]] for other in ci
+                     if out_terminal(devices[other]) == sink]
+            before = planning_rows[index[name]]
+            planning_rows[index[name]] = max(peers)
+            if planning_rows[index[name]] != before:
+                terminal_rows.append(dict(device=name, net=sink, before=before,
+                    after=planning_rows[index[name]], reason='shared_sink_branch_end'))
+    _,rows=plan_branch_rows(devices,levels,planning_rows,[],comps,index,**row_options)
     occupied=sorted({rows['rows_before_attachments'][n] for n in ci})
     row_map={old:r for r,old in enumerate(occupied)}
     core_rows=[row_map[rows['rows_before_attachments'][c['id']]] for c in cc]
@@ -122,7 +157,9 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
             while key in estimate_nets:key+='_'  # Never overwrite a real net.
             estimate_nets[key]=terminals;aux.append(dict(id=key,group=g['id'],terminals=[list(t) for t in terminals],projection_only=True))
         if g['role']=='conduction_inline':
-            active=[ci[n] for n,p in terminals if cc[ci[n]]['symbol'] in ACTIVE]
+            ports = g.get('conduction', {}).get('conduction_ports')
+            active = ([ci[n] for n,p in ports.values()] if ports else
+                      [ci[n] for n,p in terminals if cc[ci[n]]['symbol'] in ACTIVE])
             if len(active)==2:alignment.append((*active,3.))
     local_deadline=min(deadline,perf_counter()+12) if deadline is not None else None
     energy,estimate,annealing=sp._anneal(core,estimate_nets,ci,alignment,pairs,iterations,local_deadline)
@@ -135,7 +172,8 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     # They cannot be repelled by a parked resistor or a remote capacitor.
     until=min(deadline,perf_counter()+1) if deadline is not None else perf_counter()+1
     if columns:
-        column_plan=build_column_plan(sp.par,core,cc,cn,ci,core_structs)
+        column_plan=build_column_plan(sp.par,core,cc,cn,ci,core_structs,
+            **({'inline_bridges': inline_bridges} if inline_bridges else {}))
         core,context=refine_columns(sp.par,core,cc,cn,ci,context,column_plan,options,deadline=until,
             seconds=max(0,until-perf_counter()),max_trials=128)
     used=context.get('layout_columns',{}).get('trials',0)
@@ -166,4 +204,9 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
         passive_layout_policy='skeleton',passive_layout=dict(version=plan['version'],policy='skeleton',
             core_only_sa=True,post_sa_local_coordinates=True))
     report['current']=measure(packed,comps,index,report['plan'])
+    if inline_bridges:
+        report['inline_port_policy'] = 'unique-conduction-hosts-with-control-taps-v1'
+        report['terminal_row_preferences'] = terminal_rows
+        metadata.update({key: deepcopy(context[key]) for key in ('layout_columns','series_alignment')
+                         if key in context})
     return (packed,comps,nets,index,metadata),report
