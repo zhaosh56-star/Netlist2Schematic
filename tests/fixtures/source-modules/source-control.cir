@@ -1,0 +1,8 @@
+* Layout regression: a source and its input chain remain one two-port module.
+.model NM NMOS
+VINPUT input 0 DC 0.7
+RINPUT input mid1 1k
+LINPUT mid1 mid2 1m
+CINPUT mid2 gate 10p
+MCORE out gate 0 0 NM
+RLOAD vdd out 10k

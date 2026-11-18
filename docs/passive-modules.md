@@ -1,6 +1,8 @@
 # 无源小模块沿连接通道插入
 
-当前构造版本为 `active-first-passive-modules-v3`。普通新网表的结构化、flexible主flow已默认开启 `--passive-skeleton auto`，主列策略仍为 `--column-layout auto`。**先运行候选2、3，只有两份都没完成合法结果才运行候选1。** 比较成品前共用原缩线预算；完整调度、选图、默认值及兼容方式见[候选优先策略](preferred-candidates.md)。显式 `--passive-skeleton off` 恢复原流程。下文v2／v3整批数字保留推广前当时的口径。
+当前构造版本为 `active-first-two-terminal-modules-v4`。普通新网表的结构化、flexible主flow已默认开启 `--passive-skeleton auto`，主列策略仍为 `--column-layout auto`。**先运行候选2、3，只有两份都没完成合法结果才运行候选1。** 比较成品前共用原缩线预算；完整调度、选图、默认值及兼容方式见[候选优先策略](preferred-candidates.md)。显式 `--passive-skeleton off` 恢复原流程。下文v2／v3整批数字保留推广前当时的口径。
+
+v4把有明确两端模块和有源宿主的独立V/I也纳入插入；可与R/C/L共同成组，按实际正负引脚和完整原网表验收。纯供电源、浮空源及归属不明的源保留原核心路径。此扩展只改变显示布局，不修改电气层级；见[源器件模块布局](source-module-layout.md)。
 
 跨R/L/C支路现补充了导通宿主与控制抽头的区分：两端均有唯一D/S或C/E宿主且方向明确时，先推导显示顺序，再使用原主列和模块预排；单端电源附件保持原规则。C及含C串链标记为仅用于显示布局，不改电气层级。新关系不能抵消旧主列保护，扩距时模块跟随导通宿主。条件与同参实测见[跨无源支路说明](inline-passive-branches.md)。
 

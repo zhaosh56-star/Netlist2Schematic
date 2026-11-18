@@ -1,0 +1,7 @@
+* Layout regression: independent source keeps its actual + / - terminals.
+.model NM NMOS
+.model PM PMOS
+MUP upper upper VDD VDD PM
+MLOW lower lower 0 0 NM
+MTAP out upper VDD VDD PM
+IBIAS upper lower DC 20u

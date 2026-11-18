@@ -7,6 +7,8 @@ This representation does not grant geometry or fixed-device exemptions.
 from math import isfinite
 
 PASSIVE = frozenset(('resistor', 'capacitor', 'inductor', 'diode'))
+SOURCES = frozenset(('voltage-source', 'current-source'))
+LAYOUT_GUESTS = PASSIVE | SOURCES
 
 
 def validate_passive_offsets(placement, comps):
@@ -19,5 +21,5 @@ def validate_passive_offsets(placement, comps):
         if (not isinstance(pair, (list, tuple)) or len(pair) != 2
                 or any(type(v) not in (int, float) or not isfinite(v) for v in pair)):
             raise ValueError('Invalid passive local offset for ' + comp['id'])
-        if any(pair) and comp['symbol'] not in PASSIVE:
-            raise ValueError('Local offsets are only supported for passive devices: ' + comp['id'])
+        if any(pair) and comp['symbol'] not in LAYOUT_GUESTS:
+            raise ValueError('Local offsets are only supported for passive devices and independent sources: ' + comp['id'])

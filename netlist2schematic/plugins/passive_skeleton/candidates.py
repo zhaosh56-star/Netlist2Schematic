@@ -108,7 +108,8 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     from netlist2schematic.layout.series_alignment import refine_series_alignment
     from netlist2schematic.layout.structure_hierarchy import hierarchy_report
     started=perf_counter()
-    core_devices={n:deepcopy(d) for n,d in devices.items() if d['cls']!='PASSIVE'}
+    guest_ids=set(plan.get('guest_ids', (n for n,d in devices.items() if d['cls']=='PASSIVE')))
+    core_devices={n:deepcopy(d) for n,d in devices.items() if n not in guest_ids}
     document=to_document(core_devices);cc,cn=document['components'],document['nets']
     ci={c['id']:i for i,c in enumerate(cc)}
     core_structs=_core_records(structs,set(ci))
@@ -207,10 +208,14 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     if inline_bridges:
         report['inline_port_policy'] = 'unique-conduction-hosts-with-control-taps-v1'
         report['terminal_row_preferences'] = terminal_rows
-        capacitive = [b for b in inline_bridges if b.get('layout_only')]
+        capacitive = [b for b in inline_bridges if b.get('layout_only') and not b.get('source_layout')]
         if capacitive:
             report['capacitive_layout_bridges'] = deepcopy(capacitive)
             report['capacitor_policy'] = 'unique-two-host-display-order-v1'
         metadata.update({key: deepcopy(context[key]) for key in ('layout_columns','series_alignment')
                          if key in context})
+    if plan.get('source_layout', {}).get('guests'):
+        report['source_layout']=deepcopy(plan['source_layout'])
+        report['source_layout']['inline_bridges']=[deepcopy(g['conduction']) for g in plan['groups']
+                                                   if g['role']=='source_inline']
     return (packed,comps,nets,index,metadata),report

@@ -4,6 +4,8 @@
 
 详细说明已集中到 [docs/flow-guide.md](docs/flow-guide.md)，包括完整流程、分层与结构化布局、A*和失败恢复、最终路线简化、支持的网表、几何规则及全部参数。
 
+已登记、等待后续实施的MOS朝向优化和差分对显示行修复，见[待修改清单](docs/pending-improvements.md)。清单中的新增策略尚未实现，默认flow保持原样。
+
 日常运行与安装命令见 [README.md](README.md)。各脚本和资源的用途见 [docs/project-layout.md](docs/project-layout.md)。
 
 终端独立运行和整批出图见[批量运行说明](docs/batch-flow.md)。`tools/run_dataset.py <目录>`沿用主flow默认预算；显式加`--budget quick`才采用每张先60秒、失败再120秒的验证方式，两者不混用。
@@ -11,6 +13,8 @@
 当前实现位于 `netlist2schematic/`：`flow/`、`common/`、`netlist/`、`recognition/`、`layout/`、`routing/`、`recovery/`、`postprocess/`、`rendering/` 按主流程职责分类；`plugins/` 保存可选增强及共享关系。根目录保留六个兼容命令入口，旧文件名对应的新路径见 [source_map.json](netlist2schematic/source_map.json)。本地交付包收在 `dist/`，手工笔记收在 `notes/`，日常命令和实验默认值保持原样。
 
 跨R/L/C且端点带G/B抽头的有源支路，默认无源骨架现能区分“导通宿主”和“控制扇出”，复用原主列及模块插入安排上下关系。C和含C串链仅建立显示关系，不改电气层级；单端电源附件仍走原预排，旧JSON不自动重摆。通用条件、保护顺序及实测见[跨无源支路说明](docs/inline-passive-branches.md)。
+
+独立电压源V、电流源I也已接入默认两端模块插入：按唯一导通宿主、共同S/E节点或控制端串链安排，保留正负端、电流箭头和全部原节点；归属不明确的源沿用原路径。规则、代码、实测收益及限制见[源器件模块布局](docs/source-module-layout.md)。
 
 ```powershell
 Set-Location D:\gongzuo

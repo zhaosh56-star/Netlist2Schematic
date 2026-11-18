@@ -83,7 +83,7 @@ def _reduce(edges, ends):
     return face(edges[0], ends[0])
 
 
-def build_modules(par, comps, nets):
+def build_modules(par, comps, nets, *, source_ids=()):
     """Maximal unambiguous two-port modules, cut at *all* external taps.
 
     Equal boundary pairs may form a parallel bank. Sharing just one supply,
@@ -91,7 +91,10 @@ def build_modules(par, comps, nets):
     """
     legacy = build_plan(par, comps, nets)
     parts = {c['id']: c for c in comps}
-    all_passives = {n for n, c in parts.items() if c['symbol'] in PASSIVE}
+    from netlist2schematic.common.passive_coordinates import SOURCES
+    sources = {n for n in source_ids if n in parts and parts[n]['symbol'] in SOURCES}
+    passives = {n for n, c in parts.items() if c['symbol'] in PASSIVE}
+    all_passives = passives | sources
     eligible = {n for n in all_passives if len(parts[n]['nodes']) == 2
                 and len(set(parts[n]['nodes'].values())) == 2}
     boundary = {net for net, terminals in nets.items() if par.power_marker_sym(net)
@@ -129,6 +132,9 @@ def build_modules(par, comps, nets):
             continue
         if frozenset(names) in old_groups:
             group = deepcopy(old_groups[frozenset(names)])
+            if sources:
+                group['anchors'] = {net: [list(t) for t in nets[net] if t[0] not in all_passives]
+                                    if not par.power_marker_sym(net) else [] for net in ends}
         else:
             group = dict(id=sha256(repr((ends, sorted(names))).encode()).hexdigest()[:16],
                          kind='series_parallel', members=sorted(names), paths=[], ends=list(ends),
@@ -142,5 +148,6 @@ def build_modules(par, comps, nets):
                      electrical_edges=leaves)
         groups.append(group)
     return dict(version='passive-modules-v2', groups=groups, skipped=skipped,
-                passive_count=len(all_passives), covered_count=sum(len(g['members']) for g in groups),
+                passive_count=len(passives), source_count=len(sources), guest_count=len(all_passives),
+                guest_ids=sorted(all_passives), covered_count=sum(len(g['members']) for g in groups),
                 terminals=legacy['terminals'], electrical_node_merges=[])

@@ -27,9 +27,9 @@ def banks():
     return devices,core,cs,ns,ix,plan
 
 
-def model(devices,records=()):
+def model(devices,records=(),**options):
     doc=to_document(devices);cs,ns=doc['components'],doc['nets']
-    return compile_plan(PAR,devices,cs,ns,records)
+    return compile_plan(PAR,devices,cs,ns,records,**options)
 
 
 class PassiveSkeletonEvidenceTests(unittest.TestCase):
@@ -84,9 +84,12 @@ class PassiveSkeletonEvidenceTests(unittest.TestCase):
 
     def test_unique_source_control_path_and_shared_node_are_distinct(self):
         dev={'a':mos('d','g'),'v':source('VSRC','bias'),'r':resistor('bias','g')}
-        self.assertEqual(model(dev)['groups'][0]['role'],'source_control_chain')
+        # Original core-source helper remains reproducible; the new default
+        # puts the voltage source and resistor into one real two-port module.
+        self.assertEqual(model(dev,include_sources=False)['groups'][0]['role'],'source_control_chain')
+        self.assertEqual(set(model(dev)['groups'][0]['members']),{'r','v'})
         dev['b']=mos('e','g')
-        self.assertNotEqual(model(dev)['groups'][0]['role'],'source_control_chain')
+        self.assertNotEqual(model(dev,include_sources=False)['groups'][0]['role'],'source_control_chain')
 
     def test_names_line_order_and_signal_net_names_do_not_supply_evidence(self):
         dev,_,_,_,_,p=banks();names={n:'part'+str(k) for k,n in enumerate(dev)}
@@ -168,7 +171,7 @@ class PassiveSkeletonPackingTests(unittest.TestCase):
         for reverse in (False,True):
             dev={'a':mos('d','g'),'v':source('VSRC','0','bias') if reverse else source('VSRC','bias'),
                 'r':resistor('bias','g')}
-            doc=to_document(dev);cs=doc['components'];ix={c['id']:i for i,c in enumerate(cs)};p=model(dev)
+            doc=to_document(dev);cs=doc['components'];ix={c['id']:i for i,c in enumerate(cs)};p=model(dev,include_sources=False)
             core,cc,ns,ci=base_placement({n:d for n,d in dev.items() if n!='r'},dict(a=(1,2),v=(1,1)))
             result,actions=_control_sources(PAR,core,cc,ci,p)
             self.assertEqual(len(actions),1);self.assertEqual(result.cell_of[ci['a']],core.cell_of[ci['a']])

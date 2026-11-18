@@ -1,0 +1,7 @@
+* Reversed voltage polarity does not reverse the inferred display branch.
+.model NM NMOS
+.model PM PMOS
+MUP upper upper VDD VDD PM
+MLOW lower lower 0 0 NM
+MTAP out upper VDD VDD PM
+VBIAS lower upper DC -0.1

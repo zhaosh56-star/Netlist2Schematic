@@ -77,7 +77,11 @@ def make_frame(par, core, comps, index, options):
         for i,j in mapping.items():pl.offset_x[j]=core.offset_x[i]
     for i,j in mapping.items():
         pl.cell_of[j] = core.cell_of[i]; pl.orient[j] = core.orient[i]
-    passive = [i for i,c in enumerate(comps) if c['symbol'] in PASSIVE]
+    from netlist2schematic.common.passive_coordinates import LAYOUT_GUESTS
+    passive = [i for i,c in enumerate(comps) if i not in mapping.values()]
+    if any(comps[i]['symbol'] not in LAYOUT_GUESTS for i in passive):
+        raise ValueError('The active skeleton omitted a non-guest device')
+    pl.layout_guest_ids=set(passive)
     start = len(pl.row_y)
     pitch = median([b-a for a,b in zip(pl.row_y,pl.row_y[1:])]) if len(pl.row_y)>1 else 120.
     for n,i in enumerate(passive):
@@ -104,6 +108,7 @@ def make_frame(par, core, comps, index, options):
     pl.fixed={mapping[i] if isinstance(i,int) else i for i in getattr(core,'fixed',())}
     pl.fixed_cells={mapping[i]:cell for i,cell in getattr(core,'fixed_cells',{}).items()}
     pl.source_orientation_ids={mapping[i] for i in getattr(core,'source_orientation_ids',())}
+    pl.source_orientation_ids.update(i for i in passive if comps[i]['symbol'] in ('voltage-source','current-source'))
     pl.terminal_orientation_ids=set(passive)
     if getattr(core, 'column_plan', {}).get('protected_plan') is not None:
         pl.column_plan = deepcopy(core.column_plan)
@@ -225,7 +230,7 @@ def reserve(par, pl, comps, index, plan, options, fixed):
         if axis==0:
             row=min(pl.cell_of[index[t[0]]][0] for t in (a,b))
             if row>0:
-                previous=[i for i,c in enumerate(comps) if c['symbol'] not in PASSIVE and pl.cell_of[i][0]<row]
+                previous=[i for i,c in enumerate(comps) if i not in pl.layout_guest_ids and pl.cell_of[i][0]<row]
                 if previous:
                     top=max(body_rect(par,pl,i)[3] for i in previous)
                     clearance=geo[5][3]-geo[5][1]+2*options.halo+options.center_spacing
@@ -239,7 +244,7 @@ def reserve(par, pl, comps, index, plan, options, fixed):
     # Axis suffixes also move parked bookkeeping cells. Restore their absolute
     # separation so unplaced guests cannot create spurious static collisions.
     far_x=max(pl.column_x)+300;far_y=max(pl.row_y)+300
-    for number,i in enumerate(j for j,c in enumerate(comps) if c['symbol'] in PASSIVE):
+    for number,i in enumerate(sorted(pl.layout_guest_ids)):
         x,y=pl.pos_of(i);dx,dy=pl.passive_local_offsets[i]
         pl.passive_local_offsets[i]=[dx+far_x+220*number-x,dy+far_y-y]
     return groups,actions
@@ -271,7 +276,7 @@ def _reserve_control_access(par,pl,comps,index,groups,options,fixed,actions):
             if result is None:continue
             host,direction,rect=result;axis=0 if direction[0] else 1;dimension=1-axis
             for j,c in enumerate(comps):
-                if j==host or c['symbol'] in PASSIVE:continue
+                if j==host or j in pl.layout_guest_ids:continue
                 other=body_rect(par,pl,j)
                 gap_cells=pl.cell_of[j][dimension]-pl.cell_of[host][dimension]
                 if gap_cells*direction[axis]<=0 or not overlaps(rect,other):continue
@@ -365,6 +370,10 @@ def slot_trials(par, pl, comps, index, group, options):
             clearance=(envelope[2]-envelope[0])/2+2*options.halo+options.center_spacing
             contact=[edge+side*clearance,pa[1]+outer[1]*pad]
             if direction[0]:contact[0]=ea[0]+direction[0]*pad
+        if axis==1 and group.get('source_node_anchor'):
+            exits=[_point_exit(par,pl,index,t,options) for t in group['source_node_anchor']['terminals']]
+            contact[0]=(min(p[0] for p in exits)+max(p[0] for p in exits))/2
+            contact[1]=(max(p[1] for p in exits)+pad if outer[1]>0 else min(p[1] for p in exits)-pad)
         target=[contact[k]-end*vector[k]*extent for k in range(2)]
         targets=[target]
         if group['role'] not in INLINE_ROLES | {'terminal_bank'}:
@@ -484,10 +493,12 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
                 active_grid_after=dict(column_x=list(pl.column_x),row_y=list(pl.row_y)))
         return pl,report
     if seconds<=0 or max_trials<=0 or perf_counter()>=stop:return finish('budget_exhausted')
+    if any(index[name] not in frame.layout_guest_ids for g in plan['groups'] for name in g['members']):
+        return finish('guest_is_fixed_core_member')
     groups,expansions=reserve(par,frame,comps,index,plan,options,fixed)
     report['expansions']=expansions
     report['core_positions']={c['id']:dict(point=list(frame.pos_of(i)),cell=list(frame.cell_of[i]),orient=frame.orient[i])
-                              for i,c in enumerate(comps) if c['symbol'] not in PASSIVE}
+                              for i,c in enumerate(comps) if i not in frame.layout_guest_ids}
     if groups is None:return finish('no_safe_reservation')
     by_id={g['id']:g for g in groups};batches=[];used=set()
     for family in plan['families']:

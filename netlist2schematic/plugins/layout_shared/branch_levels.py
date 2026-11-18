@@ -195,6 +195,10 @@ def _conduction_orders(devices, bridges):
         if not bridge.get('layout_only'):
             noncapacitive[original[bridge['start']]].add(original[bridge['end']])
     has_capacitive = any(bridge.get('layout_only') for bridge in accepted)
+    source_zero = defaultdict(set)
+    for bridge in accepted:
+        if bridge.get('source_layout'):
+            source_zero[original[bridge['start']]].add(original[bridge['end']])
     active = sorted(name for name, device in devices.items() if device['cls'] in _ACTIVE)
     endpoints = {name: (original[dl.in_terminal(devices[name])],
                         original[dl.out_terminal(devices[name])]) for name in active}
@@ -218,10 +222,17 @@ def _conduction_orders(devices, bridges):
                     if child not in dc_reached:
                         dc_reached.add(child)
                         pending.append(child)
+        source_reached, pending = {outgoing}, [outgoing]
+        while pending:
+            for child in source_zero[pending.pop()]:
+                if child not in source_reached:
+                    source_reached.add(child)
+                    pending.append(child)
         for lower in active:
             if lower != upper and endpoints[lower][0] in reached:
                 orders.append({'upper': upper, 'lower': lower,
                                'reason': 'conduction' if endpoints[lower][0] == outgoing
+                               else 'source_layout_continuation' if endpoints[lower][0] in source_reached
                                else 'capacitive_layout_continuation' if endpoints[lower][0] not in dc_reached
                                else 'rl_continuation'})
     sccs = []
@@ -446,7 +457,8 @@ def _plan_attachments(devices, comps, bridges, base_rows, union):
         connections = []
 
         def connect(net, first, second):
-            connections.append({'kind': ('capacitive_bridge_axis' if bridge.get('layout_only')
+            connections.append({'kind': ('source_bridge_axis' if bridge.get('source_layout') else
+                                        'capacitive_bridge_axis' if bridge.get('layout_only')
                                         else 'rl_bridge_axis'), 'net': net,
                                 'pins': [list(first), list(second)]})
 

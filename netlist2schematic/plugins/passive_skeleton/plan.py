@@ -4,11 +4,12 @@ from copy import deepcopy
 from itertools import product
 
 from netlist2schematic.plugins.passive_skeleton.modules import build_modules
+from netlist2schematic.common.passive_coordinates import SOURCES
 
-VERSION = 'active-first-passive-modules-v3'
+VERSION = 'active-first-two-terminal-modules-v4'
 ACTIVE = frozenset(('nmos', 'pmos', 'npn', 'pnp'))
 PASSIVE = frozenset(('resistor', 'capacitor', 'inductor', 'diode'))
-INLINE_ROLES = frozenset(('conduction_inline', 'capacitive_inline'))
+INLINE_ROLES = frozenset(('conduction_inline', 'capacitive_inline', 'source_inline'))
 CHANNELS = {'nmos': ('D', 'S'), 'pmos': ('D', 'S'), 'npn': ('C', 'E'), 'pnp': ('C', 'E')}
 
 
@@ -87,14 +88,15 @@ def _conduction_bridges(devices, comps, *, include_capacitors=False):
     return accepted, skipped
 
 
-def compile_plan(par, devices, comps, nets, structs):
-    """Keep real terminals; unique R/L/C host relations may imply display order.
+def compile_plan(par, devices, comps, nets, structs, *, include_sources=True):
+    """Keep real terminals; unique two-terminal host relations imply display order.
 
-    Capacitors supply display evidence only. D, ambiguous feedback and sense
+    Capacitors and sources supply display evidence only. Ambiguous feedback
     paths remain two-ended attachments; no original electrical node is merged.
     """
     from netlist2schematic.plugins.layout_shared.branch_levels import _conduction_orders
-    result = build_modules(par, comps, nets)
+    from netlist2schematic.plugins.passive_skeleton.source_modules import source_modules, inline_bridges
+    result = source_modules(par, comps, nets) if include_sources else build_modules(par, comps, nets)
     parts = {c['id']: c for c in comps}
     bridges, skipped = _conduction_bridges(devices, comps)
     _, bridges, cycles, _ = _conduction_orders(devices, bridges)
@@ -107,13 +109,20 @@ def compile_plan(par, devices, comps, nets, structs):
         bridges += [b for b in accepted if b.get('layout_only')]
         skipped += [b for b in rejected if b.get('layout_only')]
         cycles += [b for b in cap_cycles if b.get('layout_only')]
+    source_bridges, source_skipped = inline_bridges(devices, comps, nets, result['groups'])
+    if source_bridges:
+        _, accepted, rejected, _ = _conduction_orders(devices, bridges + source_bridges)
+        # Adding a source relation cannot remove an existing R/L/C contract.
+        bridges += [b for b in accepted if b.get('source_layout')]
+        source_skipped += [b for b in rejected if b.get('source_layout')]
     inline_by_members = {frozenset(b['members']): b for b in bridges}
     for group in result['groups']:
         group['role'] = 'bridge'
         live = [n for n in group['ends'] if group['anchors'][n]]
         bridge = inline_by_members.get(frozenset(group['members']))
         if bridge is not None:
-            group['role'] = 'capacitive_inline' if bridge.get('layout_only') else 'conduction_inline'
+            group['role'] = ('source_inline' if bridge.get('source_layout') else
+                             'capacitive_inline' if bridge.get('layout_only') else 'conduction_inline')
             group['conduction'] = deepcopy(bridge)
         elif len(live) == 1:
             rail = next((n for n in group['ends'] if par.power_marker_sym(n)), None)
@@ -132,6 +141,11 @@ def compile_plan(par, devices, comps, nets, structs):
             conductive=[t for t in group['anchors'][net] if t[1] in CHANNELS.get(parts[t[0]]['symbol'],())]
             if len(conductive)==1:
                 group['owner_port']=dict(net=net,terminal=list(conductive[0]))
+            if (any(parts[n]['symbol'] in SOURCES for n in group['members']) and conductive
+                    and len(conductive)==len(group['anchors'][net])
+                    and all(t[1] in ('S','E') for t in conductive)):
+                group['source_node_anchor']=dict(net=net,terminals=deepcopy(conductive),
+                    evidence='shared_real_source_or_emitter_node')
     # Corresponding banks require a real core pair as well as equal path roles.
     # Shared VDD, GND, CLK or a model name alone cannot create a family.
     pairs = set()
@@ -162,9 +176,10 @@ def compile_plan(par, devices, comps, nets, structs):
     ambiguous=[f for f in families if any(used[gid]>1 for gid in f['groups'])]
     families=[f for f in families if all(used[gid]==1 for gid in f['groups'])]
     result.update(version=VERSION, families=families, ambiguous_families=ambiguous, rl_skipped=skipped+cycles,
-        core_ids=[c['id'] for c in comps if c['symbol'] not in PASSIVE],
-        applicable=any(c['symbol'] in ACTIVE for c in comps) and result['passive_count'] > 0
-            and result['covered_count'] == result['passive_count'],
+        source_bridges=source_bridges, source_skipped=source_skipped,
+        core_ids=[c['id'] for c in comps if c['id'] not in result['guest_ids']],
+        applicable=any(c['symbol'] in ACTIVE for c in comps) and result['guest_count'] > 0
+            and result['covered_count'] == result['guest_count'],
         electrical_node_merges=[], projection_only=True)
     return result
 

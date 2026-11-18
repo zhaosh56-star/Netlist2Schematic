@@ -101,6 +101,8 @@ def build_column_plan(par, pl, comps, nets, index, structures=(), *, inline_brid
             bridge=bridge['id'], unique=True, explicit=False))
         if bridge.get('layout_only'):
             raw[-1].update(layout_only=True,dc_path=False)
+        if bridge.get('source_layout'):
+            raw[-1]['source_layout']=True
     raw.sort(key=lambda e: (order(e['a']), order(e['b'])))
     adjacent = defaultdict(list)
     for edge in raw:
@@ -154,7 +156,8 @@ def build_column_plan(par, pl, comps, nets, index, structures=(), *, inline_brid
                 or sum(s == best_in for s, _ in entries) != 1):
             skipped.append(dict(e, reason='ambiguous_or_lower_supported_continuation'))
             continue
-        edges.append(dict(e, evidence='unique_capacitive_layout_continuation' if e.get('layout_only') else
+        edges.append(dict(e, evidence='unique_source_layout_continuation' if e.get('source_layout') else
+                         'unique_capacitive_layout_continuation' if e.get('layout_only') else
                           'unique_rl_continuation' if e.get('via') else
                           'explicit_composite_ports' if e['explicit'] else
                           'repeated_multilevel_controls' if score[1] else 'unique_active_continuation'))
