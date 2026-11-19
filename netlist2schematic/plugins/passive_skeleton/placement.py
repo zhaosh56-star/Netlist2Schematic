@@ -31,6 +31,17 @@ def _point_exit(par, pl, index, terminal, options):
     return _escape(point, direction, _inflate(body_rect(par, pl, i), options.halo), options.grid_step)
 
 
+def _approach_paths(par, pl, index, terminal, port, options):
+    """Real immutable pin exit followed by the two ordinary L choices."""
+    point = pl.pin_world(index[terminal[0]], terminal[1])
+    exit_point = _point_exit(par, pl, index, terminal, options)
+    prefix = [(point, exit_point)]
+    if exit_point[0] == port[0] or exit_point[1] == port[1]:
+        return [prefix+[(exit_point, port)]]
+    return [prefix+[(exit_point, corner), (corner, port)]
+            for corner in ((port[0], exit_point[1]), (exit_point[0], port[1]))]
+
+
 def expand_axis(pl, axis, boundary, amount, fixed=()):
     """Shift one axis suffix; no individual active row/column can be scrambled."""
     if amount <= EPS:
@@ -415,20 +426,13 @@ def slot_trials(par, pl, comps, index, group, options):
         trial=_translated(pl,geometry,target,step)
         # The selected edge is a concrete real-port channel, not a net-box
         # centroid. Keep both ordinary L options; the common rule set decides.
-        def approaches(terminal,port):
-            point=trial.pin_world(index[terminal[0]],terminal[1])
-            exit_point=_point_exit(par,trial,index,terminal,options)
-            choices=[[(point,exit_point)]]
-            if exit_point[0]==port[0] or exit_point[1]==port[1]:
-                return [choices[0]+[(exit_point,port)]]
-            return [choices[0]+[(exit_point,corner),(corner,port)]
-                    for corner in ((port[0],exit_point[1]),(exit_point[0],port[1]))]
         import itertools
         ends=group['ends'];ports=trial.passive_module_guides[group['id']]['ports']
         first=0 if b is not None or net==ends[0] else 1
-        choices=[[(ends[first],s)] for s in approaches(a,ports[first])]
+        choices=[[(ends[first],s)] for s in _approach_paths(par,trial,index,a,ports[first],options)]
         if b is not None:
-            choices=[old+[(ends[1],s)] for old,s in itertools.product(choices,approaches(b,ports[1]))]
+            choices=[old+[(ends[1],s)] for old,s in itertools.product(choices,
+                _approach_paths(par,trial,index,b,ports[1],options))]
         for extra in choices:
             candidate=deepcopy(trial)
             guide=candidate.passive_module_guides[group['id']]
@@ -545,6 +549,17 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
     except RoutingFailure as exc:
         if exc.diagnostics.get('reason')!='quality_time_budget':raise
         return finish('local_budget')
+    # The original complete, independently checked frame is the incumbent.
+    # Endpoint refinement only consumes remaining packing time/trials; a
+    # partial/expired proposal never discards this safe original result.
+    from netlist2schematic.plugins.passive_skeleton.terminal_slots import refine_terminals
+    frame, terminal_report = refine_terminals(par,frame,comps,nets,index,plan,options,
+        deadline=stop,max_trials=max(0,max_trials-report['trials']))
+    report['terminal_search']=terminal_report
+    report['trials']+=terminal_report['trials']
+    for action in report['actions']:
+        action['positions']={n:dict(point=list(frame.pos_of(index[n])),orientation=frame.orient[index[n]])
+                             for n in action['members']}
     for i,c in enumerate(core.comps):
         j=index[c['id']]
         if frame.cell_of[j]!=core.cell_of[i] or frame.orient[j]!=core.orient[i]:
