@@ -183,6 +183,23 @@ class CandidateSelectionTests(unittest.TestCase):
         feedback.assert_not_called()
         self.assertEqual(1, chosen[0].identifier)
 
+    def test_feedback_preserves_new_branch_rows_and_rejects_incompatible_seed(self):
+        for compatible in (False, True):
+            with self.subTest(compatible=compatible):
+                items=[candidate(i) for i in (1,2,3)]
+                for item in items:item[0].cell_of=[(1,0),(1,1)]
+                contract=dict(applied=True,active_rows_after={'R1':1,'R2':1})
+                items[2][4]['layout_branch_rows']=deepcopy(contract)
+                proposal=list(candidate(99));proposal[0].cell_of=[(1 if compatible else 0,0),(1,1)]
+                proposal[4]['feedback']=dict(source_candidate='2',net='signal',row_cut=0)
+                quality=dict(score=10,per_net={'signal':dict(terminals=3,detour_factor=3,excess_detour=600)})
+                with patch('netlist2schematic.layout.structured_placement.feedback_candidate',return_value=tuple(proposal)), \
+                        patch('netlist2schematic.layout.layout_quality.evaluate_quality',side_effect=[deepcopy(quality) for _ in range(3)]):
+                    chosen,routed=self.select(items,[route_result(True),route_result(True),route_result()])
+                self.assertEqual([c.args[2].identifier for c in routed.call_args_list],
+                                 [1,2,99] if compatible else [1,2,3])
+                if compatible:self.assertEqual(chosen[4]['layout_branch_rows'],contract)
+
     def test_replaying_feedback_candidate_evaluates_its_sources_and_selects_requested_result(self):
         chosen, routed, feedback = self.feedback_selection(feedback_score=40, candidate_id='3')
         self.assertEqual([1, 2, 99], [call.args[2].identifier for call in routed.call_args_list])

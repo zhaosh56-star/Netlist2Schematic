@@ -231,7 +231,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 # It cannot preserve a newly allocated attachment slot contract.
                 feedback_best = None
                 metadata.setdefault('layout_attachments', {})['feedback_skipped'] = 'preserve_attachment_slots'
-            local_refinement_deadline = min(candidate_deadline, perf_counter()+1)
+            row_search = (metadata.get('layout_branch_rows', {}).get('target_search', {})
+                          if not metadata.get('passive_skeleton', {}).get('applied') else {})
+            local_trial_limit = max(0, 128-row_search.get('evaluated_states', 0))
+            local_refinement_deadline = min(candidate_deadline,
+                perf_counter()+max(0., 1-row_search.get('elapsed_seconds', 0.)))
             if readability_layout == 'auto' and identifier == '3':
                 from netlist2schematic.plugins.readability.readability_selection import feedback_compatible
                 compatible = [row for row in valid_results if feedback_compatible(row[5], metadata)]
@@ -270,10 +274,18 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 if severe:
                     proposal = feedback_candidate(feedback_best[1], feedback_best[2], feedback_best[3], feedback_best[4],
                                                   feedback_best[5], detail)
+                    branch_rows = metadata.get('layout_branch_rows')
+                    if proposal is not None and branch_rows and branch_rows.get('applied'):
+                        from netlist2schematic.plugins.columns.branch_rows import compatible_rows
+                        if not compatible_rows(branch_rows, proposal[0], proposal[3]):
+                            branch_rows['feedback_skipped'] = 'incompatible_display_rows'
+                            proposal = None
                     if proposal is not None and (structure_layout == 'off' or
                             proposal[4].get('branch_row_plan', {}).get('rows') ==
                             metadata.get('branch_row_plan', {}).get('rows')):
                         placement, comps, nets, index, metadata = proposal
+                        if branch_rows and branch_rows.get('applied'):
+                            metadata['layout_branch_rows'] = deepcopy(branch_rows)
                         metadata['candidate_id'] = int(identifier)
                         metadata['candidate_seed'] = feedback_best[5].get('candidate_seed', seed)
                         feedback_replaced = True
@@ -411,7 +423,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     shared_column_plan = build_column_plan(par, placement, comps, nets, index, metadata.get('structs', ()))
                 placement, metadata = refine_columns(par, placement, comps, nets, index, metadata,
                     shared_column_plan, effective_options, deadline=local_refinement_deadline,
-                    seconds=max(0, local_refinement_deadline-perf_counter()), max_trials=128)
+                    seconds=max(0, local_refinement_deadline-perf_counter()), max_trials=local_trial_limit)
                 column_trials = metadata['layout_columns']['trials']
             if (identifier != '0' and metadata.get('layout_style') == 'structured'
                     and not metadata.get('passive_skeleton',{}).get('applied')
@@ -423,7 +435,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 placement, metadata = refine_series_alignment(
                     par, placement, comps, nets, index, metadata, effective_options,
                     deadline=min(candidate_deadline, local_refinement_deadline),
-                    seconds=max(0, local_refinement_deadline-perf_counter()), max_trials=128-column_trials)
+                    seconds=max(0, local_refinement_deadline-perf_counter()),
+                    max_trials=max(0, local_trial_limit-column_trials))
             if column_layout == 'auto' and identifier != '0' and metadata.get('layout_style') == 'structured':
                 from netlist2schematic.plugins.columns.column_layout import build_column_plan, measure_columns, VERSION
                 if shared_column_plan is None:

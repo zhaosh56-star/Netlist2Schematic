@@ -148,6 +148,14 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     row_map={old:r for r,old in enumerate(occupied)}
     core_rows=[row_map[rows['rows_before_attachments'][c['id']]] for c in cc]
     core_att={n:deepcopy(v) for n,v in att.items() if n in ci}
+    branch_rows=None
+    if columns:
+        from netlist2schematic.plugins.columns.branch_rows import plan_branch_correspondence
+        from netlist2schematic.plugins.columns.row_estimate import make_row_estimator
+        estimate_rows=make_row_estimator(core_devices,cc,cn,ci,levels,core_att,core_structs,
+            seed,variant,modules=dict(comps=comps,nets=nets,index=index,plan=plan),options=options)
+        core_rows,branch_rows=plan_branch_correspondence(sp.par,core_devices,cc,cn,ci,core_rows,
+            core_structs,bridges=rows['rl_bridges'],deadline=deadline,estimate_rows=estimate_rows)
     core,alignment,pairs=sp._initial_placement(core_devices,cc,cn,ci,levels,core_att,
         core_structs,seed,variant,passive_layout='fixed',row_override=core_rows)
     estimate_nets=deepcopy(cn);aux=[]
@@ -171,13 +179,17 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
         sym_pairs=[(cc[a]['id'],cc[b]['id']) for a,b,_ in pairs])
     # Preserve the default active finalizers while passive guests are absent.
     # They cannot be repelled by a parked resistor or a remote capacitor.
-    until=min(deadline,perf_counter()+1) if deadline is not None else perf_counter()+1
+    row_budget=(branch_rows or {}).get('target_search',{})
+    row_seconds=row_budget.get('elapsed_seconds',0.)
+    row_trials=row_budget.get('evaluated_states',0)
+    until=perf_counter()+max(0.,1-row_seconds)
+    if deadline is not None:until=min(deadline,until)
     if columns:
         column_plan=build_column_plan(sp.par,core,cc,cn,ci,core_structs,
             **({'inline_bridges': inline_bridges} if inline_bridges else {}))
         core,context=refine_columns(sp.par,core,cc,cn,ci,context,column_plan,options,deadline=until,
-            seconds=max(0,until-perf_counter()),max_trials=128)
-    used=context.get('layout_columns',{}).get('trials',0)
+            seconds=max(0,until-perf_counter()),max_trials=max(0,128-row_trials))
+    used=row_trials+context.get('layout_columns',{}).get('trials',0)
     core,context=refine_series_alignment(sp.par,core,cc,cn,ci,context,options,deadline=until,
         seconds=max(0,until-perf_counter()),max_trials=max(0,128-used))
     core,rl_actions=_align_rl(sp.par,core,cc,estimate_nets,ci,plan)
@@ -185,7 +197,8 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     used+=context.get('series_alignment',{}).get('trials',0)
     packed,report=pack(sp.par,core,comps,nets,index,plan,options,deadline=until,
         seconds=max(0,until-perf_counter()),max_trials=max(0,128-used))
-    report['shared_local_budget']=dict(seconds_limit=1.,max_trials=128,active_trials=used,
+    report['shared_local_budget']=dict(seconds_limit=1.,max_trials=128,active_trials=used-row_trials,
+        row_estimate_seconds=row_seconds,row_estimate_trials=row_trials,
         packing_trials=report['trials'],completed_trials=used+report['trials'])
     report.update(core_only_sa=True,core_ids=list(ci),auxiliary_estimator_edges=aux,
         original_electrical_levels=deepcopy(levels['device_levels']),
@@ -194,6 +207,8 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
         active_column_actions=rl_actions,source_attachment_actions=source_actions,core_preflight=preflight,
         core_finalizers={k:deepcopy(context[k]) for k in ('layout_columns','series_alignment') if k in context},
         generation_seconds=round(perf_counter()-started,6))
+    if branch_rows is not None:
+        report['layout_branch_rows']=deepcopy(branch_rows)
     if packed is None:return None,report
     metadata=dict(source_note=levels['source_note'],levels=deepcopy(levels['device_levels']),attach=deepcopy(att),
         structs=deepcopy(structs),sym_pairs=context['sym_pairs'],energy=energy,optimization_metrics=estimate,
@@ -204,6 +219,8 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
         layout_hierarchy=hierarchy_report(core),passive_skeleton=report,
         passive_layout_policy='skeleton',passive_layout=dict(version=plan['version'],policy='skeleton',
             core_only_sa=True,post_sa_local_coordinates=True))
+    if branch_rows is not None:
+        metadata['layout_branch_rows']=deepcopy(branch_rows)
     report['current']=measure(packed,comps,index,report['plan'])
     if inline_bridges:
         report['inline_port_policy'] = 'unique-conduction-hosts-with-control-taps-v1'

@@ -1046,10 +1046,22 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                     levels['net_levels'], levels['device_levels'], att)
                 _, row_plan = plan_branch_rows(devices, levels, original_rows,
                                                layout_relations, comps, index)
+        correspondence_rows = None
+        correspondence_report = None
+        if (passive_skeleton == 'auto' and skeleton_columns and variant
+                and skeleton_plan is not None and not skeleton_plan.get('guest_count') and row_plan is None):
+            from netlist2schematic.plugins.columns.branch_rows import plan_branch_correspondence
+            from netlist2schematic.plugins.columns.row_estimate import make_row_estimator
+            original_rows, _ = legacy._allocate_rows(devices, comps, index,
+                levels['net_levels'], levels['device_levels'], att)
+            correspondence_rows, correspondence_report = plan_branch_correspondence(
+                par, devices, comps, nets, index, original_rows, candidate_structs, deadline=deadline,
+                estimate_rows=make_row_estimator(devices,comps,nets,index,levels,att,candidate_structs,
+                                                 candidate_seed,variant,passive_layout=passive_layout))
         placement, alignment, pairs = _initial_placement(
             devices, comps, nets, index, levels, att, candidate_structs, candidate_seed, variant,
             passive_layout=passive_layout,
-            row_override=[row_plan['rows'][c['id']] for c in comps] if row_plan else None,
+            row_override=[row_plan['rows'][c['id']] for c in comps] if row_plan else correspondence_rows,
             bridge_alignment=row_plan.get('bridge_alignment', ()) if row_plan else (),
             region_plan=region_plan if region_layout == 'auto' and variant else None,
             region_relations=region_relations or (), deadline=deadline)
@@ -1172,6 +1184,8 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                                              for a, b, weight in alignment]}
         from netlist2schematic.layout.structure_hierarchy import hierarchy_report
         metadata['layout_hierarchy'] = hierarchy_report(placement)
+        if correspondence_report is not None:
+            metadata['layout_branch_rows'] = copy.deepcopy(correspondence_report)
         if attachment_layout != 'off' and variant:
             from netlist2schematic.plugins.attachment.attachment_selection import measure_candidate
             metadata['layout_attachments'] = {
