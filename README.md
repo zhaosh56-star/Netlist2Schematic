@@ -33,6 +33,8 @@ dist/、notes/                             # 本地交付包、手工笔记
 
 ## 日常运行
 
+盲测问卷用独立入口 `build_evaluation.py --manifest <图片对清单或正式图集清单> --out-dir <评测目录>` 生成，默认采用全部输入图片，不带历史图号特例。只需发出一份 HTML，客户返回一份含占比图和逐题明细的 HTML 报告。清单模板与命令见[单文件评测说明](docs/blind-evaluation.md)。
+
 在项目目录打开 PowerShell。当前工作区已有运行环境时，直接执行：
 
 ```powershell

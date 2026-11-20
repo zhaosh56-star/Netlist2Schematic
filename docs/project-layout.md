@@ -2,11 +2,12 @@
 
 日常仍从项目根目录运行 `run_flow.py`。实际 Python 实现已经按职责放入 `netlist2schematic/`：主流程代码和可选插件分开，输入网表、出图、测试及独立 RSI 项目各有自己的目录。
 
-根目录的六个 Python 脚本是兼容入口；读算法时应打开包内实现。旧文件名到新路径的完整对应表见 [source_map.json](../netlist2schematic/source_map.json)。本次分类不改变各实验开关的默认值。
+根目录保留原 Python 兼容入口，以及独立的评测生成入口；读算法时应打开包内实现。旧文件名到新路径的完整对应表见 [source_map.json](../netlist2schematic/source_map.json)。本次分类不改变各实验开关的默认值。
 
 ```text
 Netlist2Schematic/
 ├─ run_flow.py                  # 日常统一入口
+├─ build_evaluation.py          # 从已有正式图集生成离线单 HTML 盲测
 ├─ net_labels.py                # 独立生成或重绘网标视图的入口
 ├─ parse-netlist.py             # 只解析网表的兼容入口
 ├─ place-and-route.py           # baseline 布局兼容入口
@@ -103,6 +104,7 @@ Netlist2Schematic/
 - `output/<网表标签>/` 保存日常 JSON、彩色 SVG、黑白 SVG及失败诊断。普通标签为文件名加可选的子电路名，如 `3`、`5-dut`；模式比较需使用不同的 `--out-dir`。
 - `tests/fixtures/` 是冻结的回归输入，包含网表、布局和失败现场。它们不是历史出图，不能作为清理输出的一部分删除。
 - `tools/` 保存开发对照和图鉴工具，例如 `compare_layouts.py`、`compare_attachment_integration.py` 和 `generate_structure_gallery.py`。按工具说明选择只读复验或完整出图；有些对照工具会运行多次完整 flow。
+- `tools/build_blind_review.py` 与 `tools/blind_review/` 保存评测生成器、配置和页面。根目录 `build_evaluation.py` 调用它们；生成后只需把一份 HTML 发给客户。它不参与布局或布线，见[评测说明](blind-evaluation.md)。
 - `docs/` 保存解释与实测记录；历史版本的性能数字、测试数量和停止状态仍按当时口径保留。
 - `dist/` 只存放交付包，`notes/` 只存放手工笔记。运行主 flow 不依赖这两个目录中的文件。
 

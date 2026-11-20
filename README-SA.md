@@ -1,5 +1,9 @@
 # SA Python 运行说明
 
+单文件盲测已封装为根目录 `build_evaluation.py`：用 `--manifest` 提供任意图对清单或已有正式图集，即可生成问卷，不重跑布局和布线。不内置题目排除或 VDD 换图规则，直接采用你提供的图片。只发一个 `index.html`，客户答完只返回一个含 GT／算法占比和逐题细节的 HTML 报告。清单格式和命令见[评测脚本说明](docs/blind-evaluation.md)。
+
+正式出图插件：在主 flow 末尾加 `--formal-output auto`，额外生成 GT 风格字体、数学下标、无引脚白圈和结构虚框、局部合并 VDD 的正式 SVG。默认关闭；`--formal-power-rails off` 可单独禁用合并。已有 JSON 可跳过布局与布线独立调用，见[正式出图说明](docs/formal-figures.md)。
+
 可选的局部共享VDD插件：`--power-rails auto`，默认关闭。原成品保存后，额外尝试把同网、同排、通道空闲的供电端连接为共享横线和一个VDD标记；器件及信号线路不动。独立处理旧JSON、适用边界和对照见 [共享VDD说明](docs/power-rails.md)。
 
 详细说明已集中到 [docs/flow-guide.md](docs/flow-guide.md)，包括完整流程、分层与结构化布局、A*和失败恢复、最终路线简化、支持的网表、几何规则及全部参数。

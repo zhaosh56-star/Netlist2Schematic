@@ -1,11 +1,15 @@
 # SA Python 布局与布线
 
+若只想向别人讲解具体布局设计，可先看[10组小电路前后对照](design-points-examples.md)：对应层、主列、子结构保护、RLC/V/I模块和端部二维找位；本地 HTML 可单独转发。
+
 这套工具把 SPICE 结构网表转换为布局 JSON、彩色 SVG 和黑白 SVG。Python
 命令入口保留在项目根目录，实际实现分类位于 `netlist2schematic/`；完整对应表见[目录说明](project-layout.md)。`analog-canvas-main` 提供随仓库保留的符号定义和验收样例。
 本地 `archive/` 如有原始 TXT 或实验记录，仅用于归档，不是运行依赖，也不进入 Git。
 无需启动网页编辑器，也无需安装 Node.js、pnpm 或仿真器。
 
 日常命令见 [README](../README.md)，全部文件的职责和保留范围见[项目目录说明](project-layout.md)。
+
+正式收尾可通过 `--formal-output auto` 调用：原成功结果落盘后，额外生成统一字体、下标、去白圈及虚框、局部合并 VDD 的正式 SVG。它独立于布局、SA、A* 与候选选图，默认关闭；用法、单独处理 JSON 和固定方案重绘见[正式出图插件](formal-figures.md)。
 
 当前默认`--passive-skeleton auto`的候选2/3也支持有明确宿主的独立电压源、电流源：与R/C/L一样先从骨架取出，再按真实端口插回；源正负端、箭头及原网表保留。归属不明的源沿用原路径。下文flexible类本身的“E/V/I固定行”描述仍适用于原路径，不会限制已确认的源模块。规则、代码和本轮实测见[源器件模块布局](source-module-layout.md)。
 

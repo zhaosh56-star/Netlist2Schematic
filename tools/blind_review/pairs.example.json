@@ -1,0 +1,13 @@
+{
+  "format": "schematic-evaluation-pairs-v1",
+  "dataset": "my-circuits",
+  "cases": [
+    {
+      "tag": "example-1",
+      "netlist": "./inputs/example-1.cir",
+      "gt": "./inputs/example-1-gt.svg",
+      "algorithm": "./inputs/example-1-generated.svg",
+      "device_count": 8
+    }
+  ]
+}

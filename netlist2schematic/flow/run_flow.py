@@ -36,7 +36,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         candidate_budget='sequential', port_preflight=DEFAULT_PORT_PREFLIGHT, presentation='legacy', net_labels='off',
         region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5,
         attachment_layout='off', column_layout=None, passive_embedding='off', passive_skeleton=None,
-        power_rails='off'):
+        power_rails='off', formal_output='off', formal_power_rails='auto'):
+    _validate_formal_options(formal_output, formal_power_rails)
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
     if layout_style not in ('structured', 'legacy'):
@@ -225,6 +226,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
                    net_labels=net_labels, route_tradeoff=route_tradeoff,
                    **({'power_rails':power_rails} if power_rails != 'off' else {}),
+                   **({'formal_output':formal_output, 'formal_power_rails':formal_power_rails} if formal_output != 'off' else {}),
                    **({'embed_passives':True} if passive_embedding=='auto' else {}))
 
 
@@ -394,6 +396,13 @@ def _validate_simplification(policy, seconds):
         raise ValueError('simplify_routes must be safe or off')
     from netlist2schematic.postprocess.simplify_budget import validate_simplify_seconds
     validate_simplify_seconds(seconds)
+
+
+def _validate_formal_options(policy, supplies):
+    if policy not in ('auto', 'off'):
+        raise ValueError('formal_output must be auto or off')
+    if supplies not in ('auto', 'off'):
+        raise ValueError('formal_power_rails must be auto or off')
 
 
 def _routes_sha256(routed):
@@ -679,9 +688,10 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
             *, protected_paths=(), options=None, routed_result=None,
             simplify_routes='safe', simplify_seconds=5, allow_verified_replay=False,
             input_hashes=None, net_labels='off', route_tradeoff='strict',embed_passives=False,
-            power_rails='off'):
+            power_rails='off', formal_output='off', formal_power_rails='auto'):
     """Route and validate before staging any success artifacts."""
     destination = Path(destination).resolve()
+    _validate_formal_options(formal_output, formal_power_rails)
     _validate_simplification(simplify_routes, simplify_seconds)
     _validate_route_tradeoff(route_tradeoff)
     if net_labels not in ('off', 'auto'):
@@ -907,13 +917,30 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
                 'status': 'failed', 'source_placement': str(destination/names[2]),
                 'error': str(exc), 'native_result_preserved': True})
             print(f'Shared VDD view failed; original preserved: {exc}', flush=True)
+    if formal_output == 'auto':
+        # Last, independent publication step; never feeds back into placement,
+        # routing, candidate comparison, shortening, or native artifact saving.
+        try:
+            from netlist2schematic.plugins.formal_output.formal_output import generate
+            result = generate(destination/names[2], out_dir=destination/'formal',
+                              power_rails=formal_power_rails)
+            plugin_diagnostics = destination/'formal'/'plugin-diagnostics.json'
+            if plugin_diagnostics.is_file():
+                plugin_diagnostics.unlink()
+            print(f"Formal SVG: {result['artifacts']['svg']}", flush=True)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            write_json(destination/'formal'/'plugin-diagnostics.json', {
+                'status':'failed', 'source_placement':str(destination/names[2]),
+                'error':str(exc), 'native_result_preserved':True})
+            print(f'Formal output failed; native result preserved: {exc}', flush=True)
     return data
 
 
 def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
                       *, local_rescue=None, rescue_seconds=60,
                       simplify_routes='safe', simplify_seconds=5,presentation=None, net_labels='off',
-                      route_tradeoff='strict', power_rails='off'):
+                      route_tradeoff='strict', power_rails='off', formal_output='off', formal_power_rails='auto'):
+    _validate_formal_options(formal_output, formal_power_rails)
     rescue_policy = _rescue_policy(local_rescue, False)
     _validate_rescue_seconds(rescue_seconds)
     _validate_simplification(simplify_routes, simplify_seconds)
@@ -977,13 +1004,15 @@ def reroute_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opti
                    options=options, routed_result=routed_result,
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
                    net_labels=net_labels, route_tradeoff=route_tradeoff,
-                   **({'power_rails':power_rails} if power_rails != 'off' else {}))
+                   **({'power_rails':power_rails} if power_rails != 'off' else {}),
+                   **({'formal_output':formal_output, 'formal_power_rails':formal_power_rails} if formal_output != 'off' else {}))
 
 
 def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_options=None,
                        *, simplify_routes='safe', simplify_seconds=5,presentation=None, net_labels='off',
-                       route_tradeoff='strict', power_rails='off'):
+                       route_tradeoff='strict', power_rails='off', formal_output='off', formal_power_rails='auto'):
     """Validate and simplify saved wires without invoking any layout/router."""
+    _validate_formal_options(formal_output, formal_power_rails)
     _validate_simplification(simplify_routes, simplify_seconds)
     _validate_route_tradeoff(route_tradeoff)
     source_json = Path(jpath).expanduser().resolve()
@@ -1028,7 +1057,8 @@ def simplify_placement(jpath, out_dir=None, analog_canvas_root=None, routing_opt
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
                    allow_verified_replay=True, input_hashes={source_json: original_hash},
                    net_labels=net_labels, route_tradeoff=route_tradeoff,
-                   **({'power_rails':power_rails} if power_rails != 'off' else {}))
+                   **({'power_rails':power_rails} if power_rails != 'off' else {}),
+                   **({'formal_output':formal_output, 'formal_power_rails':formal_power_rails} if formal_output != 'off' else {}))
 
 
 def main(argv=None, default_mode='layered'):
@@ -1071,6 +1101,10 @@ def main(argv=None, default_mode='layered'):
                         help='Optional extra net-label view after verified full routes (default: off)')
     parser.add_argument('--power-rails', choices=('off', 'auto'), default='off',
                         help='Extra verified local shared-VDD view; original artifacts preserved (default: off)')
+    parser.add_argument('--formal-output', choices=('off', 'auto'), default='off',
+                        help='Extra formal SVG after all flow stages: GT typography and shared VDD (default: off)')
+    parser.add_argument('--formal-power-rails', choices=('auto', 'off'), default='auto',
+                        help='VDD merging inside formal output; off keeps the original supply markers')
     parser.add_argument('--candidate-id',
                         help='Replay candidate 1, 2 or 3; 0 explicitly runs the legacy reference')
     parser.add_argument('--fallback', choices=('auto', 'off', 'only'),
@@ -1140,6 +1174,7 @@ def main(argv=None, default_mode='layered'):
                                simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                                net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
                                **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}),
+                               **({'formal_output':args.formal_output, 'formal_power_rails':args.formal_power_rails} if args.formal_output != 'off' else {}),
                                **({'presentation':args.presentation} if args.presentation is not None else {}))
         elif args.reroute_placement:
             if args.attachment_layout != 'off':
@@ -1157,6 +1192,7 @@ def main(argv=None, default_mode='layered'):
                               simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                               net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
                               **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}),
+                              **({'formal_output':args.formal_output, 'formal_power_rails':args.formal_power_rails} if args.formal_output != 'off' else {}),
                               **({'presentation':args.presentation} if args.presentation is not None else {}))
         else:
             run(args.netlist, mode=args.mode, iterations=args.iterations, seed=args.seed,
@@ -1179,7 +1215,8 @@ def main(argv=None, default_mode='layered'):
                 local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
                 simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                 net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
-                **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}))
+                **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}),
+                **({'formal_output':args.formal_output, 'formal_power_rails':args.formal_power_rails} if args.formal_output != 'off' else {}))
     except (ValueError, OSError, KeyError) as exc:
         parser.exit(2, f'Error: {exc}\n')
     return 0

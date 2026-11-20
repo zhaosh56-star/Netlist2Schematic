@@ -1,0 +1,8 @@
+{
+  "format": "blind-schematic-evaluation-config-v1",
+  "manifest": "./pairs.example.json",
+  "out_dir": "../../output/evaluation-example",
+  "seed": 20261119,
+  "exclusions": [],
+  "unmerged": []
+}
