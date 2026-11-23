@@ -226,7 +226,11 @@ def measure(pl, comps, index, plan):
         choices=[];scale=pitch(pl)
         for direction in ((1,0),(-1,0),(0,1),(0,-1)):
             options=RoutingOptions(**plan.get('geometry_parameters',{}))
-            geo=template(par,pl,comps,index,g['module'],direction,options,
+            saved=getattr(pl,'passive_module_guides',{}).get(g['id'])
+            spacing=(saved.get('spacing',{}).get('policy','standard') if saved is not None else
+                     plan.get('spacing_policy','compact'))
+            if spacing=='auto':spacing='compact'
+            geo=template(par,pl,comps,index,g['module'],direction,options,spacing=spacing,
                          extra_keepout=options.cross_clearance if plan.get('version','').endswith('v2') else 0)
             if geo is None:
                 continue

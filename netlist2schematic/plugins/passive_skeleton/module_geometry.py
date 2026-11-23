@@ -11,7 +11,28 @@ from netlist2schematic.plugins.passive_embedding.passive_embedding import VECTOR
 from netlist2schematic.routing.routing_rules import _escape, _inflate
 
 
-def template(par, pl, comps, index, tree, direction, options, *, extra_keepout=0):
+SPACING_VERSION = 'passive-module-spacing-v1'
+PASSIVE_SYMBOLS = frozenset(('resistor','capacitor','inductor','diode'))
+
+
+def can_compact(tree, comps, index):
+    def visit(node):
+        if node['kind']=='part':
+            return comps[index[node['device']]]['symbol'] in PASSIVE_SYMBOLS, False
+        children=[visit(c) for c in node['children']]
+        pure=all(c[0] for c in children)
+        own=(node['kind']=='parallel' and pure and len(children)>1) or (node['kind']=='series' and any(
+            a['kind']==b['kind']=='part' and ca[0] and cb[0]
+            for a,b,ca,cb in zip(node['children'],node['children'][1:],children,children[1:])))
+        return pure, own or any(c[1] for c in children)
+    return visit(tree)[1]
+
+
+def template(par, pl, comps, index, tree, direction, options, *, extra_keepout=0,
+             spacing='compact'):
+    if spacing not in ('compact','standard'):
+        raise ValueError('Module spacing must be compact or standard')
+    actions=[]
     axis = 0 if direction[0] else 1
     cross = 1-axis
     step = options.grid_step
@@ -73,9 +94,25 @@ def template(par, pl, comps, index, tree, direction, options, *, extra_keepout=0
             for net,segments in child['wires'].items():
                 wires[net].extend(segments)
         if node['kind']=='series':
-            cursor=0.
-            for child in children:
-                add(shifted(child,cursor,0));cursor+=child['extent']
+            cursor=0.;previous_start=0.
+            for number,child in enumerate(children):
+                start=cursor
+                # Only an unbranched part-to-part join may share the two
+                # facing exit corridors. Composite buses and source devices
+                # retain their original interfaces and quiet space.
+                if spacing=='compact' and number:
+                    first,last=node['children'][number-1:number+1]
+                    if (first['kind']==last['kind']=='part' and
+                            all(comps[index[n['device']]]['symbol'] in PASSIVE_SYMBOLS for n in (first,last))):
+                        before,after=envelope(children[number-1]),envelope(child)
+                        high=max(direction[axis]*before[k] for k in (axis,axis+2))
+                        low=min(direction[axis]*after[k] for k in (axis,axis+2))
+                        minimum=previous_start+high-low+2*(options.halo+extra_keepout)
+                        start=min(cursor,max(previous_start,up(minimum)))
+                        if start<cursor:
+                            actions.append(dict(kind='series_join',devices=[first['device'],last['device']],
+                                                saved=cursor-start))
+                add(shifted(child,start,0));previous_start=start;cursor=start+child['extent']
             extent=cursor
         else:
             boxes=[envelope(c) for c in children]
@@ -83,6 +120,23 @@ def template(par, pl, comps, index, tree, direction, options, *, extra_keepout=0
             half=max(max(abs(box[cross]),abs(box[cross+2])) for box in boxes)
             pitch=ceil((2*half+gap)/(2*step))*2*step
             lanes=[(j-(len(children)-1)/2)*pitch for j in range(len(children))]
+            def pure(node):
+                return (comps[index[node['device']]]['symbol'] in PASSIVE_SYMBOLS
+                        if node['kind']=='part' else all(pure(c) for c in node['children']))
+            if spacing=='compact' and pure(node) and len(children)>1:
+                adjacent=[0.]
+                for left,right in zip(boxes,boxes[1:]):
+                    # Leave both original halos intact. Extra caller-owned
+                    # keepout also remains; no foreign through-track is
+                    # implicitly reserved inside an isolated passive group.
+                    minimum=left[cross+2]-right[cross]+2*(options.halo+extra_keepout)
+                    adjacent.append(adjacent[-1]+ceil(minimum/(2*step))*2*step)
+                span=adjacent[-1];center=span/2
+                compact=[p-center for p in adjacent]
+                if span<lanes[-1]-lanes[0]:
+                    actions.append(dict(kind='parallel_lanes',standard_span=lanes[-1]-lanes[0],
+                        compact_span=span,lanes=list(compact)))
+                    lanes=compact
             extent=max(c['extent'] for c in children)
             for child,lane in zip(children,lanes):
                 lead=round((extent-child['extent'])/(2*step))*step
@@ -95,6 +149,7 @@ def template(par, pl, comps, index, tree, direction, options, *, extra_keepout=0
     layout=compose(tree)
     if layout is None:
         return None
-    layout.update(axis=axis,envelope=envelope(layout),ports=[xy(0),xy(layout['extent'])])
+    layout.update(axis=axis,envelope=envelope(layout),ports=[xy(0),xy(layout['extent'])],
+        spacing=dict(version=SPACING_VERSION,policy=spacing,changed=bool(actions),actions=actions))
     layout['wires']={net:[s for s in segments if s[0]!=s[1]] for net,segments in layout['wires'].items()}
     return layout

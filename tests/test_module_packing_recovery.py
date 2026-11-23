@@ -84,8 +84,11 @@ class PackingRecoveryTests(unittest.TestCase):
 
 
 class GeometryReuseTests(unittest.TestCase):
-    def execute(self, static, guides):
+    def execute(self, static, guides, spacing_policy='standard'):
         _, core, cs, ns, ix, plan = fixture()
+        # This fixture tests alternatives within one template. Auto-template
+        # fallback is covered separately by the compact-spacing regressions.
+        plan['spacing_policy']=spacing_policy
         def slots(par, state, *args):
             for _ in range(2):
                 current=deepcopy(state)

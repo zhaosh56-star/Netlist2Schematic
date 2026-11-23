@@ -141,24 +141,30 @@ def _geometry(par, pl, comps, index, group, vector, options):
     tree=deepcopy(group['module'])
     if group.get('mirror_bank') and tree['kind']=='parallel':
         tree['children'].reverse()
-    geo=template(par,pl,comps,index,tree,vector,options)
+    policy=group.get('spacing_policy',getattr(pl,'passive_spacing_policy','compact'))
+    geo=template(par,pl,comps,index,tree,vector,options,spacing=policy)
     if geo is None:
         raise ValueError('A passive module has no compatible legal orientation')
     space=2*options.halo+max(options.center_spacing,options.cross_clearance)
     return (geo['positions'],geo['orientations'],geo['axis'],geo['extent'],space,
-            geo['envelope'],dict(routes=geo['wires'],ports=geo['ports'],group=group['id']))
+            geo['envelope'],dict(routes=geo['wires'],ports=geo['ports'],group=group['id'],
+                                 spacing=geo['spacing']))
 
 
 def _translated(pl, geometry, target, step):
     trial=deepcopy(pl);positions,orientations,*_=geometry
+    # Snap the module translation once. Snapping each centre and each wire
+    # vertex independently tears a rigid template when a real pin offset is
+    # not divisible by grid_step (for example a 30-unit inductor on grid 4).
+    delta=tuple(snap(value,step) for value in target)
     for i,(x,y) in positions.items():
         ox,oy=pl.pos_of(i);base=pl.passive_local_offsets[i]
-        trial.passive_local_offsets[i]=[snap(x+target[0],step)-(ox-base[0]),
-                                        snap(y+target[1],step)-(oy-base[1])]
+        trial.passive_local_offsets[i]=[x+delta[0]-(ox-base[0]),
+                                        y+delta[1]-(oy-base[1])]
         trial.orient[i]=orientations[i]
     connection=deepcopy(geometry[6])
     def moved(point):
-        return tuple(snap(point[k]+target[k],step) for k in (0,1))
+        return tuple(point[k]+delta[k] for k in (0,1))
     connection['routes']={net:[(moved(a),moved(b)) for a,b in segments]
                           for net,segments in connection['routes'].items()}
     connection['internal_routes']=deepcopy(connection['routes'])
@@ -211,7 +217,10 @@ def _anchor_geometry(par, pl, comps, index, group, options):
 
 def reserve(par, pl, comps, index, plan, options, fixed):
     actions=[];groups=deepcopy(plan['groups']);by_id={g['id']:g for g in groups}
+    pl.passive_spacing_policy=plan.get('spacing_policy','compact')
+    if pl.passive_spacing_policy=='auto':pl.passive_spacing_policy='compact'
     for g in groups:
+        g['spacing_policy']=pl.passive_spacing_policy
         g['slot_ports']=_anchor_geometry(par,pl,comps,index,g,options)
     # Paired banks must both fit before either bank is placed.
     for family in plan['families']:
@@ -477,6 +486,48 @@ def _guest_guards(par, trial, comps, index, groups):
 
 def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds=1., max_trials=128,
          skip_rejected_geometry=False):
+    """Compact then standard, sharing one original finite packing quota."""
+    from netlist2schematic.plugins.passive_skeleton.module_geometry import can_compact, SPACING_VERSION
+    if type(seconds) not in (int,float) or not isfinite(seconds) or seconds<0:
+        raise ValueError('passive packing seconds must be finite and non-negative')
+    if type(max_trials) is not int or max_trials<0:
+        raise ValueError('passive packing trial limit must be a non-negative integer')
+    if deadline is not None and (type(deadline) not in (int,float) or not isfinite(deadline)):
+        raise ValueError('passive packing deadline must be finite')
+    policy=plan.get('spacing_policy','auto')
+    if policy not in ('auto','compact','standard'):
+        raise ValueError('passive spacing policy must be auto, compact or standard')
+    profiles=((policy,) if policy!='auto' else ('compact','standard')
+              if any(can_compact(g['module'],comps,index) for g in plan['groups']) else ('standard',))
+    started=perf_counter();stop=min(deadline,started+seconds) if deadline is not None else started+seconds
+    attempts=[];used=0;result=report=None;rejected_geometry=set()
+    for number,profile in enumerate(profiles):
+        available=max(0.,stop-perf_counter());remaining=max(0,max_trials-used)
+        if number and (available<=0 or not remaining):break
+        fraction=.75 if len(profiles)>1 and number==0 else 1.
+        allowance=available*fraction
+        quota=max(1,int(remaining*fraction)) if remaining else 0
+        attempt_plan=deepcopy(plan);attempt_plan['spacing_policy']=profile
+        for group in attempt_plan['groups']:group['spacing_policy']=profile
+        result,report=_pack_once(par,core,comps,nets,index,attempt_plan,options,
+            deadline=min(stop,perf_counter()+allowance),seconds=allowance,max_trials=quota,
+            skip_rejected_geometry=skip_rejected_geometry,_rejected_geometry=rejected_geometry)
+        used+=report['trials']
+        attempts.append(dict(profile=profile,status='valid' if result is not None else 'failed',
+            trials=report['trials'],seconds=report['elapsed_seconds'],stop_reason=report['stop_reason'],
+            allocated_trials=quota,allocated_seconds=allowance,
+            repeated_static_rejections_skipped=report.get('repeated_static_rejections_skipped',0)))
+        if result is not None:break
+    report['repeated_static_rejections_skipped']=sum(a['repeated_static_rejections_skipped'] for a in attempts)
+    report.update(trials=used,seconds_limit=seconds,max_trials=max_trials,
+        elapsed_seconds=round(perf_counter()-started,6),module_spacing=dict(version=SPACING_VERSION,
+            policy=policy,selected=attempts[-1]['profile'] if result is not None else None,
+            attempts=attempts,shared_time_and_trials=True))
+    return result,report
+
+
+def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, seconds=1., max_trials=128,
+               skip_rejected_geometry=False,_rejected_geometry=None):
     """Atomic family packing with a single finite local budget."""
     from netlist2schematic.plugins.preflight.placement_preflight import _static_faults
     from netlist2schematic.routing.orthogonal_router import RoutingFailure
@@ -516,7 +567,7 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
     singles=sorted((g for g in groups if g['id'] not in used),key=lambda g:(g['role'] not in INLINE_ROLES,g['role']=='rail_attachment',-len(g['members'])))
     batches.extend([g] for g in singles)
     placed=[]
-    rejected_geometry=set()
+    rejected_geometry=set() if _rejected_geometry is None else _rejected_geometry
     report['repeated_static_rejections_skipped']=0
     def batch_trials(state,batch,position=0):
         if perf_counter()>=stop:
