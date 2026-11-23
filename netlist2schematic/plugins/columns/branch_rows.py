@@ -16,7 +16,7 @@ from netlist2schematic.plugins.columns.column_layout import build_column_plan, _
 from netlist2schematic.layout.series_alignment import CHANNELS, CONTROLS
 from netlist2schematic.plugins.layout_shared.branch_levels import _conduction_orders
 
-VERSION = 'corresponding-branch-rows-v2'
+VERSION = 'corresponding-branch-rows-v3'
 
 
 def compatible_rows(report, placement, index):
@@ -164,13 +164,25 @@ def plan_branch_correspondence(par, devices, comps, nets, index, row_of, structu
             locked[k] = reason
         report['columns'].append(dict(members=list(members), rank=list(ranks[k]), locked_reason=reason))
 
+    # Converging/forked conduction ports intentionally end a display column.
+    # A retained output can therefore be a singleton although its strict
+    # upstream orders place it in an established branch. That context anchors
+    # a unique diode reference without merging or moving the output columns.
+    junction_outputs = {name: {n for n in outputs
+        if locked.get(owner[n]) == 'not_a_local_branch_root'}
+        for name, outputs in mirror_outputs.items()}
+    report['junction_mirror_anchors'] = [dict(reference=name, output=n,
+        upstream=sorted(o['upper'] for o in orders if o['lower'] == n),
+        evidence='unique_mirror_reference_with_retained_conduction_context')
+        for name in sorted(junction_outputs) for n in sorted(junction_outputs[name])]
     soft_references = set()
     if estimate_rows is not None:
         for name, outputs in mirror_outputs.items():
             k = owner[name]
             anchors = [n for n in outputs if ranks[owner[n]] > ranks[k] or owner[n] in locked]
             if (k not in locked and len({rows[n] for n in anchors}) > 1
-                    and any(ranks[owner[n]] > ranks[k] for n in anchors)):
+                    and (any(ranks[owner[n]] > ranks[k] for n in anchors)
+                         or bool(junction_outputs[name]))):
                 soft_references.add(name)
     report['soft_mirror_rows'] = [dict(reference=n, outputs=sorted(mirror_outputs[n]))
                                   for n in sorted(soft_references)]
@@ -306,6 +318,7 @@ def plan_branch_correspondence(par, devices, comps, nets, index, row_of, structu
             if ranks[k] != rank or k in locked:
                 continue
             members = set(column['members']); hints = []; stronger_anchor = False
+            junction_anchor = False
             for relation in relations:
                 a, b = relation['a'], relation['b']
                 if (a in members) == (b in members):
@@ -322,15 +335,20 @@ def plan_branch_correspondence(par, devices, comps, nets, index, row_of, structu
                                                         and relation['a'] == moving),
                                       anchor_basis='stronger_column' if stronger else locked[owner[anchor]]))
                     stronger_anchor |= stronger
-            if not stronger_anchor:
+                    junction_anchor |= (relation['kinds'] == ['current_mirror']
+                        and relation['a'] == moving
+                        and anchor in junction_outputs.get(moving, ()))
+            if not (stronger_anchor or junction_anchor):
                 continue
             deltas = {h['delta'] for h in hints}
-            if len(deltas) != 1:
+            if len(deltas) != 1 or (junction_anchor and not stronger_anchor):
                 if estimate_rows is not None and all(h['reference_member'] for h in hints):
                     choices.append(dict(column=k, base={n:current[n] for n in members},
                                         deltas=deltas | {0}, hints=hints))
                     continue
-                report['skipped'].append(dict(members=sorted(members), reason='ambiguous_target_rows', hints=hints))
+                report['skipped'].append(dict(members=sorted(members),
+                    reason='ambiguous_target_rows' if len(deltas) != 1 else 'junction_target_requires_estimate',
+                    hints=hints))
                 continue
             delta = next(iter(deltas))
             if not delta:
