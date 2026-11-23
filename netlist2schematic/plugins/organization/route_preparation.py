@@ -72,7 +72,7 @@ def _prepare(par,pl,comps,nets,index,metadata,options,*,deadline=None,seconds=.2
     report['elapsed_seconds']=round(perf_counter()-started,6)
     data['layout_branches']['route_preparation']=report
     from netlist2schematic.routing.regional_routing import VERSION as ROUTING_VERSION
-    policy=dict(version=ROUTING_VERSION,active=report['applied'],ownership=deepcopy(data['layout_branches']['plan']['ownership']),
+    policy=dict(version=ROUTING_VERSION,active=report['applied'] or getattr(pl,'branch_routing',{}).get('active',False),ownership=deepcopy(data['layout_branches']['plan']['ownership']),
         source_plan=data['layout_branches']['plan']['signature'],
         phases='internal_then_cross_channel_then_shared_controls',search='local_then_global_safe_interfaces')
     current.branch_routing=deepcopy(policy)

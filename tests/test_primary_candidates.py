@@ -32,10 +32,10 @@ class PrimaryScheduleTests(unittest.TestCase):
         output, generated, router, producer = self.invoke([valid(True), valid()])
         self.assertEqual(generated, [2, 3])
         self.assertEqual([c.args[2].identifier for c in router.call_args_list], [2, 3])
-        self.assertEqual(producer.call_args.kwargs['candidate_ids'], (2, 3, 1))
+        self.assertEqual(producer.call_args.kwargs['candidate_ids'], (2, 3))
         self.assertEqual(output[4]['quality']['selected_candidate'], '3')
         self.assertFalse(output[4]['quality']['reference_fallback_used'])
-        self.assertEqual(output[4]['quality']['candidate_policy'], 'primary_2_3_then_failure_reference_1')
+        self.assertEqual(output[4]['quality']['candidate_policy'], 'primary_2_3_then_repair')
 
     def test_one_success_is_enough_to_prevent_reference_initialization(self):
         failure = RoutingFailure('branch blocked', {'reason': 'no_route'})
@@ -45,14 +45,13 @@ class PrimaryScheduleTests(unittest.TestCase):
             self.assertEqual(result[4]['quality']['selected_candidate'], winner)
             self.assertEqual(router.call_count, 2)
 
-    def test_only_two_failed_primary_routes_can_start_reference(self):
+    def test_two_failed_primary_routes_are_captured_without_starting_reference(self):
         failure = RoutingFailure('blocked', {'reason': 'no_route'})
-        result, generated, router, _ = self.invoke([failure, failure, valid()])
-        self.assertEqual(generated, [2, 3, 1])
-        self.assertEqual([c.args[2].identifier for c in router.call_args_list], [2, 3, 1])
-        self.assertEqual(result[4]['quality']['selected_candidate'], '1')
-        self.assertTrue(result[4]['quality']['reference_fallback_used'])
-        self.assertEqual([r['status'] for r in result[4]['quality']['candidates']], ['failed', 'failed', 'valid'])
+        with self.assertRaises(RoutingFailure) as caught:
+            self.invoke([failure, failure, AssertionError('reference started')])
+        self.assertEqual([r['candidate_id'] for r in caught.exception.diagnostics['candidates']],['2','3'])
+        self.assertEqual([r['candidate_id'] for r in caught.exception._primary_placements],['2','3'])
+        self.assertEqual(caught.exception._primary_repair_deadline,400.)
 
     def test_insertion_failure_counts_as_failure_without_routing_partial_frame(self):
         skipped = candidate(2)
@@ -62,9 +61,10 @@ class PrimaryScheduleTests(unittest.TestCase):
         with patch('netlist2schematic.layout.structured_placement.create_candidates',
                    return_value=iter([skipped, candidate(3), candidate(1)])), \
              patch.object(flow, 'final_route', side_effect=[failure, valid()]) as router, redirect_stdout(io.StringIO()):
-            output = flow.select_layout('unused.cir', passive_skeleton='auto')
-        self.assertEqual([c.args[2].identifier for c in router.call_args_list], [3, 1])
-        self.assertEqual(output[4]['quality']['selected_candidate'], '1')
+            with self.assertRaises(RoutingFailure) as caught:
+                flow.select_layout('unused.cir', passive_skeleton='auto')
+        self.assertEqual([c.args[2].identifier for c in router.call_args_list], [3])
+        self.assertEqual([r['candidate_id'] for r in caught.exception._primary_placements],['3'])
 
     def test_cumulative_slots_leave_fallback_time_without_resetting_total(self):
         clock = SimpleNamespace(now=100.)
@@ -75,23 +75,24 @@ class PrimaryScheduleTests(unittest.TestCase):
                 clock.now = deadline
                 raise RoutingFailure('slot exhausted', {'reason': 'quality_time_budget'})
             return valid()
-        result, _, router, _ = self.invoke(route, clock=clock, quality_seconds=100)
-        self.assertEqual([c.kwargs['deadline'] for c in router.call_args_list], [140., 180., 200.])
-        self.assertEqual(available, [40., 40., 20.])
-        self.assertEqual(result[4]['quality']['candidate_budget_policy'], 'primary_reserved')
-        self.assertEqual([r['diagnostics']['reason'] for r in result[4]['quality']['candidates'][:2]],
-                         ['candidate_time_budget', 'candidate_time_budget'])
+        with self.assertRaises(RoutingFailure) as caught:
+            self.invoke(route, clock=clock, quality_seconds=100)
+        self.assertEqual(available,[40.,40.])
+        self.assertEqual(caught.exception._primary_repair_deadline-clock.now,20.)
+        self.assertEqual(caught.exception.diagnostics['candidate_budget_policy'],'primary_reserved')
+        self.assertEqual([r['diagnostics']['reason'] for r in caught.exception.diagnostics['candidates']],
+                         ['candidate_time_budget','candidate_time_budget'])
 
-    def test_all_failures_keep_the_last_reference_checkpoint_for_original_recovery(self):
+    def test_all_failures_keep_the_last_primary_checkpoint_for_original_recovery(self):
         failures = [RoutingFailure(str(i), {'reason': 'no_route'}) for i in (2, 3, 1)]
-        failures[-1]._rescue_context = {'failed_net': 'reference', 'done': ['safe']}
+        failures[1]._rescue_context = {'failed_net': 'primary3', 'done': ['safe']}
         with patch('netlist2schematic.layout.structured_placement.create_candidates',
                    return_value=iter([candidate(i) for i in (2, 3, 1)])), \
              patch.object(flow, 'final_route', side_effect=failures), redirect_stdout(io.StringIO()):
             with self.assertRaises(RoutingFailure) as caught:
                 flow.select_layout('unused.cir', passive_skeleton='auto')
-        self.assertEqual(caught.exception.retry_context[0].identifier, 1)
-        self.assertEqual(caught.exception._rescue_context['failed_net'], 'reference')
+        self.assertEqual(caught.exception.retry_context[0].identifier, 3)
+        self.assertEqual(caught.exception._rescue_context['failed_net'], 'primary3')
 
     def test_explicit_new_candidate_three_needs_no_reference_or_feedback_prerequisites(self):
         output, _, router, producer = self.invoke([valid()], ids=(3,), candidate_id='3')

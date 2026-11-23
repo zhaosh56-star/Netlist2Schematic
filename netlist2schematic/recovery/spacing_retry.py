@@ -56,7 +56,7 @@ def _expanded_axis(values, scale, grid_step):
     return result
 
 
-def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60):
+def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60, deadline=None):
     """Expand a copied five-tuple and return it with one verified routing result.
 
     Logical cells, orientations and symbol-local pin geometry remain unchanged.
@@ -76,6 +76,10 @@ def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60):
     if not isinstance(options, RoutingOptions):
         raise ValueError('routing_options must be RoutingOptions')
     started = perf_counter()
+    hard_deadline = deadline
+    if hard_deadline is not None:
+        from netlist2schematic.routing.routing_rules import check_deadline
+        check_deadline(hard_deadline, 'spacing_preparation')
     placement, comps, nets, index, metadata = deepcopy(context)
     if not isinstance(metadata, dict):
         raise ValueError('placement metadata must be an object')
@@ -128,7 +132,7 @@ def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60):
         metadata.pop(key, None)
     metadata['spacing_retry'] = report
     par = load_local('place_and_route', 'place-and-route.py')
-    deadline = perf_counter() + seconds
+    deadline = min(deadline,perf_counter()+seconds) if deadline is not None else perf_counter()+seconds
     try:
         routed, metrics, validation = final_route(par, nets, placement, index,
                                                   options=options, deadline=deadline)
@@ -143,6 +147,8 @@ def retry_spacing(context, *, routing_options=None, scale=1.5, seconds=60):
         raise RoutingFailure('Spacing retry failed: ' + str(exc), diagnostics) from exc
     quality = evaluate_quality(par, placement, comps, nets, index,
                                routed, metrics, metadata.get('structs', []))
+    if hard_deadline is not None:
+        check_deadline(hard_deadline, 'spacing_quality')
     report['elapsed_seconds'] = round(perf_counter() - started, 6)
     report['routing_seconds'] = validation.get('routing_seconds', 0)
     metadata['quality'] = {

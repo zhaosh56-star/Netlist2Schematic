@@ -94,7 +94,7 @@ def _control_sources(par,core, comps, index, plan):
 
 
 def create_candidate(devices, comps, nets, index, levels, att, structs, seed, variant,
-                     plan, options, *, iterations=0, deadline=None, columns=True, branch_layout='off'):
+                     plan, options, *, iterations=0, deadline=None, columns=True, branch_layout='off', packing_failures=None):
     """Return a complete static-legal layout or an explicit fallback report.
 
     Only the geometric estimator sees the auxiliary edges. Exported components,
@@ -201,11 +201,22 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     core,rl_actions=_align_rl(sp.par,core,cc,estimate_nets,ci,plan)
     core,source_actions=_control_sources(sp.par,core,cc,ci,plan)
     used+=context.get('series_alignment',{}).get('trials',0)
-    packed,report=pack(sp.par,core,comps,nets,index,plan,options,deadline=until,
-        seconds=max(0,until-perf_counter()),max_trials=max(0,128-used))
+    if branch_report is not None and branch_report.get('applied'):
+        from netlist2schematic.plugins.passive_skeleton.packing_recovery import prepare_and_pack
+        core,packed,report,branch_report=prepare_and_pack(sp.par,core,comps,nets,index,plan,options,
+            branch_report,local_deadline=until,candidate_deadline=deadline,max_trials=max(0,128-used))
+    else:
+        packed,report=pack(sp.par,core,comps,nets,index,plan,options,deadline=until,
+            seconds=max(0,until-perf_counter()),max_trials=max(0,128-used))
+    recovery=report.get('packing_recovery',{})
+    initial_trials=recovery.get('initial_trials',report['trials'])
     report['shared_local_budget']=dict(seconds_limit=1.,max_trials=128,active_trials=used-row_trials,
         row_estimate_seconds=row_seconds,row_estimate_trials=row_trials,
-        packing_trials=report['trials'],completed_trials=used+report['trials'])
+        packing_trials=initial_trials,completed_trials=used+initial_trials)
+    if recovery.get('retried'):
+        report['shared_local_budget'].update(recovery_packing_trials=recovery['retry_trials'],
+            recovery_seconds=recovery['retry_seconds'],
+            total_completed_trials=used+recovery['total_trials'])
     report.update(core_only_sa=True,core_ids=list(ci),auxiliary_estimator_edges=aux,
         original_electrical_levels=deepcopy(levels['device_levels']),
         display_rows={n:core.cell_of[i][0] for n,i in ci.items()},
@@ -216,34 +227,68 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     if branch_rows is not None:
         report['layout_branch_rows']=deepcopy(branch_rows)
     if branch_report is not None:report['layout_branches']=deepcopy(branch_report)
-    if packed is None:return None,report
-    metadata=dict(source_note=levels['source_note'],levels=deepcopy(levels['device_levels']),attach=deepcopy(att),
-        structs=deepcopy(structs),sym_pairs=context['sym_pairs'],energy=energy,optimization_metrics=estimate,
-        optimization_metrics_stage='active_skeleton_before_passive_embedding',
-        layout_grid=dict(column_x=list(packed.column_x),row_y=list(packed.row_y)),
-        candidate_id=variant+1,candidate_seed=seed,layout_style='structured',annealing=annealing,
-        role_adjustments=role_actions,alignment_relations=context['alignment_relations'],
-        layout_hierarchy=hierarchy_report(core),passive_skeleton=report,
-        passive_layout_policy='skeleton',passive_layout=dict(version=plan['version'],policy='skeleton',
-            core_only_sa=True,post_sa_local_coordinates=True))
-    if branch_rows is not None:
-        metadata['layout_branch_rows']=deepcopy(branch_rows)
-    if branch_report is not None:
-        from netlist2schematic.plugins.organization.branch_layout import refresh
-        metadata['layout_branches']=deepcopy(branch_report)
-        metadata=refresh(packed,comps,index,metadata,stage='after_passive_module_insertion')
-    report['current']=measure(packed,comps,index,report['plan'])
-    if inline_bridges:
-        report['inline_port_policy'] = 'unique-conduction-hosts-with-control-taps-v1'
-        report['terminal_row_preferences'] = terminal_rows
-        capacitive = [b for b in inline_bridges if b.get('layout_only') and not b.get('source_layout')]
-        if capacitive:
-            report['capacitive_layout_bridges'] = deepcopy(capacitive)
-            report['capacitor_policy'] = 'unique-two-host-display-order-v1'
-        metadata.update({key: deepcopy(context[key]) for key in ('layout_columns','series_alignment')
-                         if key in context})
-    if plan.get('source_layout', {}).get('guests'):
-        report['source_layout']=deepcopy(plan['source_layout'])
-        report['source_layout']['inline_bridges']=[deepcopy(g['conduction']) for g in plan['groups']
-                                                   if g['role']=='source_inline']
-    return (packed,comps,nets,index,metadata),report
+    def finish(packed,report,core=core,comps=comps,nets=nets,index=index):
+        metadata=dict(source_note=levels['source_note'],levels=deepcopy(levels['device_levels']),attach=deepcopy(att),
+            structs=deepcopy(structs),sym_pairs=context['sym_pairs'],energy=energy,optimization_metrics=estimate,
+            optimization_metrics_stage='active_skeleton_before_passive_embedding',
+            layout_grid=dict(column_x=list(packed.column_x),row_y=list(packed.row_y)),
+            candidate_id=variant+1,candidate_seed=seed,layout_style='structured',annealing=annealing,
+            role_adjustments=role_actions,alignment_relations=context['alignment_relations'],
+            layout_hierarchy=hierarchy_report(core),passive_skeleton=report,
+            passive_layout_policy='skeleton',passive_layout=dict(version=plan['version'],policy='skeleton',
+                core_only_sa=True,post_sa_local_coordinates=True))
+        if branch_rows is not None:
+            metadata['layout_branch_rows']=deepcopy(branch_rows)
+        if branch_report is not None:
+            from netlist2schematic.plugins.organization.branch_layout import refresh
+            metadata['layout_branches']=deepcopy(branch_report)
+            metadata=refresh(packed,comps,index,metadata,stage='after_passive_module_insertion')
+        report['current']=measure(packed,comps,index,report['plan'])
+        if inline_bridges:
+            report['inline_port_policy'] = 'unique-conduction-hosts-with-control-taps-v1'
+            report['terminal_row_preferences'] = terminal_rows
+            capacitive = [b for b in inline_bridges if b.get('layout_only') and not b.get('source_layout')]
+            if capacitive:
+                report['capacitive_layout_bridges'] = deepcopy(capacitive)
+                report['capacitor_policy'] = 'unique-two-host-display-order-v1'
+            metadata.update({key: deepcopy(context[key]) for key in ('layout_columns','series_alignment')
+                             if key in context})
+        if plan.get('source_layout', {}).get('guests'):
+            report['source_layout']=deepcopy(plan['source_layout'])
+            report['source_layout']['inline_bridges']=[deepcopy(g['conduction']) for g in plan['groups']
+                                                       if g['role']=='source_inline']
+        return (packed,comps,nets,index,metadata),report
+
+    if packed is None:
+        if packing_failures is not None:
+            snapshot=deepcopy((core,comps,nets,index,plan,options,report))
+            def resume(until):
+                from netlist2schematic.routing.orthogonal_router import RoutingFailure
+                saved,cc,nn,ii,pp,oo,old=deepcopy(snapshot)
+                from netlist2schematic.recovery.spacing_retry import _expanded_axis
+                from netlist2schematic.layout.series_alignment import _fixed_ids
+                # The original primary frame remains the recovery anchor.
+                # Try extra insertion time, then a modest physical expansion;
+                # fixed positions and logical rows/columns are never changed.
+                for scale in (1.,1.25):
+                    if perf_counter()>=until:break
+                    trial=deepcopy(saved)
+                    if scale!=1.:
+                        trial.column_x=_expanded_axis(saved.column_x,scale,oo.grid_step)
+                        trial.row_y=_expanded_axis(saved.row_y,scale,oo.grid_step)
+                        if any(trial.pos_of(i)!=saved.pos_of(i) for i in _fixed_ids(saved,saved.comps)):
+                            continue
+                    stop=min(until,perf_counter()+3.)
+                    packed,retried=pack(sp.par,trial,cc,nn,ii,pp,oo,deadline=stop,
+                        seconds=max(0.,stop-perf_counter()),max_trials=512,skip_rejected_geometry=True)
+                    if packed is not None:
+                        updated={**old,**retried,'primary_packing_resume':dict(scale=scale,
+                            source_candidate=str(variant+1),no_sa_restart=True)}
+                        result,_=finish(packed,updated,trial,cc,nn,ii)
+                        return result
+                raise RoutingFailure('Primary module insertion recovery did not complete',
+                    dict(reason='primary_packing_incomplete',candidate_id=str(variant+1)))
+            packing_failures.append(dict(kind='packing',candidate_id=str(variant+1),
+                resume=resume,options=deepcopy(options),context=None,checkpoint=None,attempt_index=0))
+        return None,report
+    return finish(packed,report)

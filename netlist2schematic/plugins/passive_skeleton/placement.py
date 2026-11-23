@@ -124,6 +124,8 @@ def make_frame(par, core, comps, index, options):
     if getattr(core,'branch_plan',None):
         pl.branch_plan=deepcopy(core.branch_plan)
         pl.branch_index=dict(index)
+    if getattr(core,'branch_routing',None):
+        pl.branch_routing=deepcopy(core.branch_routing)
     if getattr(core, 'column_plan', {}).get('protected_plan') is not None:
         pl.column_plan = deepcopy(core.column_plan)
     pl.passive_local_offsets=[[0.,0.] for c in comps]
@@ -473,7 +475,8 @@ def _guest_guards(par, trial, comps, index, groups):
     return True
 
 
-def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds=1., max_trials=128):
+def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds=1., max_trials=128,
+         skip_rejected_geometry=False):
     """Atomic family packing with a single finite local budget."""
     from netlist2schematic.plugins.preflight.placement_preflight import _static_faults
     from netlist2schematic.routing.orthogonal_router import RoutingFailure
@@ -513,6 +516,8 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
     singles=sorted((g for g in groups if g['id'] not in used),key=lambda g:(g['role'] not in INLINE_ROLES,g['role']=='rail_attachment',-len(g['members'])))
     batches.extend([g] for g in singles)
     placed=[]
+    rejected_geometry=set()
+    report['repeated_static_rejections_skipped']=0
     def batch_trials(state,batch,position=0):
         if perf_counter()>=stop:
             return
@@ -528,9 +533,17 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
             chosen=None
             for candidate in batch_trials(frame,batch):
                 if perf_counter()>=stop or report['trials']>=max_trials:return finish('local_budget')
+                geometry_key=None
+                if skip_rejected_geometry:
+                    geometry_key=tuple((candidate.pos_of(i),candidate.orient[i]) for i in range(len(comps)))
+                    if geometry_key in rejected_geometry:
+                        report['repeated_static_rejections_skipped']+=1
+                        continue
                 report['trials']+=1
                 if not _guest_guards(par,candidate,comps,index,placed+batch):continue
                 faults=_static_faults(par,candidate,nets,index,options,stop)
+                if geometry_key is not None and (faults['count'] or faults['hard']):
+                    rejected_geometry.add(geometry_key)
                 if not faults['count'] and not faults['hard']:
                     from netlist2schematic.plugins.passive_skeleton.module_connections import check_guides
                     violations=check_guides(par,candidate,nets,index,options,stop)

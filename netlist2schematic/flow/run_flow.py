@@ -146,18 +146,43 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                     raise
                 _check_source(source, source_hash)
                 stages.append(_failed_stage('normal', exc, perf_counter() - started))
-                if policy == 'off' and rescue_policy == 'off':
+                primary_rows = deepcopy(getattr(exc, '_primary_placements', None))
+                primary_deadline = getattr(exc, '_primary_repair_deadline', None)
+                result = None
+                if primary_rows and primary_deadline is not None and perf_counter() < primary_deadline:
+                    from netlist2schematic.recovery.primary_recovery import repair
+                    repair_started = perf_counter()
+                    result, repair_report, primary_rows = repair(primary_rows, deadline=primary_deadline)
+                    if result is not None:
+                        stages.append({**_valid_stage('primary_repair', result, perf_counter()-repair_started),
+                                       'primary_repair': deepcopy(repair_report)})
+                    else:
+                        stages.append(dict(stage='primary_repair',status='failed',
+                            elapsed_seconds=perf_counter()-repair_started,diagnostics=repair_report))
+                if result is not None:
+                    _check_source(source, source_hash)
+                elif policy == 'off' and rescue_policy == 'off':
                     raise
                 context = deepcopy(getattr(exc, 'retry_context', None))
                 checkpoint = deepcopy(getattr(exc, '_rescue_context', None))
                 retry_options = getattr(exc, 'retry_options', None) or options
                 recovery_candidates = getattr(exc, '_recovery_candidates', None)
-                if recovery_candidates:
+                if primary_rows:
+                    from netlist2schematic.recovery.primary_recovery import context_for_recovery
+                    chosen = context_for_recovery(primary_rows)
+                    if chosen is not None:
+                        context = deepcopy(chosen['context'])
+                        checkpoint = deepcopy(chosen.get('checkpoint'))
+                        retry_options = deepcopy(chosen['options'])
+                    recovery_candidates = [row for row in primary_rows if row.get('checkpoint') is not None]
+                if result is not None:
+                    pass
+                elif recovery_candidates:
                     result = _try_candidate_rescues(recovery_candidates, rescue_policy,
                         rescue_seconds, stages, postroute_regions=region_layout=='auto')
                 else:
                     result = _try_local_rescue(context, checkpoint, retry_options,
-                        rescue_policy, rescue_seconds, stages,
+                        rescue_policy, rescue_seconds, stages, allow_module_channels=True,
                         **({'postroute_regions':True} if region_layout=='auto' else {}))
                 _check_source(source, source_hash)
                 if result is None and policy == 'off':
@@ -565,7 +590,8 @@ def _try_candidate_rescues(candidates, policy, seconds, stages, *, postroute_reg
               f"budget={allowance:.2f}s", flush=True)
         result = _try_local_rescue(candidate['context'], candidate['checkpoint'],
             candidate['options'], policy, allowance, attempt_stages,
-            postroute_regions=postroute_regions, deadline=attempt_deadline)
+            postroute_regions=postroute_regions, deadline=attempt_deadline,
+            allow_module_channels=True)
         attempt = attempt_stages[-1]
         attempt.update(candidate_id=summary['candidate_id'], allocated_seconds=allowance,
                        progress=deepcopy(summary))
@@ -588,7 +614,7 @@ def _try_candidate_rescues(candidates, policy, seconds, stages, *, postroute_reg
 
 
 def _try_local_rescue(context, checkpoint, options, policy, seconds, stages,*,postroute_regions=False,
-                      deadline=None):
+                      deadline=None, allow_module_channels=False):
     """Only the top-level failed-normal path may invoke this recovery stage."""
     reason = ('disabled' if policy == 'off' or seconds == 0 else
               'no_attempted_layout' if context is None else
@@ -600,14 +626,26 @@ def _try_local_rescue(context, checkpoint, options, policy, seconds, stages,*,po
     print(f'Normal routing failed; local rescue, budget={seconds:g}s', flush=True)
     started = perf_counter()
     end = min(started + seconds, deadline) if deadline is not None else started + seconds
+    channel_report = None
     try:
         frozen_context, frozen_checkpoint, frozen_options = deepcopy((context, checkpoint, options))
-        available = seconds if deadline is None else end - perf_counter()
-        if available <= 0:
-            raise RoutingFailure('Local rescue preparation exhausted its allocated time',
-                                 {'reason': 'quality_time_budget', 'stage': 'rescue_preparation'})
-        result = rescue_routing(frozen_context, frozen_checkpoint,
-                                routing_options=frozen_options, seconds=available)
+        result = None
+        if allow_module_channels:
+            from netlist2schematic.recovery.module_channels import eligible, rescue as change_channels
+            if eligible(frozen_context, frozen_checkpoint):
+                channel_deadline = min(end, perf_counter()+min(12., max(0., end-perf_counter())*.5))
+                result, channel_report = change_channels(frozen_context, frozen_checkpoint,
+                    frozen_options, deadline=channel_deadline)
+        available = ((seconds if deadline is None else end-perf_counter())
+                     if channel_report is None else end-perf_counter())
+        if result is None:
+            if available <= 0:
+                raise RoutingFailure('Local rescue preparation exhausted its allocated time',
+                                     {'reason': 'quality_time_budget', 'stage': 'rescue_preparation'})
+            result = rescue_routing(frozen_context, frozen_checkpoint,
+                                    routing_options=frozen_options, seconds=available)
+            if channel_report is not None:
+                result[4]['local_rescue']['module_channels'] = deepcopy(channel_report)
         if not result[5][2].get('valid', False):
             raise RoutingFailure('Local rescue did not pass final validation',
                                  {'reason': 'local_rescue_validation'})
@@ -643,6 +681,8 @@ def _try_local_rescue(context, checkpoint, options, policy, seconds, stages,*,po
     except ROUTING_FAILURES as exc:
         if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
             raise
+        if channel_report is not None:
+            exc.diagnostics['module_channels'] = deepcopy(channel_report)
         stages.append(_failed_stage('local_rescue', exc, perf_counter() - started))
         return None
     stages.append(_valid_stage('local_rescue', result, perf_counter() - started))
@@ -1124,7 +1164,7 @@ def main(argv=None, default_mode='layered'):
                         help='Replay a structure rollout phase; ignored when structure-layout is off')
     parser.add_argument('--quality-seconds', type=float, default=300)
     parser.add_argument('--candidate-budget',choices=('sequential','reserved'),default='sequential',
-                        help='Old-path sequential or 70/85/100 cutoffs; the default preferred-candidate path reserves 40/80/100 for IDs 2/3/1')
+                        help='Old-path sequential or 70/85/100 cutoffs; default primary IDs 2/3 retain 40/80 cutoffs and use unused normal time for failure-only repair')
     parser.add_argument('--port-preflight',choices=('off','repair'),default=None,
                         help='Repair fixed-port/marker conflicts before routing; default: repair for netlists, off for saved layouts')
     parser.add_argument('--presentation',choices=('legacy','clean'),

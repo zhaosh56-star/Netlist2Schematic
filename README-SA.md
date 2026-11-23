@@ -2,6 +2,8 @@
 
 主列与区域前置组织已默认启用（`--branch-layout auto`）：候选2、3先按连接关系组织导通列和局部区域，再由SA在框架内调整；没有器件数量触发门槛，保留现有无源模块与布线插件。用 `--branch-layout off` 关闭；旧JSON、baseline／legacy、显式关闭主列或其他布局实验不隐式叠加。规则及46张实测见[说明](docs/branch-organization.md)。
 
+默认组织路径已补齐插入前骨架碰撞修复、插入失败后有限补试，以及整图正常阶段失败后的相关模块换通道。保持MOS逻辑行列与朝向，原有成功路径不进入失败恢复；总候选、预算和几何规则保持。C23已在正常阶段生成完整合法图，2497项完整回归通过。原理、额度、保存兼容与实测见[模块恢复说明](docs/branch-organization.md)。
+
 单文件盲测已封装为根目录 `build_evaluation.py`：用 `--manifest` 提供任意图对清单或已有正式图集，即可生成问卷，不重跑布局和布线。不内置题目排除或 VDD 换图规则，直接采用你提供的图片。只发一个 `index.html`，客户答完只返回一个含 GT／算法占比和逐题细节的 HTML 报告。清单格式和命令见[评测脚本说明](docs/blind-evaluation.md)。
 
 正式出图插件：在主 flow 末尾加 `--formal-output auto`，额外生成 GT 风格字体、数学下标、无引脚白圈和结构虚框、局部合并 VDD 的正式 SVG。默认关闭；`--formal-power-rails off` 可单独禁用合并。已有 JSON 可跳过布局与布线独立调用，见[正式出图说明](docs/formal-figures.md)。
@@ -48,4 +50,4 @@ Set-Location D:\gongzuo
 
 另有保守的无源整理 `--passive-embedding auto`，默认关闭：在原成品完成后，用独立5秒尝试一次无源局部重排和重布。MOS/BJT及其他非无源位置、朝向保持；只有线长、交叉、折角均不增加且附件组织改善才采用，否则恢复原图。它兼容默认长列策略，不需要开启旧附件实验；用法及边界见[说明](docs/attachment-integration.md)，本地最终对照为 `output/passive-embedding-goal/safe/index.html`。
 
-普通新网表默认开启 **`--passive-skeleton auto`**：先跑候选2、3，完成有源主列后插入串联、并联及嵌套串并联小模块。两份都失败才运行原候选1兜底；成功候选共用原5秒、512案安全缩线后，严格按 **折角少 → 交叉少 → 信号线长短** 选择。结构规整继续用于摆件，原Q分数及旧结构偏好仅作诊断。用 `--passive-skeleton off` 恢复原候选1→2→3生成顺序，最终仍遵守新排序。保存坐标操作和其他显式布局实验不隐式叠加。具体规则见[选图说明](docs/candidate-selection.md)、[候选调度](docs/preferred-candidates.md)与[无源模块插入](docs/passive-modules.md)。
+普通新网表默认开启 **`--passive-skeleton auto`**：先跑候选2、3，完成有源主列后插入串联、并联及嵌套串并联小模块。两份都失败才在剩余正常预算修复原主候选，不自动运行候选1；成功候选共用原5秒、512案安全缩线后，严格按 **折角少 → 交叉少 → 信号线长短** 选择。结构规整继续用于摆件，原Q分数及旧结构偏好仅作诊断。用 `--passive-skeleton off` 恢复原候选1→2→3生成顺序，最终仍遵守新排序。保存坐标操作和其他显式布局实验不隐式叠加。具体规则见[选图说明](docs/candidate-selection.md)、[候选调度](docs/preferred-candidates.md)与[无源模块插入](docs/passive-modules.md)。

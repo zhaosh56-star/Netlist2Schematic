@@ -19,10 +19,11 @@ def routing_deadline(started, seconds, identifier, *, policy='sequential', repla
 
 
 def primary_deadline(started, seconds, identifier):
-    """Bound both preferred candidates and leave time for failure-only seed 1.
+    """Keep primary cutoffs unchanged and leave unused time for repair.
 
-    Cutoffs are cumulative: time saved by an earlier candidate is available to
-    the next one. The total quality budget is never reset for the fallback.
+    Default generation uses only IDs 2/3 at 40/80 percent. The ID 1 mapping is
+    retained for explicit/older callers; it is not an automatic candidate.
+    Cutoffs are cumulative and the normal deadline is never reset.
     """
     routing_deadline(started, seconds, identifier)
     return started + seconds * PRIMARY_FRACTIONS[str(identifier)]

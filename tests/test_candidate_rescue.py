@@ -48,18 +48,18 @@ class CheckpointCaptureTests(unittest.TestCase):
                 aesthetic_flow.select_layout('unused.cir', passive_skeleton='auto', **kwargs)
         return caught.exception, errors
 
-    def test_all_three_scenes_survive_without_changing_legacy_last_context(self):
+    def test_both_primary_scenes_survive_without_reference_context(self):
         checkpoints = {i: snapshot(i)['checkpoint'] for i in (2, 3, 1)}
         error, originals = self.fail_candidates([candidate(i) for i in (2, 3, 1)], checkpoints)
         pool = error._recovery_candidates
-        self.assertEqual(['2', '3', '1'], [row['candidate_id'] for row in pool])
-        self.assertEqual(1, error.retry_context[0].identifier)
+        self.assertEqual(['2', '3'], [row['candidate_id'] for row in pool])
+        self.assertEqual(3, error.retry_context[0].identifier)
         for row in pool:
             self.assertEqual(int(row['candidate_id']), row['context'][0].identifier)
             self.assertIsNot(row['checkpoint']['scene'], checkpoints[int(row['candidate_id'])]['scene'])
         pool[-1]['context'][0].identifier = 99
         pool[-1]['checkpoint']['completed'].clear()
-        self.assertEqual(1, error.retry_context[0].identifier)
+        self.assertEqual(3, error.retry_context[0].identifier)
         self.assertTrue(error._rescue_context['completed'])
         self.assertTrue(originals[-1]._rescue_context['completed'])
         json.dumps(error.diagnostics)
@@ -71,10 +71,10 @@ class CheckpointCaptureTests(unittest.TestCase):
             'complete': True, 'valid': False, 'fault_count': 1}}
         error, calls = self.fail_candidates([candidate(2), tuple(rejected), candidate(1)],
                                             {2: snapshot(2)['checkpoint']}, port_preflight='repair')
-        self.assertEqual(2, len(calls))
+        self.assertEqual(1, len(calls))
         self.assertEqual(['2'], [row['candidate_id'] for row in error._recovery_candidates])
-        self.assertEqual(1, error.retry_context[0].identifier)
-        self.assertFalse(hasattr(error, '_rescue_context'))
+        self.assertEqual(2, error.retry_context[0].identifier)
+        self.assertEqual(error._rescue_context['failed_net'],snapshot(2)['checkpoint']['failed_net'])
 
     def test_explicit_replay_keeps_single_scene_recovery(self):
         error, _ = self.fail_candidates([candidate(3)], {3: snapshot(3)['checkpoint']}, candidate_id='3')

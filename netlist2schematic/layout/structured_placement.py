@@ -880,7 +880,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                       structure_layout='off', structure_phase=3, region_layout='off',
                       readability_layout='off', readability_phase=5, routing_options=None,
                       attachment_layout='off', passive_skeleton='off', skeleton_columns=True,
-                      candidate_ids=None, candidate_deadlines=None, branch_layout='off'):
+                      candidate_ids=None, candidate_deadlines=None, branch_layout='off', packing_failures=None):
     """Yield requested structured seeds lazily, keeping their original IDs.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -996,6 +996,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                     result,skeleton_attempt=create_candidate(devices,comps,nets,index,levels,att,
                         structs,candidate_seed,variant,skeleton_plan,routing_options or RoutingOptions(),
                         iterations=iterations//3,deadline=deadline,columns=skeleton_columns,
+                        **({'packing_failures':packing_failures} if packing_failures is not None else {}),
                         **({'branch_layout':branch_layout} if branch_layout=='auto' else {}))
                 except RoutingFailure as exc:
                     if (candidate_deadlines is None

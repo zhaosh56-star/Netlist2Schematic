@@ -122,6 +122,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     valid_results = []
     retry_context = retry_options = rescue_context = None
     recovery_candidates = []
+    primary_placements = []
+    packing_failures = []
     candidate_data_error = False
     effective_options = routing_options if routing_options is not None else RoutingOptions()
     include_legacy = str(candidate_id) == '0'
@@ -129,10 +131,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     budget_policy = ('primary_reserved' if prefer_primary else
                      candidate_budget if candidate_id is None else 'sequential')
     reserved_budget = budget_policy in ('reserved', 'primary_reserved')
-    candidate_limit = 1 if include_legacy else 3
+    candidate_limit = 1 if include_legacy else 2 if prefer_primary else 3
     candidate_policy = ('legacy_reference_replay' if include_legacy else
-                        'primary_2_3_then_failure_reference_1' if prefer_primary else 'structured_only')
-    candidate_order = ('2', '3', '1') if prefer_primary else ('1', '2', '3')
+                        'primary_2_3_then_repair' if prefer_primary else 'structured_only')
+    candidate_order = ('2', '3') if prefer_primary else ('1', '2', '3')
     stop_reason = 'candidates_exhausted'
     try:
         candidates = create_candidates(path, cell=cell, iterations=iterations,
@@ -148,7 +150,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                                        **({'routing_options': effective_options}
                                           if (readability_layout == 'auto' and readability_phase >= 5)
                                              or attachment_layout != 'off' or passive_skeleton=='auto' else {}),
-                                       **({'candidate_ids': (2, 3, 1),
+                                       **({'candidate_ids': (2, 3), 'packing_failures': packing_failures,
                                            'candidate_deadlines': {i: primary_deadline(started, quality_seconds, i)
                                                                    for i in candidate_order}}
                                           if prefer_primary else
@@ -594,6 +596,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     from netlist2schematic.recovery.candidate_rescue import capture_candidate
                     recovery_candidates.append(capture_candidate(
                         retry_context, rescue_context, retry_options, identifier, len(records)))
+                if prefer_primary:
+                    primary_placements.append(deepcopy(dict(candidate_id=identifier,
+                        context=retry_context, checkpoint=rescue_context, options=retry_options,
+                        attempt_index=len(records))))
                 diagnostics = getattr(exc, 'diagnostics', {})
                 local_timeout = (diagnostics.get('reason') == 'quality_time_budget'
                                  and reserved_budget
@@ -651,6 +657,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         if best is None:
             failure.retry_context = retry_context
             failure.retry_options = retry_options or deepcopy(effective_options)
+            if prefer_primary:
+                failure._primary_repair_deadline = deadline
+                failure._primary_placements = deepcopy(primary_placements + packing_failures)
+                failure._primary_normal_records = deepcopy(records)
             if rescue_context is not None:
                 failure._rescue_context = rescue_context
             if recovery_candidates:
@@ -762,8 +772,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         'policy': 'balanced-v1', 'budget_seconds': quality_seconds,
         'candidate_policy': candidate_policy, 'candidate_limit': candidate_limit,
         'legacy_reference_enabled': include_legacy,
-        **({'candidate_order': list(candidate_order), 'reference_fallback_only': True,
-            'reference_fallback_used': identifier == '1',
+        **({'candidate_order': list(candidate_order), 'reference_fallback_only': False,
+            'reference_fallback_used': False,
             'comparison_stage': 'after_shared_route_simplification',
             'candidate_cleanup': cleanup_selection} if prefer_primary else {}),
         'candidate_budget_policy': budget_policy,
