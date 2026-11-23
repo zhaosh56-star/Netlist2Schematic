@@ -32,11 +32,11 @@ class FormalOutputTests(unittest.TestCase):
         original_import=builtins.__import__
         def guard(name,*args,**kwargs):
             if name.startswith(('netlist2schematic.plugins.formal_output','netlist2schematic.plugins.power_rails')):
-                raise AssertionError('Default flow must not import display plugins')
+                raise AssertionError('Explicit formal-output off must not import display plugins')
             return original_import(name,*args,**kwargs)
         with patch('builtins.__import__',side_effect=guard),redirect_stdout(io.StringIO()):
             run_flow.run(cls.source,iterations=0,candidate_id='1',seed=17,
-                quality_seconds=10,fallback='off',simplify_routes='off',out_dir=cls.root/'native')
+                quality_seconds=10,fallback='off',simplify_routes='off',formal_output='off',out_dir=cls.root/'native')
         cls.saved=cls.root/'native/local-placement.json'
         cls.original=cls.saved.read_bytes()
 
@@ -61,7 +61,7 @@ class FormalOutputTests(unittest.TestCase):
         self.assertEqual(self.original,self.saved.read_bytes())
         self.assertEqual(json.loads(self.original),result['power_snapshot']['original'])
         document=ET.parse(result['artifacts']['svg']).getroot()
-        self.assertEqual('formal-schematic-v1',document.get('data-style-profile'))
+        self.assertEqual(plugin.STYLE_VERSION,document.get('data-style-profile'))
         self.assertTrue(all(v==0 for v in result['style']['text_validation'].values()))
 
     def test_off_keeps_all_power_markers_but_applies_typography(self):
@@ -150,15 +150,15 @@ class FormalOutputTests(unittest.TestCase):
         self.assertEqual(1,len(calls));self.assertTrue(calls[0]['validation']['valid'])
         self.assertEqual(read_json(self.folder/'flow/local-placement.json'),calls[0]['power_snapshot']['original'])
 
-    def test_cli_default_off_and_explicit_policies_for_all_input_modes(self):
+    def test_cli_default_auto_and_explicit_policies_for_all_input_modes(self):
         modes=[(['input.cir'],'run'),(['--reroute-placement','saved.json'],'reroute_placement'),
                (['--simplify-placement','saved.json'],'simplify_placement')]
         for arguments,method in modes:
-            for options in ([],['--formal-output','auto'],['--formal-output','auto','--formal-power-rails','off']):
+            for options in ([],['--formal-output','off'],['--formal-output','auto'],['--formal-output','auto','--formal-power-rails','off']):
                 with self.subTest(method=method,options=options),patch.object(run_flow,method,return_value={}) as call:
                     self.assertEqual(0,run_flow.main(arguments+options))
-                    self.assertEqual('auto' if options else 'off',call.call_args.kwargs.get('formal_output','off'))
-                    if options:self.assertEqual('off' if options[-1]=='off' else 'auto',call.call_args.kwargs['formal_power_rails'])
+                    self.assertEqual('off' if options==['--formal-output','off'] else 'auto',call.call_args.kwargs['formal_output'])
+                    self.assertEqual('off' if '--formal-power-rails' in options else 'auto',call.call_args.kwargs['formal_power_rails'])
 
     def test_standalone_cli_works_from_another_directory(self):
         command=[sys.executable,'-X','utf8','-B',str(ROOT/'netlist2schematic/plugins/formal_output/formal_output.py'),

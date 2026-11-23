@@ -28,11 +28,11 @@ class PowerRailsFlowTests(unittest.TestCase):
         original_import=builtins.__import__
         def guard(name,*args,**kwargs):
             if name.startswith('netlist2schematic.plugins.power_rails'):
-                raise AssertionError('Default native flow must not import shared VDD plugin')
+                raise AssertionError('Explicit native-only flow must not import shared VDD plugin')
             return original_import(name,*args,**kwargs)
         with patch('builtins.__import__',side_effect=guard),redirect_stdout(io.StringIO()):
             run_flow.run(cls.source,iterations=0,candidate_id='1',seed=17,
-                quality_seconds=10,fallback='off',simplify_routes='off',out_dir=cls.root/'native')
+                quality_seconds=10,fallback='off',simplify_routes='off',formal_output='off',out_dir=cls.root/'native')
         cls.saved=cls.root/'native/local-placement.json'
         cls.saved_bytes=cls.saved.read_bytes()
 

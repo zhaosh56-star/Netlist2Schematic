@@ -22,6 +22,8 @@ from netlist2schematic.common.sa_geometry import validate_geometry
 from netlist2schematic.common.sa_saved import load_placement, saved_routing_options, is_bus_layout, BUS_ROUTER
 from netlist2schematic.routing.orthogonal_router import RoutingFailure
 
+from netlist2schematic.flow.diagram_budget import DiagramBudget, DEFAULT_SECONDS
+
 ROUTING_FAILURES = (RoutingFailure, RoutingValidationError)
 DEFAULT_PORT_PREFLIGHT = 'repair'
 DEFAULT_COLUMN_LAYOUT = 'auto'
@@ -30,14 +32,23 @@ DEFAULT_BRANCH_LAYOUT = 'auto'
 
 def run(path, *, mode='layered', iterations=20000, seed=20261029,
         out_dir=None, cell=None, analog_canvas_root=None, routing_options=None,
-        layout_style='structured', quality_seconds=300, candidate_id=None,
+        layout_style='structured', quality_seconds=None, candidate_id=None,
         fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
-        local_rescue=None, rescue_seconds=60, simplify_routes='safe', simplify_seconds=5,
+        local_rescue=None, rescue_seconds=None, simplify_routes='safe', simplify_seconds=5,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
         candidate_budget='sequential', port_preflight=DEFAULT_PORT_PREFLIGHT, presentation='legacy', net_labels='off',
         region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5,
         attachment_layout='off', column_layout=None, passive_embedding='off', passive_skeleton=None,
-        power_rails='off', formal_output='off', formal_power_rails='auto', branch_layout=None):
+        power_rails='off', formal_output='auto', formal_power_rails='auto', branch_layout=None,
+        time_seconds=DEFAULT_SECONDS):
+    budget = DiagramBudget(time_seconds)
+    scale = time_seconds / DEFAULT_SECONDS if time_seconds else 1.
+    quality_seconds = 95. * scale if quality_seconds is None else quality_seconds
+    rescue_seconds = 15. * scale if rescue_seconds is None else rescue_seconds
+    _validate_simplification(simplify_routes, simplify_seconds)
+    # Keep room for shared shortening, verified saving, typography and VDD.
+    finishing_reserve = (35. if simplify_seconds == 'auto' else max(0., simplify_seconds)+5.)
+    finishing_reserve = min(finishing_reserve, time_seconds/3) if time_seconds else finishing_reserve
     _validate_formal_options(formal_output, formal_power_rails)
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
@@ -123,13 +134,19 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     stages = []
     try:
         if policy == 'only':
-            result = _bus_result(source, cell, seed, options, fallback_seconds, stages,
+            available = budget.allocate('bus_fallback', fallback_seconds, reserve=finishing_reserve)
+            if available <= 0:
+                raise _time_budget_failure(budget, stages)
+            result = _bus_result(source, cell, seed, options, available, stages,
                                  trigger='forced')
         else:
             started = perf_counter()
             try:
+                normal_seconds = budget.allocate('normal', quality_seconds, reserve=finishing_reserve)
+                if normal_seconds <= 0:
+                    raise _time_budget_failure(budget, stages)
                 result = _normal_result(source, par, mode, layout_style, cell, iterations,
-                                        seed, quality_seconds, candidate_id, options,
+                                        seed, normal_seconds, candidate_id, options,
                                         passive_layout=passive_layout, symmetry_layout=symmetry_layout,
                                         structure_layout=structure_layout, structure_phase=structure_phase,
                                         candidate_budget=candidate_budget,port_preflight=port_preflight,
@@ -175,14 +192,16 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                         checkpoint = deepcopy(chosen.get('checkpoint'))
                         retry_options = deepcopy(chosen['options'])
                     recovery_candidates = [row for row in primary_rows if row.get('checkpoint') is not None]
+                available_rescue = (budget.allocate('local_rescue', rescue_seconds, reserve=finishing_reserve)
+                                    if result is None else 0.)
                 if result is not None:
                     pass
                 elif recovery_candidates:
                     result = _try_candidate_rescues(recovery_candidates, rescue_policy,
-                        rescue_seconds, stages, postroute_regions=region_layout=='auto')
+                        available_rescue, stages, postroute_regions=region_layout=='auto')
                 else:
                     result = _try_local_rescue(context, checkpoint, retry_options,
-                        rescue_policy, rescue_seconds, stages, allow_module_channels=True,
+                        rescue_policy, available_rescue, stages, allow_module_channels=True,
                         **({'postroute_regions':True} if region_layout=='auto' else {}))
                 _check_source(source, source_hash)
                 if result is None and policy == 'off':
@@ -190,14 +209,16 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                         raise RoutingFailure('No verified route completed in the recovery stages',
                             {'reason': 'recovery_failed', 'stages': deepcopy(stages)}) from exc
                     raise
-                if result is None and context is not None and spacing_seconds > 0:
+                available_spacing = (budget.allocate('spacing_retry', spacing_seconds, reserve=finishing_reserve)
+                                     if result is None else 0.)
+                if result is None and context is not None and available_spacing > 0:
                     from netlist2schematic.recovery.spacing_retry import retry_spacing
                     print(f'Normal routing failed; spacing retry x{spacing_scale:g}, '
-                          f'budget={spacing_seconds:g}s', flush=True)
+                          f'budget={available_spacing:g}s', flush=True)
                     started = perf_counter()
                     try:
                         result = retry_spacing(deepcopy(context), routing_options=retry_options,
-                                               scale=spacing_scale, seconds=spacing_seconds)
+                                               scale=spacing_scale, seconds=available_spacing)
                     except ROUTING_FAILURES as retry_exc:
                         stages.append(_failed_stage('spacing_retry', retry_exc,
                                                     perf_counter() - started))
@@ -206,10 +227,13 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                                                    perf_counter() - started))
                 elif result is None:
                     stages.append({'stage': 'spacing_retry', 'status': 'skipped',
-                                   'reason': 'disabled' if spacing_seconds == 0 else 'no_attempted_layout'})
+                                   'reason': ('disabled' if spacing_seconds == 0 else 'time_budget' if available_spacing <= 0 else 'no_attempted_layout')})
                 _check_source(source, source_hash)
                 if result is None:
-                    result = _bus_result(source, cell, seed, options, fallback_seconds, stages,
+                    available_bus = budget.allocate('bus_fallback', fallback_seconds, reserve=finishing_reserve)
+                    if available_bus <= 0:
+                        raise _time_budget_failure(budget, stages) from exc
+                    result = _bus_result(source, cell, seed, options, available_bus, stages,
                                          trigger='normal_routing_failed')
             else:
                 stages.append(_valid_stage('normal', result, perf_counter() - started))
@@ -234,6 +258,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         'source_sha256': source_hash,
         'analog_canvas_root': str(resource_root()), 'mode': mode,
         'seed': seed, 'iterations': iterations, **metadata,
+        'time_budget': budget.snapshot(),
         'requested_passive_layout': passive_layout,
         'requested_symmetry_layout': symmetry_layout,
         'requested_structure_layout': structure_layout,
@@ -254,10 +279,16 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     return _finish(data, par, placement, comps, nets, comp_index, base, destination,
                    protected_paths={source}, options=options, routed_result=routed_result,
                    simplify_routes=simplify_routes, simplify_seconds=simplify_seconds,
+                   diagram_budget=budget,
                    net_labels=net_labels, route_tradeoff=route_tradeoff,
                    **({'power_rails':power_rails} if power_rails != 'off' else {}),
-                   **({'formal_output':formal_output, 'formal_power_rails':formal_power_rails} if formal_output != 'off' else {}),
+                   formal_output=formal_output, formal_power_rails=formal_power_rails,
                    **({'embed_passives':True} if passive_embedding=='auto' else {}))
+
+
+def _time_budget_failure(budget, stages):
+    return RoutingFailure('The diagram time budget is exhausted; no complete verified result',
+        {'reason':'diagram_time_budget', 'time_budget':budget.snapshot(), 'stages':deepcopy(stages)})
 
 
 def _resolve_branch_policy(policy, mode='layered', style='structured', columns='auto',
@@ -755,7 +786,7 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
             *, protected_paths=(), options=None, routed_result=None,
             simplify_routes='safe', simplify_seconds=5, allow_verified_replay=False,
             input_hashes=None, net_labels='off', route_tradeoff='strict',embed_passives=False,
-            power_rails='off', formal_output='off', formal_power_rails='auto'):
+            power_rails='off', formal_output='off', formal_power_rails='auto', diagram_budget=None):
     """Route and validate before staging any success artifacts."""
     destination = Path(destination).resolve()
     _validate_formal_options(formal_output, formal_power_rails)
@@ -987,22 +1018,44 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
                 'status': 'failed', 'source_placement': str(destination/names[2]),
                 'error': str(exc), 'native_result_preserved': True})
             print(f'Shared VDD view failed; original preserved: {exc}', flush=True)
+    display = {'status':'off', 'primary_svg':str(destination/names[1])}
     if formal_output == 'auto':
         # Last, independent publication step; never feeds back into placement,
         # routing, candidate comparison, shortening, or native artifact saving.
         try:
             from netlist2schematic.plugins.formal_output.formal_output import generate
+            rail_seconds = min(5., diagram_budget.remaining(2.)) if diagram_budget else 5.
             result = generate(destination/names[2], out_dir=destination/'formal',
-                              power_rails=formal_power_rails)
+                              power_rails=formal_power_rails, rail_seconds=rail_seconds)
+            # A stable, obvious delivery path; the replayable fingerprinted
+            # record remains authoritative for independent formal redrawing.
+            primary = destination/(base+'-formal.svg')
+            if primary.resolve() in {Path(p).resolve() for p in protected_paths}:
+                raise ValueError('Formal output must differ from protected input files')
+            with tempfile.TemporaryDirectory(prefix='.formal-delivery-', dir=destination) as temporary:
+                staged = Path(temporary)/primary.name
+                staged.write_bytes(Path(result['artifacts']['svg']).read_bytes())
+                os.replace(staged, primary)
+            display = dict(status='valid', primary_svg=str(primary),
+                record=result['artifacts']['json'], svg_sha256=result['svg_sha256'],
+                style_version=result['style_version'])
             plugin_diagnostics = destination/'formal'/'plugin-diagnostics.json'
             if plugin_diagnostics.is_file():
                 plugin_diagnostics.unlink()
-            print(f"Formal SVG: {result['artifacts']['svg']}", flush=True)
+            print(f"Formal SVG: {primary}", flush=True)
         except (ValueError, OSError, KeyError, TypeError) as exc:
             write_json(destination/'formal'/'plugin-diagnostics.json', {
                 'status':'failed', 'source_placement':str(destination/names[2]),
                 'error':str(exc), 'native_result_preserved':True})
+            display.update(status='failed', error=str(exc))
             print(f'Formal output failed; native result preserved: {exc}', flush=True)
+    # Keep the native placement immutable after the display plugin hashes it.
+    # This separate delivery record points at the primary file for this run.
+    write_json(destination/'flow-result.json', dict(format='schematic-flow-result-v1',
+        native_placement=str(destination/names[2]),
+        native_sha256=hashlib.sha256((destination/names[2]).read_bytes()).hexdigest(),
+        native_valid=validation['valid'], display=display,
+        time_budget=diagram_budget.snapshot() if diagram_budget else data.get('time_budget')))
     return data
 
 
@@ -1159,10 +1212,13 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--passive-embedding', choices=('off', 'auto'), default='off',
                         help='Try one reversible passive-only layout/routing improvement after a legal result; default off')
     parser.add_argument('--passive-skeleton',choices=('off','auto'),default=None,
-                        help='Active-first passive modules; default auto for new structured/flexible layouts, off for saved/legacy/other experiments. Try 2/3 first and seed 1 only if both fail')
+                        help='Active-first passive modules; default auto for new structured/flexible layouts, off for saved/legacy/other experiments. Try 2/3 first, then failure-only repair within remaining time')
     parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=3,
                         help='Replay a structure rollout phase; ignored when structure-layout is off')
-    parser.add_argument('--quality-seconds', type=float, default=300)
+    parser.add_argument('--time-seconds', type=float, default=DEFAULT_SECONDS,
+                        help='Total per-diagram CLI limit including recovery and formal export (default 120; 0 disables)')
+    parser.add_argument('--quality-seconds', type=float, default=None,
+                        help='Normal-stage cap inside the total limit (default 95 of 120 seconds)')
     parser.add_argument('--candidate-budget',choices=('sequential','reserved'),default='sequential',
                         help='Old-path sequential or 70/85/100 cutoffs; default primary IDs 2/3 retain 40/80 cutoffs and use unused normal time for failure-only repair')
     parser.add_argument('--port-preflight',choices=('off','repair'),default=None,
@@ -1173,8 +1229,8 @@ def main(argv=None, default_mode='layered'):
                         help='Optional extra net-label view after verified full routes (default: off)')
     parser.add_argument('--power-rails', choices=('off', 'auto'), default='off',
                         help='Extra verified local shared-VDD view; original artifacts preserved (default: off)')
-    parser.add_argument('--formal-output', choices=('off', 'auto'), default='off',
-                        help='Extra formal SVG after all flow stages: GT typography and shared VDD (default: off)')
+    parser.add_argument('--formal-output', choices=('off', 'auto'), default='auto',
+                        help='Publication SVG with nearby labels and shared VDD (default auto; off keeps native views)')
     parser.add_argument('--formal-power-rails', choices=('auto', 'off'), default='auto',
                         help='VDD merging inside formal output; off keeps the original supply markers')
     parser.add_argument('--candidate-id',
@@ -1183,7 +1239,8 @@ def main(argv=None, default_mode='layered'):
                         help='Default: auto for netlists, off for candidate replay')
     parser.add_argument('--local-rescue', choices=('auto', 'off'),
                         help='Failure-only local routing; defaults to fallback policy, off for saved rerouting')
-    parser.add_argument('--rescue-seconds', type=float, default=60)
+    parser.add_argument('--rescue-seconds', type=float, default=None,
+                        help='Local-rescue cap inside the total limit (default 15 of 120 seconds)')
     parser.add_argument('--simplify-routes', choices=('safe', 'off'), default='safe')
     parser.add_argument('--route-tradeoff', choices=('strict', 'balanced'), default='strict',
                         help='Allow at most two sparse extra crossings for substantial shortening; default strict')
@@ -1205,6 +1262,8 @@ def main(argv=None, default_mode='layered'):
         args.port_preflight = ('off' if args.reroute_placement or args.simplify_placement
                                else DEFAULT_PORT_PREFLIGHT)
     try:
+        from netlist2schematic.flow.diagram_budget import validate_seconds
+        validate_seconds(args.time_seconds)
         _validate_region_policy(args.region_layout, args.structure_layout, args.symmetry_layout)
         _validate_readability_policy(args.readability_layout, args.readability_phase,
                                      args.region_layout, args.structure_layout, args.symmetry_layout)
@@ -1249,7 +1308,7 @@ def main(argv=None, default_mode='layered'):
                                simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                                net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
                                **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}),
-                               **({'formal_output':args.formal_output, 'formal_power_rails':args.formal_power_rails} if args.formal_output != 'off' else {}),
+                               **{'formal_output':args.formal_output, 'formal_power_rails':args.formal_power_rails},
                                **({'presentation':args.presentation} if args.presentation is not None else {}))
         elif args.reroute_placement:
             if args.attachment_layout != 'off':
@@ -1263,16 +1322,17 @@ def main(argv=None, default_mode='layered'):
             if args.port_preflight!='off':parser.error('saved coordinates cannot request port repair')
             reroute_placement(args.reroute_placement, out_dir=args.out_dir,
                               analog_canvas_root=args.analog_canvas_root,
-                              local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
+                              local_rescue=args.local_rescue, rescue_seconds=(15. if args.rescue_seconds is None else args.rescue_seconds),
                               simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                               net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
                               **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}),
-                              **({'formal_output':args.formal_output, 'formal_power_rails':args.formal_power_rails} if args.formal_output != 'off' else {}),
+                              **{'formal_output':args.formal_output, 'formal_power_rails':args.formal_power_rails},
                               **({'presentation':args.presentation} if args.presentation is not None else {}))
         else:
             run(args.netlist, mode=args.mode, iterations=args.iterations, seed=args.seed,
                 out_dir=args.out_dir, cell=args.cell, analog_canvas_root=args.analog_canvas_root,
                 layout_style=args.layout_style, quality_seconds=args.quality_seconds, candidate_id=args.candidate_id,
+                time_seconds=args.time_seconds,
                 passive_layout=args.passive_layout,
                 symmetry_layout=args.symmetry_layout,
                 structure_layout=args.structure_layout,
@@ -1292,11 +1352,12 @@ def main(argv=None, default_mode='layered'):
                 simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                 net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,
                 **({'power_rails':args.power_rails} if args.power_rails != 'off' else {}),
-                **({'formal_output':args.formal_output, 'formal_power_rails':args.formal_power_rails} if args.formal_output != 'off' else {}))
+                **{'formal_output':args.formal_output, 'formal_power_rails':args.formal_power_rails})
     except (ValueError, OSError, KeyError) as exc:
         parser.exit(2, f'Error: {exc}\n')
     return 0
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    from netlist2schematic.flow.process_budget import command_main
+    sys.exit(command_main(main, ROOT / "run_flow.py"))

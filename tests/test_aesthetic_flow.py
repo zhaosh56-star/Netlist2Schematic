@@ -381,7 +381,8 @@ class AestheticSavedFlowTests(unittest.TestCase):
         with patch('netlist2schematic.flow.run_flow.run') as run:
             run_flow.main([str(self.source), '--candidate-id', '2', '--iterations', '0'])
         self.assertEqual('structured', run.call_args.kwargs['layout_style'])
-        self.assertEqual(300, run.call_args.kwargs['quality_seconds'])
+        self.assertIsNone(run.call_args.kwargs['quality_seconds'])
+        self.assertEqual(120, run.call_args.kwargs['time_seconds'])
         self.assertEqual('2', run.call_args.kwargs['candidate_id'])
 
 

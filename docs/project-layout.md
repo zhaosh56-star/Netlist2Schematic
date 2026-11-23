@@ -32,7 +32,7 @@ Netlist2Schematic/
 │  │  ├─ attachment/           # 无源与源器件联合布局实验
 │  │  ├─ columns/              # 当前默认的连续长列和短旁支规整
 │  │  ├─ passive_embedding/    # 成品之后的安全无源试摆（默认off）
-│  │  ├─ passive_skeleton/     # 默认有源骨架、串并联模块；2/3优先，1仅失败兜底
+│  │  ├─ passive_skeleton/     # 默认有源骨架、串并联模块；仅2/3，均失败后修复原候选
 │  │  ├─ net_labels/           # 局部实体连线＋同名网标的额外视图
 │  │  └─ preflight/            # 最终 A* 前的静态端口修复实验
 │  └─ source_map.json          # 旧文件名 → 当前实现路径
@@ -61,17 +61,18 @@ Netlist2Schematic/
 
 | 环节 | 实现目录与主要模块 | 作用 |
 |---|---|---|
-| 总调度 | `flow/run_flow.py`、`flow/aesthetic_flow.py`、`flow/candidate_budget.py` | 读取参数、安排候选及预算、组织恢复和输出 |
+| 总调度 | `flow/run_flow.py`、`flow/aesthetic_flow.py`、`flow/diagram_budget.py`、`flow/process_budget.py` | 读取参数、安排候选及预算、组织恢复和输出 |
 | 解析 | `netlist/netlist_core.py`、`netlist/parse_netlist.py` | 读取扁平电路或显式指定的 cell，规范器件与引脚连接 |
 | 分层与识别 | `recognition/device_leveling.py`、`circuit_structures.py`、`vf2_match.py` | 计算导通层级，识别有角色的子结构；VF2 保留给旧参考路径 |
 | 布局 | `layout/structured_placement.py`、`passive_placement.py`、`layout_quality.py` | 结构初排、SA、无源跨行和真实布线质量测量 |
-| 默认模块布局 | `plugins/passive_skeleton/` | 候选2/3先排有源骨架，再插入真实串并联无源模块；失败才运行候选1 |
+| 默认模块布局 | `plugins/passive_skeleton/` | 候选2/3先排有源骨架，再插入真实串并联无源模块；均失败后修复原候选 |
 | 基础布局能力 | `layout/place_layered.py`、`layout/place_and_route.py` | Placement、真实引脚坐标、快速估价和旧布局参考；结构化流程也会复用 |
 | 最终布线 | `routing/sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 正交 A*、拆网重布、真实引脚连通和几何验收 |
 | 失败恢复 | `recovery/candidate_rescue.py`、`local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 独立保留候选失败现场，在共享预算内救援，再按既定顺序扩距、总线恢复 |
 | 安全缩线 | `postprocess/simplify_routes.py`、`route_reattachment.py`、`route_patterns.py`、`route_tracks.py` | 在已合法线路上生成、验收及提交更短的候选 |
 | 缩线策略与预算 | `postprocess/simplify_budget.py`、`route_tradeoff.py` | 固定或自动预算，以及 strict／balanced 的接受规则 |
 | 绘图 | `rendering/sa_render.py`、`presentation.py` | 同一份验收线路生成彩色和黑白 SVG，安排文字和端口展示 |
+| 正式输出 | `plugins/formal_output/`、`rendering/formal_svg.py`、`rendering/nearby_labels.py` | 默认正式图与就近标号；v1冻结渲染器只用于旧记录重绘 |
 | 共同支持 | `common/sa_common.py`、`sa_geometry.py`、`sa_saved.py` | 定位资源、处理朝向几何、保存和恢复布局 |
 
 表中的模块路径均相对 `netlist2schematic/`，同一行省略的重复目录前缀与该行首项相同。恢复和安全缩线属于默认主流程的组成部分；一次运行是否实际执行恢复，取决于前面的布线是否成功。将它们单独放目录只是为了便于维护。
@@ -101,7 +102,7 @@ Netlist2Schematic/
 
 - `examples/` 保存日常输入，连同其本地 include 文件一起维护。工具不为布局方便增删器件或改写网表。
 - `test_data/` 保存本地数据集与 GT，供对照研究使用。算法不会读取 GT 坐标来指定摆法。
-- `output/<网表标签>/` 保存日常 JSON、彩色 SVG、黑白 SVG及失败诊断。普通标签为文件名加可选的子电路名，如 `3`、`5-dut`；模式比较需使用不同的 `--out-dir`。
+- `output/<网表标签>/` 保存日常JSON、顶层正式SVG、原生彩色/黑白SVG及失败诊断。普通标签为文件名加可选的子电路名，如 `3`、`5-dut`；模式比较需使用不同的 `--out-dir`。
 - `tests/fixtures/` 是冻结的回归输入，包含网表、布局和失败现场。它们不是历史出图，不能作为清理输出的一部分删除。
 - `tools/` 保存开发对照和图鉴工具，例如 `compare_layouts.py`、`compare_attachment_integration.py` 和 `generate_structure_gallery.py`。按工具说明选择只读复验或完整出图；有些对照工具会运行多次完整 flow。
 - `tools/build_blind_review.py` 与 `tools/blind_review/` 保存评测生成器、配置和页面。根目录 `build_evaluation.py` 调用它们；生成后只需把一份 HTML 发给客户。它不参与布局或布线，见[评测说明](blind-evaluation.md)。

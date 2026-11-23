@@ -1,4 +1,4 @@
-"""Batch execution leaves default budgets intact and bounds explicit retries."""
+"""Batch execution uses one cumulative 120s default run and stops owned trees."""
 from argparse import Namespace
 from contextlib import redirect_stdout
 from copy import deepcopy
@@ -7,7 +7,6 @@ import io
 import json
 from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -38,27 +37,29 @@ class DatasetRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             row=dict(tag='c01',source=str(Path(td)/'test.cir'),attempts=[])
             args=Namespace(iterations=20000,seed=123)
-            with patch.object(batch.subprocess,'run',return_value=SimpleNamespace(returncode=1)) as process:
+            with patch.object(batch,'run_bounded',return_value=1) as process:
                 self.assertIsNone(batch.run_attempt(row,budget,1,Path(td),args))
             return process.call_args,row
 
-    def test_default_passes_no_budget_overrides_or_outer_timeout(self):
+    def test_default_has_one_120_second_wall_limit_and_no_stage_overrides(self):
         call,row=self.attempt(None)
         command=call.args[0]
         for flag in ('--quality-seconds','--rescue-seconds','--spacing-seconds',
                      '--fallback-seconds','--simplify-seconds','--candidate-id'):
             self.assertNotIn(flag,command)
-        self.assertIsNone(call.kwargs['timeout'])
-        self.assertEqual(row['attempts'][0]['budget'],'run_flow_defaults')
+        self.assertEqual(call.kwargs['seconds'],120)
+        self.assertEqual(command[command.index('--time-seconds')+1],'120.0')
+        self.assertEqual(row['attempts'][0]['budget']['wall'],120)
+        self.assertEqual(call.kwargs['env'][batch.WORKER_ENV],'1')
 
     def test_quick_mode_has_explicit_wall_and_shared_stage_limits(self):
         call,row=self.attempt(batch.QUICK[0]);command=call.args[0]
-        self.assertEqual(call.kwargs['timeout'],60)
+        self.assertEqual(call.kwargs['seconds'],60)
         self.assertEqual(command[command.index('--quality-seconds')+1],'50')
         self.assertEqual(command[command.index('--simplify-seconds')+1],'5')
         self.assertNotIn('--candidate-id',command)
         call,row=self.attempt(batch.QUICK[1]);command=call.args[0]
-        self.assertEqual(call.kwargs['timeout'],120)
+        self.assertEqual(call.kwargs['seconds'],120)
         self.assertEqual(command[command.index('--quality-seconds')+1],'90')
 
     def run_main(self,mode,results):

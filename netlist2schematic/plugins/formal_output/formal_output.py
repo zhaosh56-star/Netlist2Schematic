@@ -44,8 +44,8 @@ def _options(power_rails, rail_seconds):
     return dict(power_rails=power_rails, rail_seconds=rail_seconds)
 
 
-def _identity(power, policy, title):
-    return dict(version=VERSION, style_version=STYLE_VERSION,
+def _identity(power, policy, title, *, style_version=STYLE_VERSION):
+    return dict(version=VERSION, style_version=style_version,
                 original_sha256=power['original_file_sha256'], dependencies=power['dependencies'],
                 policy=policy, title=title,
                 power_geometry={k:power['view'][k] for k in ('version', 'scale', 'groups')})
@@ -76,13 +76,19 @@ def _commit(power, context, stage, destination, policy, title, *, inputs, starte
     base = power['base']
     if not isinstance(base, str) or Path(base).name != base or base in ('', '.', '..'):
         raise ValueError('Invalid formal artifact basename')
-    fingerprint = _digest(_identity(power, policy, title))
+    style_version=expected['style_version'] if expected is not None else STYLE_VERSION
+    fingerprint = _digest(_identity(power, policy, title,style_version=style_version))
     target = destination/fingerprint[:16]
     names = dict(svg=base+'-formal.svg', json=base+'-formal.json')
     protected = {Path(p).resolve() for p in inputs} | {Path(context['source']).resolve()}
     if any((target/name).resolve() in protected for name in names.values()):
         raise ValueError('Formal output cannot overwrite its input')
-    style = formalize_svg(power['artifacts']['clean_svg'], stage/names['svg'],
+    renderer=formalize_svg
+    if style_version=='formal-schematic-v1':
+        from netlist2schematic.rendering.formal_svg_v1 import formalize_svg as renderer
+    elif style_version!=STYLE_VERSION:
+        raise ValueError('Unsupported formal typography version')
+    style = renderer(power['artifacts']['clean_svg'], stage/names['svg'],
                           context, power['view'], title=title)
     svg_sha256 = _hash(stage/names['svg'])
     if expected is not None and (svg_sha256 != expected['svg_sha256'] or
@@ -99,7 +105,7 @@ def _commit(power, context, stage, destination, policy, title, *, inputs, starte
     power['artifacts'] = relocated
     write_json(power_json_in_stage, power)
     manifest = dict(format=FORMAT, version=VERSION, fingerprint=fingerprint,
-        style_version=STYLE_VERSION, policy=policy, title=title,
+        style_version=style_version, policy=policy, title=title,
         original_placement=power['original_placement'],
         original_file_sha256=power['original_file_sha256'],
         resolved_source_netlist=str(context['source']), native_metrics=context['metrics'],
@@ -162,7 +168,7 @@ def redraw(formal_json, out_dir=None):
         raise ValueError('Formal-output snapshot fingerprint mismatch')
     power = manifest['power_snapshot']
     policy = _options(**manifest['policy'])
-    if _digest(_identity(power, policy, manifest['title'])) != manifest.get('fingerprint'):
+    if _digest(_identity(power, policy, manifest['title'],style_version=manifest['style_version'])) != manifest.get('fingerprint'):
         raise ValueError('Formal-output identity differs')
     supply._check_dependencies(power['dependencies'])
     original = deepcopy(power['original'])

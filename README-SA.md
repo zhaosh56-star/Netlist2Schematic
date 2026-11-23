@@ -1,12 +1,14 @@
 # SA Python 运行说明
 
+**当前默认（2026-11-23）：每张图一次120秒总时限，正常候选、失败恢复、安全缩线与正式输出共用；完成就结束。** 正常阶段默认上限95秒，局部救援默认上限15秒；扩距和总线只使用剩余总时间，不额外增加60秒。候选仍只自动尝试2、3。默认生成顶层 `*-formal.svg`（就近标号、GT风格字体、无白圈/虚框、合法局部VDD合并），`flow-result.json` 指向本次正式成品。`--time-seconds 240` 可提高总上限，`--formal-output off` 可关闭正式收尾。下文历史实验的300秒与独立60秒记录保留当时口径，不代表当前默认预算。
+
 主列与区域前置组织已默认启用（`--branch-layout auto`）：候选2、3先按连接关系组织导通列和局部区域，再由SA在框架内调整；没有器件数量触发门槛，保留现有无源模块与布线插件。用 `--branch-layout off` 关闭；旧JSON、baseline／legacy、显式关闭主列或其他布局实验不隐式叠加。规则及46张实测见[说明](docs/branch-organization.md)。
 
 默认组织路径已补齐插入前骨架碰撞修复、插入失败后有限补试，以及整图正常阶段失败后的相关模块换通道。保持MOS逻辑行列与朝向，原有成功路径不进入失败恢复；总候选、预算和几何规则保持。C23已在正常阶段生成完整合法图，2497项完整回归通过。原理、额度、保存兼容与实测见[模块恢复说明](docs/branch-organization.md)。
 
 单文件盲测已封装为根目录 `build_evaluation.py`：用 `--manifest` 提供任意图对清单或已有正式图集，即可生成问卷，不重跑布局和布线。不内置题目排除或 VDD 换图规则，直接采用你提供的图片。只发一个 `index.html`，客户答完只返回一个含 GT／算法占比和逐题细节的 HTML 报告。清单格式和命令见[评测脚本说明](docs/blind-evaluation.md)。
 
-正式出图插件：在主 flow 末尾加 `--formal-output auto`，额外生成 GT 风格字体、数学下标、无引脚白圈和结构虚框、局部合并 VDD 的正式 SVG。默认关闭；`--formal-power-rails off` 可单独禁用合并。已有 JSON 可跳过布局与布线独立调用，见[正式出图说明](docs/formal-figures.md)。
+正式出图插件默认接入主 flow，生成 GT 风格字体、数学下标、无引脚白圈和结构虚框、局部合并 VDD 的正式 SVG，顶层文件名为 `*-formal.svg`。用 `--formal-output off` 关闭；`--formal-power-rails off` 可单独禁用合并。已有 JSON 可跳过布局与布线独立调用，见[正式出图说明](docs/formal-figures.md)。
 
 可选的局部共享VDD插件：`--power-rails auto`，默认关闭。原成品保存后，额外尝试把同网、同排、通道空闲的供电端连接为共享横线和一个VDD标记；器件及信号线路不动。独立处理旧JSON、适用边界和对照见 [共享VDD说明](docs/power-rails.md)。
 
@@ -16,7 +18,7 @@
 
 日常运行与安装命令见 [README.md](README.md)。各脚本和资源的用途见 [docs/project-layout.md](docs/project-layout.md)。
 
-终端独立运行和整批出图见[批量运行说明](docs/batch-flow.md)。`tools/run_dataset.py <目录>`沿用主flow默认预算；显式加`--budget quick`才采用每张先60秒、失败再120秒的验证方式，两者不混用。
+终端独立运行和整批出图见[批量运行说明](docs/batch-flow.md)。`tools/run_dataset.py <目录>`默认每张一次120秒，自动正式出图；显式加`--budget quick`才采用每张先60秒、失败再120秒的验证方式，两者不混用。
 
 当前实现位于 `netlist2schematic/`：`flow/`、`common/`、`netlist/`、`recognition/`、`layout/`、`routing/`、`recovery/`、`postprocess/`、`rendering/` 按主流程职责分类；`plugins/` 保存可选增强及共享关系。根目录保留六个兼容命令入口，旧文件名对应的新路径见 [source_map.json](netlist2schematic/source_map.json)。本地交付包收在 `dist/`，手工笔记收在 `notes/`，日常命令和实验默认值保持原样。
 

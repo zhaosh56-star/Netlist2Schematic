@@ -1,6 +1,6 @@
 """Textbook typography for a verified shared-VDD SVG; electrical shapes stay put.
 
-This is an explicit export step, not a new main-flow presentation default.
+This last-stage renderer changes text only; native electrical geometry is preserved.
 The font stack and mathematical label proportions match the supplied GT style.
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 
 from netlist2schematic.rendering.sa_render import _overlap, _wire_in_box
 
-VERSION = 'formal-schematic-v1'
+VERSION = 'formal-schematic-v2'
 NS = 'http://www.w3.org/2000/svg'
 FONT_FAMILY = "'ICM Round Period','Metropolis','DejaVu Sans',Arial,'Helvetica Neue',Helvetica,sans-serif"
 FONT_SIZE = 15.116
@@ -185,7 +185,7 @@ def _label_records(root, context, component_boxes, supplies):
                 text = text.upper()  # SPICE is case-insensitive; use the conventional cap name.
         x = float(element.get('x', 0))+origin[0]
         y = float(element.get('y', 0))+origin[1]
-        if component:
+        if component and kind=='component':
             box = component_boxes[component]
             candidates = list(_box_candidates(box, kind))
             anchor = (box[0]+box[2])/2, (box[1]+box[3])/2
@@ -193,7 +193,22 @@ def _label_records(root, context, component_boxes, supplies):
             choices = [box for name, box in supplies if name == net]
             if not choices:
                 raise ValueError('Formal supply label lacks a real matching symbol')
-            box = min(choices, key=lambda b: hypot(x-(b[0]+b[2])/2, y-(b[1]+b[3])/2))
+            # Clean-view hints retain the actual terminal identity even when
+            # the old text location was displaced. Never use a displaced
+            # label to guess which of several same-net caps owns it.
+            hints=[h for h in context.get('hints',{}).get('supply_text',())
+                if h.get('net')==net and abs(h['x']-x)<.01 and abs(h['y']-y)<.01]
+            terminal=None
+            if kind=='supply' and len(hints)==1:
+                identity=tuple(hints[0]['identity'])
+                terminal=next((p for p in context['terminals']
+                    if (p['component_id'],p['pin'])==identity),None)
+            if terminal is not None:
+                tip=terminal['stub'][1]
+                b=context['par'].GEO_DOC[terminal['symbol']]['orientations'][0]['viewBoxAABB']
+                box=(tip[0]+b['x'],tip[1]+b['y'],tip[0]+b['x']+b['width'],tip[1]+b['y']+b['height'])
+            else:
+                box = min(choices, key=lambda b: hypot(x-(b[0]+b[2])/2, y-(b[1]+b[3])/2))
             candidates = list(_box_candidates(box, kind))
             anchor = (box[0]+box[2])/2, box[1]
         else:
@@ -201,7 +216,8 @@ def _label_records(root, context, component_boxes, supplies):
             candidates = list(_pin_candidates(anchor))
         candidates.append((x, y, element.get('text-anchor', 'start')))
         records.append(dict(element=element, kind=kind, text=text, origin=origin,
-                            candidates=candidates, anchor=anchor, component=component))
+                            candidates=candidates, anchor=anchor, component=component,
+                            owner_box=box if kind in ('component','supply','shared-supply') else None))
     return sorted(records, key=lambda r: (
         0 if r['kind'] in ('supply', 'shared-supply') else 1 if r['component'] else 2,
         r['anchor'][1], r['anchor'][0], r['text']))
@@ -221,8 +237,11 @@ def formalize_svg(source_svg, destination, context, view, *, title='Circuit sche
             raise ValueError('Formal export requires the clean view without white pin circles')
     boxes, component_boxes, supplies, wires = _drawing_environment(context, view)
     occupied, labels, faults = [], [], Counter()
-    for record in _label_records(root, context, component_boxes, supplies):
-        best = _choose_position(record, boxes, wires, occupied)
+    records=_label_records(root, context, component_boxes, supplies)
+    from netlist2schematic.rendering.nearby_labels import assign
+    choices,label_assignment=assign(records,component_boxes,boxes,wires,text_bounds,
+        _extended_candidates,font_size=FONT_SIZE)
+    for record,best in zip(records,choices):
         _, x, y, align, bounds, body_hits, text_hits, wire_hits = best
         occupied.append(bounds)
         faults.update(body_overlaps=body_hits, text_overlaps=text_hits, wire_overlaps=wire_hits)
@@ -250,7 +269,8 @@ def formalize_svg(source_svg, destination, context, view, *, title='Circuit sche
                 'dx': str(SUBSCRIPT_DX), 'dy': str(SUBSCRIPT_DY), 'font-style': 'normal'})
             sub.text = suffix
         labels.append(dict(kind=record['kind'], text=record['text'], x=x, y=y,
-                           anchor=align, bounds=bounds, component=record['component']))
+                           anchor=align, bounds=bounds, component=record['component'],
+                           owner_box=record.get('owner_box'),owner_gap=best[0][2]))
     if faults['body_overlaps'] or faults['text_overlaps'] or faults['wire_overlaps']:
         raise ValueError('Formal text could not avoid drawing: '+str(dict(faults)))
     x, y, width, height = map(float, root.get('viewBox').split())
@@ -279,4 +299,5 @@ def formalize_svg(source_svg, destination, context, view, *, title='Circuit sche
         raise ValueError('Saved formal SVG geometry differs')
     return dict(version=VERSION, font_family=FONT_FAMILY, font_size=FONT_SIZE,
                 subscript_size=SUBSCRIPT_SIZE, labels=labels, text_validation=dict(faults),
+                label_assignment=label_assignment,
                 electrical_geometry_unchanged=True, debug_boxes=0, white_pin_circles=0)
