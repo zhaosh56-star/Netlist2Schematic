@@ -2,6 +2,8 @@
 
 把 SPICE 网表转换成布局 JSON、彩色 SVG 和黑白 SVG。默认按电流层级和电路子结构布局，使用模拟退火优化位置，再进行正交 A* 布线、连接与几何验收，最后安全缩短绕线、减少多余折角。输入网表保持原样。
 
+新网表的结构化主flow默认启用主列与区域前置组织（`--branch-layout auto`）：候选2、3先组织连续支路和局部区域，再执行SA、无源模块插入及最终布线；没有大小图门槛。可用 `--branch-layout off` 关闭，保存位置操作及其他显式布局实验保持原路径。算法、兼容边界和实测见[支路组织说明](docs/branch-organization.md)。
+
 Python 实现已分类放入 `netlist2schematic/`，根目录保留原命令入口。查找算法文件请从[目录与文件用途](docs/project-layout.md)或[旧文件名映射](netlist2schematic/source_map.json)进入；各插件的默认开关保持原值。
 
 ```text

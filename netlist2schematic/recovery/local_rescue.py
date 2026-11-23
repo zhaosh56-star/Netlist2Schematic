@@ -167,13 +167,18 @@ def _tree_score(scene, net, tree, occupied, deadline):
             topology['segments'], relevant)
 
 
-def _route_local_net(scene, net, occupied, margin, statistics, deadline, report):
+def _route_local_net(scene, net, occupied, margin, statistics, deadline, report, *,
+                     pins_override=None, initial_tree=None):
     """Connect one full net; retain at most eight source/target plans per branch."""
-    pins = sorted(scene.pins[net], key=lambda pin: (pin.point, pin.component, pin.pin))
+    pins = sorted(scene.pins[net] if pins_override is None else pins_override,
+                  key=lambda pin: (pin.point, pin.component, pin.pin))
     if not pins:
         return [], Counter(), Counter(), None
-    root, remaining = pins[0], list(pins[1:])
-    tree = [root.stub] if root.point != root.escape else [(root.point, root.point)]
+    if initial_tree is not None:
+        tree=list(initial_tree);remaining=list(pins)
+    else:
+        root, remaining = pins[0], list(pins[1:])
+        tree = [root.stub] if root.point != root.escape else [(root.point, root.point)]
     prepared = scene.prepare_occupied(occupied)
     blockers, direct = Counter(), Counter()
     checks = {'free': {}, 'edge': {}, 'turn': {}}
@@ -214,9 +219,15 @@ def _route_local_net(scene, net, occupied, margin, statistics, deadline, report)
             extra = [source] + ([] if extension is None else list(extension))
             if not _safe_goals(scene, net, target, occupied, margin, deadline, extra)[0]:
                 continue
-            paths, owners = _find_path(scene, net, source, target, occupied, margin, [],
-                statistics, checks, prepared, deadline=deadline, extra_points=extra,
-                initial_direction=pin.direction if pin.point != pin.escape else None)
+            if getattr(scene,'branch_routing',None):
+                from netlist2schematic.routing.regional_routing import find_path
+                paths,owners=find_path(scene,net,source,target,occupied,margin,[],statistics,
+                    checks,prepared,deadline,extra_points=extra,
+                    initial_direction=pin.direction if pin.point!=pin.escape else None)
+            else:
+                paths, owners = _find_path(scene, net, source, target, occupied, margin, [],
+                    statistics, checks, prepared, deadline=deadline, extra_points=extra,
+                    initial_direction=pin.direction if pin.point != pin.escape else None)
             blockers.update(owners)
             report['port_plans'] += 1
             if paths is None:
@@ -320,6 +331,9 @@ def rescue_routing(context, checkpoint, *, routing_options=None, seconds=60):
                              diagnostics) from exc
     if scene != checkpoint['scene']:
         raise ValueError('local rescue checkpoint does not match the unchanged placement scene')
+    if getattr(checkpoint['scene'],'branch_routing',None):
+        scene.branch_routing=deepcopy(checkpoint['scene'].branch_routing)
+        scene.component_names=deepcopy(checkpoint['scene'].component_names)
     names = set(scene.pins)
     frozen = deepcopy(checkpoint.get('completed', {}))
     failed = checkpoint.get('failed_net')

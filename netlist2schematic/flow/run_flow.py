@@ -25,6 +25,7 @@ from netlist2schematic.routing.orthogonal_router import RoutingFailure
 ROUTING_FAILURES = (RoutingFailure, RoutingValidationError)
 DEFAULT_PORT_PREFLIGHT = 'repair'
 DEFAULT_COLUMN_LAYOUT = 'auto'
+DEFAULT_BRANCH_LAYOUT = 'auto'
 
 
 def run(path, *, mode='layered', iterations=20000, seed=20261029,
@@ -36,7 +37,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         candidate_budget='sequential', port_preflight=DEFAULT_PORT_PREFLIGHT, presentation='legacy', net_labels='off',
         region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5,
         attachment_layout='off', column_layout=None, passive_embedding='off', passive_skeleton=None,
-        power_rails='off', formal_output='off', formal_power_rails='auto'):
+        power_rails='off', formal_output='off', formal_power_rails='auto', branch_layout=None):
     _validate_formal_options(formal_output, formal_power_rails)
     if iterations < 0:
         raise ValueError('iterations must be non-negative')
@@ -56,6 +57,8 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         structure=structure_layout, symmetry=symmetry_layout)
     column_layout = _resolve_column_policy(column_layout, mode, layout_style, structure_layout,
                             symmetry_layout, region_layout, readability_layout, attachment_layout)
+    branch_layout = _resolve_branch_policy(branch_layout, mode, layout_style, column_layout,
+        structure_layout, symmetry_layout, region_layout, readability_layout, attachment_layout)
     _validate_passive_embedding(passive_embedding, mode, layout_style, passive_layout,
         structure_layout, symmetry_layout, region_layout, readability_layout, attachment_layout)
     passive_skeleton = _resolve_skeleton_policy(passive_skeleton, mode, layout_style, passive_layout,
@@ -133,6 +136,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                                         region_layout=region_layout, readability_layout=readability_layout,
                                         readability_phase=readability_phase, route_tradeoff=route_tradeoff,
                                         attachment_layout=attachment_layout,
+                                        **({'branch_layout':branch_layout} if branch_layout=='auto' else {}),
                                         **({'passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
                                         **({'simplify_policy':simplify_routes,'simplify_seconds':simplify_seconds}
                                            if passive_skeleton=='auto' else {}),
@@ -216,6 +220,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
             'requested_readability_phase': readability_phase} if readability_layout != 'off' else {}),
         **({'requested_attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
         **({'requested_column_layout': column_layout} if column_layout != 'off' else {}),
+        **({'requested_branch_layout':branch_layout} if branch_layout=='auto' else {}),
         **({'requested_passive_embedding': passive_embedding} if passive_embedding != 'off' else {}),
         **({'requested_passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
         **({'presentation':{'style':'clean'}} if presentation=='clean' else {}),
@@ -228,6 +233,27 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                    **({'power_rails':power_rails} if power_rails != 'off' else {}),
                    **({'formal_output':formal_output, 'formal_power_rails':formal_power_rails} if formal_output != 'off' else {}),
                    **({'embed_passives':True} if passive_embedding=='auto' else {}))
+
+
+def _resolve_branch_policy(policy, mode='layered', style='structured', columns='auto',
+                           *others, saved=False):
+    """Organize new compatible layouts by default without moving saved layouts."""
+    if policy is None:
+        compatible = (not saved and mode == 'layered' and style == 'structured'
+                      and columns == 'auto' and all(value == 'off' for value in others))
+        policy = DEFAULT_BRANCH_LAYOUT if compatible else 'off'
+    if saved and policy != 'off':
+        raise ValueError('saved-layout operations preserve coordinates; they cannot request branch layout')
+    _validate_branch_policy(policy, mode, style, columns, *others)
+    return policy
+
+
+def _validate_branch_policy(policy,mode='layered',style='structured',columns='auto',*others):
+    if policy not in ('off','auto'):
+        raise ValueError('branch_layout must be off or auto')
+    if policy=='auto' and (mode!='layered' or style!='structured' or columns!='auto'
+                           or any(v!='off' for v in others)):
+        raise ValueError('branch_layout auto requires structured columns and no competing layout experiment')
 
 
 def _validate_region_policy(region_layout, structure_layout='off', symmetry_layout='off'):
@@ -310,7 +336,7 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    candidate_budget='sequential',port_preflight='off', region_layout='off',
                    readability_layout='off', readability_phase=5, route_tradeoff='strict',
                    attachment_layout='off', column_layout='off', passive_skeleton='off',
-                   simplify_policy='safe', simplify_seconds=5):
+                    simplify_policy='safe', simplify_seconds=5, branch_layout='off'):
     if mode == 'layered' and layout_style == 'structured':
         from netlist2schematic.flow.aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
@@ -321,6 +347,7 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                              port_preflight=port_preflight, region_layout=region_layout,
                              readability_layout=readability_layout, readability_phase=readability_phase,
                              route_tradeoff=route_tradeoff,
+                              **({'branch_layout':branch_layout} if branch_layout=='auto' else {}),
                              **({'attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
                              **({'passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
                              **({'simplify_policy':simplify_policy,'simplify_seconds':simplify_seconds}
@@ -759,6 +786,9 @@ def _finish(data, par, placement, comps, nets, comp_index, base, destination,
         data['layout_columns']['current'] = measure_columns(placement, comp_index, data['layout_columns']['plan'])
         data['layout_columns']['measurement_stage'] = 'final_output'
         data['layout_columns']['routing_stage'] = data.get('routing_stage', 'normal')
+    if isinstance(data.get('layout_branches'),dict):
+        from netlist2schematic.plugins.organization.branch_layout import refresh
+        data=refresh(placement,comps,comp_index,data,stage='final_output')
     if isinstance(data.get('passive_embedding'), dict) and data['passive_embedding'].get('plan'):
         from netlist2schematic.plugins.passive_embedding.passive_embedding import measure
         data['passive_embedding']['current'] = measure(placement, comps, comp_index, data['passive_embedding']['plan'])
@@ -1084,6 +1114,8 @@ def main(argv=None, default_mode='layered'):
                         help='Joint host/attachment placement in candidates 2/3; all also places source devices')
     parser.add_argument('--column-layout', choices=('off', 'auto'), default=None,
                         help='Conduction columns in candidates 2/3; default auto for new structured layouts, off for saved/legacy/other layout experiments')
+    parser.add_argument('--branch-layout', choices=('off', 'auto'), default=None,
+                        help='Topology-based columns and regions before SA in candidates 2/3, all sizes; default auto for new structured layouts with columns, off for saved/legacy/other layout experiments')
     parser.add_argument('--passive-embedding', choices=('off', 'auto'), default='off',
                         help='Try one reversible passive-only layout/routing improvement after a legal result; default off')
     parser.add_argument('--passive-skeleton',choices=('off','auto'),default=None,
@@ -1141,6 +1173,9 @@ def main(argv=None, default_mode='layered'):
             region=args.region_layout, structure=args.structure_layout, symmetry=args.symmetry_layout)
         args.column_layout = _resolve_column_policy(args.column_layout, args.mode, args.layout_style, args.structure_layout,
             args.symmetry_layout, args.region_layout, args.readability_layout, args.attachment_layout,
+            saved=bool(args.simplify_placement or args.reroute_placement))
+        args.branch_layout = _resolve_branch_policy(args.branch_layout, args.mode, args.layout_style, args.column_layout,
+            args.structure_layout, args.symmetry_layout, args.region_layout, args.readability_layout, args.attachment_layout,
             saved=bool(args.simplify_placement or args.reroute_placement))
         _validate_passive_embedding(args.passive_embedding, args.mode, args.layout_style, args.passive_layout,
             args.structure_layout, args.symmetry_layout, args.region_layout, args.readability_layout, args.attachment_layout)
@@ -1205,6 +1240,7 @@ def main(argv=None, default_mode='layered'):
                 readability_layout=args.readability_layout, readability_phase=args.readability_phase,
                 attachment_layout=args.attachment_layout,
                 column_layout=args.column_layout,
+                branch_layout=args.branch_layout,
                 **({'passive_embedding':args.passive_embedding} if args.passive_embedding != 'off' else {}),
                 passive_skeleton=args.passive_skeleton,
                 structure_phase=args.structure_phase,

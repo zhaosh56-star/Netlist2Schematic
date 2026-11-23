@@ -2,6 +2,8 @@
 
 若只想向别人讲解具体布局设计，可先看[10组小电路前后对照](design-points-examples.md)：对应层、主列、子结构保护、RLC/V/I模块和端部二维找位；本地 HTML 可单独转发。
 
+新网表默认开启 `--branch-layout auto`：候选2、3在SA前组织可靠导通列及局部区域，并在SA动作、无源模块插入和最终布线准备中保持关系。没有器件数门槛；候选1保留原参照，最终仍按折角、交叉、信号线长选图。`--branch-layout off` 可关闭；旧JSON、baseline／legacy、显式关闭主列或其他布局实验不自动启用。规则、受阻时的限量寻路以及46张实测见[支路与区域前置组织](branch-organization.md)。
+
 这套工具把 SPICE 结构网表转换为布局 JSON、彩色 SVG 和黑白 SVG。Python
 命令入口保留在项目根目录，实际实现分类位于 `netlist2schematic/`；完整对应表见[目录说明](project-layout.md)。`analog-canvas-main` 提供随仓库保留的符号定义和验收样例。
 本地 `archive/` 如有原始 TXT 或实验记录，仅用于归档，不是运行依赖，也不进入 Git。

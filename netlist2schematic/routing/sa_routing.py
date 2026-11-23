@@ -195,6 +195,10 @@ def final_route(par, nets, placement, comp_index, options=None, deadline=None):
     from netlist2schematic.routing.orthogonal_router import RoutingFailure, route_scene
     started = perf_counter()
     scene = build_scene(par, nets, placement, comp_index, options=options, deadline=deadline)
+    if getattr(placement,'branch_routing',None):
+        from copy import deepcopy
+        scene.branch_routing=deepcopy(placement.branch_routing)
+        scene.component_names={i:c['id'] for i,c in enumerate(placement.comps)}
     initial={}
     if getattr(placement,'passive_module_guides',None):
         from netlist2schematic.plugins.passive_skeleton.module_connections import complete_routes

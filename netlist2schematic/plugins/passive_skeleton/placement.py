@@ -121,6 +121,9 @@ def make_frame(par, core, comps, index, options):
     pl.source_orientation_ids={mapping[i] for i in getattr(core,'source_orientation_ids',())}
     pl.source_orientation_ids.update(i for i in passive if comps[i]['symbol'] in ('voltage-source','current-source'))
     pl.terminal_orientation_ids=set(passive)
+    if getattr(core,'branch_plan',None):
+        pl.branch_plan=deepcopy(core.branch_plan)
+        pl.branch_index=dict(index)
     if getattr(core, 'column_plan', {}).get('protected_plan') is not None:
         pl.column_plan = deepcopy(core.column_plan)
     pl.passive_local_offsets=[[0.,0.] for c in comps]

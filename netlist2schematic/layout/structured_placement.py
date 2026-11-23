@@ -170,6 +170,10 @@ class StructuredPlacement(legacy.LayeredPlacement):
         self.comp_at = {cell: i for i, cell in enumerate(self.cell_of)}
 
     def blocks_contiguous(self):
+        if getattr(self, 'branch_plan', None):
+            from netlist2schematic.plugins.organization.branch_layout import valid
+            if not valid(self):
+                return False
         for block in (self.blocks + getattr(self, 'layout_macro_blocks', [])
                       + getattr(self, 'hierarchy_guards', [])):
             by_row = defaultdict(list)
@@ -184,6 +188,9 @@ class StructuredPlacement(legacy.LayeredPlacement):
 
     def propose(self):
         """Block translation, mirror, branch exchange, or internal refinement."""
+        if getattr(self, 'branch_plan', None) and self.rng.random() < .25:
+            from netlist2schematic.plugins.organization.branch_layout import propose
+            return propose(self)
         if getattr(self, 'region_plan', None) and self.rng.random() < .25:
             from netlist2schematic.plugins.region.region_placement import propose_region_move
             return propose_region_move(self)
@@ -873,7 +880,7 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                       structure_layout='off', structure_phase=3, region_layout='off',
                       readability_layout='off', readability_phase=5, routing_options=None,
                       attachment_layout='off', passive_skeleton='off', skeleton_columns=True,
-                      candidate_ids=None, candidate_deadlines=None):
+                      candidate_ids=None, candidate_deadlines=None, branch_layout='off'):
     """Yield requested structured seeds lazily, keeping their original IDs.
 
     Structured seeds retain IDs 1--3, independent random streams and their
@@ -890,6 +897,11 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
         raise ValueError('candidate_ids must contain distinct structured IDs 1, 2, 3')
     if passive_layout not in ('flexible', 'fixed'):
         raise ValueError('passive_layout must be flexible or fixed')
+    if branch_layout not in ('off', 'auto'):
+        raise ValueError('branch_layout must be off or auto')
+    if branch_layout == 'auto' and (not skeleton_columns or any(v != 'off' for v in
+            (structure_layout, region_layout, readability_layout, attachment_layout))):
+        raise ValueError('branch_layout requires columns and no competing layout experiment')
     if passive_skeleton not in ('off','auto'):
         raise ValueError('passive_skeleton must be off or auto')
     if type(include_legacy) is not bool:
@@ -983,7 +995,8 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                 try:
                     result,skeleton_attempt=create_candidate(devices,comps,nets,index,levels,att,
                         structs,candidate_seed,variant,skeleton_plan,routing_options or RoutingOptions(),
-                        iterations=iterations//3,deadline=deadline,columns=skeleton_columns)
+                        iterations=iterations//3,deadline=deadline,columns=skeleton_columns,
+                        **({'branch_layout':branch_layout} if branch_layout=='auto' else {}))
                 except RoutingFailure as exc:
                     if (candidate_deadlines is None
                             or exc.diagnostics.get('reason') != 'quality_time_budget'):
@@ -1154,6 +1167,12 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                     attachment_initialization['RL_folded_axis_replacement']={
                         'reason':'use_existing_true_pin_attachment_cost_instead_of_duplicate_cell_alignment',
                         'removed':[{'devices':[comps[a]['id'],comps[b]['id']],'weight':w} for a,b,w in replaced]}
+        branch_report = None
+        if branch_layout == 'auto' and variant:
+            from netlist2schematic.plugins.organization.branch_layout import initialize
+            placement, alignment, branch_report = initialize(
+                par, placement, comps, nets, index, devices, candidate_structs, alignment,
+                options=routing_options, deadline=deadline)
         # Leave most of the global budget to final routing, which is authoritative.
         local_deadline = min(deadline, time.perf_counter() + 12) if deadline else None
         energy, metrics, annealing = _anneal(placement, nets, index, alignment, pairs,
@@ -1184,6 +1203,10 @@ def create_candidates(path, *, cell=None, iterations=20000, seed=20261029, deadl
                                              for a, b, weight in alignment]}
         from netlist2schematic.layout.structure_hierarchy import hierarchy_report
         metadata['layout_hierarchy'] = hierarchy_report(placement)
+        if branch_report is not None:
+            from netlist2schematic.plugins.organization.branch_layout import refresh
+            metadata['layout_branches'] = copy.deepcopy(branch_report)
+            metadata = refresh(placement, comps, index, metadata, stage='after_sa')
         if correspondence_report is not None:
             metadata['layout_branch_rows'] = copy.deepcopy(correspondence_report)
         if attachment_layout != 'off' and variant:

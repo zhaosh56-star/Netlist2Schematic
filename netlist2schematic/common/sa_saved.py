@@ -91,6 +91,9 @@ def load_placement(jpath, *, analog_canvas_root=None):
         raise ValueError('Saved placement contains duplicate cells')
     placement.comp_at = {position: i for i, position in enumerate(placement.cell_of)}
     placement.routing_stage = data.get('routing_stage', 'normal')
+    branch_policy=(data.get('layout_branches') or {}).get('routing_policy')
+    if isinstance(branch_policy,dict):
+        placement.branch_routing=deepcopy(branch_policy)
     bus_layout = is_bus_layout(data)
     if bus_layout:
         fallback = data.get('fallback')

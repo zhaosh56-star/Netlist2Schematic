@@ -97,10 +97,13 @@ def _history_cost(a, b, history):
 
 def _find_path(scene, net, start, tree, occupied, margin, history, statistics,
                checks=None, prepared=None, deadline=None, *, extra_points=(),
-               initial_direction=None):
+               initial_direction=None, window=None, precheck_goals=False, cap_history=False):
     """A* carries heading; only actual turns and attachments need quiet zones."""
     _check_deadline(deadline, net=net, stage='branch_search')
     xs, ys = _axes(scene, occupied, tree, margin, extra_points=extra_points)
+    if window is not None:
+        from netlist2schematic.routing.regional_routing import window_axes
+        xs,ys=window_axes(xs,ys,start,tree,window,scene.options.grid_step)
     nodes = len(xs)*len(ys)
     statistics['graph_nodes'] = max(statistics['graph_nodes'], nodes)
     statistics['attempts'] += 1
@@ -129,11 +132,29 @@ def _find_path(scene, net, start, tree, occupied, margin, history, statistics,
             turn_cache[point] = scene.vertex_check(net, point, prepared)
         return turn_cache[point]
 
+    if precheck_goals:statistics.pop('branch_rejection',None)
     if not free(start):
+        if precheck_goals:statistics['branch_rejection']='source_interface'
         return None, Counter()
     allowed, _, rejected_by = vertex(start)
     if not allowed:
+        if precheck_goals:statistics['branch_rejection']='source_interface'
         return None, Counter(rejected_by)
+    if precheck_goals:
+        goals=set()
+        for a,b in tree:
+            if a[0]==b[0] and a[0] in x_index:
+                goals.update((a[0],y) for y in ys if min(a[1],b[1])<=y<=max(a[1],b[1]))
+            elif a[1]==b[1] and a[1] in y_index:
+                goals.update((x,a[1]) for x in xs if min(a[0],b[0])<=x<=max(a[0],b[0]))
+        blocked=Counter();safe=False
+        for point in sorted(goals):
+            if not free(point):continue
+            okay,_,owners=vertex(point);blocked.update(owners)
+            if okay:safe=True;break
+        if not safe:
+            statistics['branch_rejection']='no_safe_goal'
+            return None,blocked
     initial_heading = -1
     if initial_direction is not None:
         if (len(initial_direction) != 2
@@ -202,9 +223,13 @@ def _find_path(scene, net, start, tree, occupied, margin, history, statistics,
                 blockers.update(blocked)
                 continue
             length = abs(point[0]-target[0]) + abs(point[1]-target[1])
+            if cap_history:
+                from netlist2schematic.routing.regional_routing import bounded_history
+                history_cost=bounded_history(point,target,history)
+            else:history_cost=_history_cost(point,target,history)
             candidate = (cost + length + scene.options.bend_cost*turning
                          + scene.options.crossing_cost*crossings
-                         + _history_cost(point,target,history))
+                         + history_cost)
             next_state = (jx,jy,next_heading)
             if candidate < distances.get(next_state, inf):
                 distances[next_state] = candidate
@@ -241,9 +266,20 @@ def _route_net(scene, net, occupied, margin, history, statistics, shared_free=No
                                        'escape': pin.escape}
         if any(_on(pin.point,a,b) for a,b in tree):
             continue
-        paths, blocked = _find_path(scene,net,pin.escape,tree,occupied,margin,history,statistics,
-                                   checks,prepared,deadline=deadline)
+        if getattr(scene,'branch_routing',None):
+            from netlist2schematic.routing.regional_routing import find_path
+            paths,blocked=find_path(scene,net,pin.escape,tree,occupied,margin,history,
+                statistics,checks,prepared,deadline)
+        else:
+            paths, blocked = _find_path(scene,net,pin.escape,tree,occupied,margin,history,statistics,
+                                       checks,prepared,deadline=deadline)
         blockers.update(blocked)
+        if paths is None and getattr(scene,'branch_routing',None):
+            from netlist2schematic.routing.regional_routing import repair_branch
+            repaired,owners=repair_branch(scene,net,tree,[pin]+remaining,occupied,margin,statistics,deadline)
+            blockers.update(owners)
+            if repaired is not None:
+                return canonical_topology(repaired,pins=[p.point for p in pins])['segments'],blockers
         if paths is None:
             statistics['failed_branch'] = {'net': net, 'component': pin.component,
                                            'pin': pin.pin, 'point': pin.point,
@@ -261,7 +297,11 @@ def _priority(scene, net):
     points=[pin.point for pin in pins]
     hpwl=(max(p[0] for p in points)-min(p[0] for p in points)
           + max(p[1] for p in points)-min(p[1] for p in points)) if points else 0
-    return -len(pins),-hpwl,net
+    base=(-len(pins),-hpwl,net)
+    if getattr(scene,'branch_routing',{}).get('active',False):
+        from netlist2schematic.routing.regional_routing import priority
+        return priority(scene,net,base)
+    return base
 
 
 def route_scene(scene, deadline=None, *, initial_routes=None):
@@ -287,6 +327,7 @@ def route_scene(scene, deadline=None, *, initial_routes=None):
             completed=deepcopy(initial_routes)
             pending=list(order)
             rounds=0
+            regional_reordered=False
             while pending:
                 _check_deadline(deadline, stage='net_start', margin=margin)
                 net=pending.pop(0)
@@ -297,9 +338,22 @@ def route_scene(scene, deadline=None, *, initial_routes=None):
                 # the potentially larger deep copy is never on the success path.
                 rescue_state={'completed':dict(completed), 'failed_net':net,
                               'pending':list(pending), 'margin':margin, 'branch':None}
+                policy_was_active=getattr(scene,'branch_routing',{}).get('active',False)
                 result,blockers=_route_net(scene,net,occupied,margin,history,diagnostics,
                                            shared_free,deadline=deadline,
                                            _rescue_state=rescue_state)
+                if (not policy_was_active and getattr(scene,'branch_routing',{}).get('active',False)):
+                    # An actual branch failure activated the regional strategy.
+                    # Keep completed local trees/module seeds, but do not let
+                    # earlier global controls permanently obstruct local nets.
+                    removed=[name for name in completed if name not in initial_routes
+                             and _priority(scene,name)[0]!=0]
+                    for name in removed:completed.pop(name)
+                    pending=sorted(set([net]+pending+removed),key=lambda name:_priority(scene,name))
+                    diagnostics.setdefault('regional_transitions',[]).append(dict(
+                        trigger_net=net,rerouted=removed,preserved=sorted(completed)))
+                    history=[];regional_reordered=True;rescue_state=None
+                    continue
                 if (result is None and net in getattr(scene,'module_port_nets',())
                         and net not in module_interface_attempts
                         and len(module_interface_attempts)<scene.options.max_rounds):
@@ -335,6 +389,15 @@ def route_scene(scene, deadline=None, *, initial_routes=None):
                     # failure. A fresh checkpoint starts at the next real call.
                     rescue_state=None
                     continue
+                if (getattr(scene,'branch_routing',{}).get('active',False)
+                        and not regional_reordered and pending):
+                    reordered=sorted([net]+pending,key=lambda name:_priority(scene,name))
+                    regional_reordered=True
+                    if reordered[0]!=net:
+                        pending=reordered
+                        diagnostics.setdefault('regional_reorders',[]).append(dict(
+                            failed_net=net,margin=margin,preserved_nets=sorted(completed)))
+                        continue
                 movable=[name for name,_ in sorted(blockers.items(),key=lambda item:(-item[1],_priority(scene,item[0]) if item[0] in scene.pins else (0,0,item[0])))
                          if name in completed and name not in initial_routes]
                 last_failure={**failure,'blocking_nets':dict(blockers),'margin':margin}
@@ -368,6 +431,8 @@ def route_scene(scene, deadline=None, *, initial_routes=None):
         raise RoutingFailure('No route satisfying the geometric rules was found within the search budget',diagnostics)
     except RoutingFailure as exc:
         diagnostics.update(exc.diagnostics)
+        if rescue_state is not None and rescue_state.get('branch'):
+            diagnostics['failed_branch']=deepcopy(rescue_state['branch'])
         diagnostics['elapsed_seconds']=round(perf_counter()-started,6)
         if rescue_state is None:
             diagnostics.setdefault('rescue_checkpoint_unavailable', 'no_active_net')

@@ -94,7 +94,7 @@ def _control_sources(par,core, comps, index, plan):
 
 
 def create_candidate(devices, comps, nets, index, levels, att, structs, seed, variant,
-                     plan, options, *, iterations=0, deadline=None, columns=True):
+                     plan, options, *, iterations=0, deadline=None, columns=True, branch_layout='off'):
     """Return a complete static-legal layout or an explicit fallback report.
 
     Only the geometric estimator sees the auxiliary edges. Exported components,
@@ -170,6 +170,12 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
             active = ([ci[n] for n,p in ports.values()] if ports else
                       [ci[n] for n,p in terminals if cc[ci[n]]['symbol'] in ACTIVE])
             if len(active)==2:alignment.append((*active,3.))
+    branch_report = None
+    if branch_layout == 'auto':
+        from netlist2schematic.plugins.organization.branch_layout import initialize
+        core, alignment, branch_report = initialize(sp.par,core,cc,estimate_nets,ci,core_devices,
+            core_structs,alignment,bridges=inline_bridges,source_devices=devices,
+            options=options,deadline=deadline)
     local_deadline=min(deadline,perf_counter()+12) if deadline is not None else None
     energy,estimate,annealing=sp._anneal(core,estimate_nets,ci,alignment,pairs,iterations,local_deadline)
     role_actions=sp._orient_latch_clock_access(core,core_devices,core_structs,ci)
@@ -182,7 +188,7 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     row_budget=(branch_rows or {}).get('target_search',{})
     row_seconds=row_budget.get('elapsed_seconds',0.)
     row_trials=row_budget.get('evaluated_states',0)
-    until=perf_counter()+max(0.,1-row_seconds)
+    until=perf_counter()+max(0.,1-row_seconds-(branch_report or {}).get('elapsed_seconds',0.))
     if deadline is not None:until=min(deadline,until)
     if columns:
         column_plan=build_column_plan(sp.par,core,cc,cn,ci,core_structs,
@@ -209,6 +215,7 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
         generation_seconds=round(perf_counter()-started,6))
     if branch_rows is not None:
         report['layout_branch_rows']=deepcopy(branch_rows)
+    if branch_report is not None:report['layout_branches']=deepcopy(branch_report)
     if packed is None:return None,report
     metadata=dict(source_note=levels['source_note'],levels=deepcopy(levels['device_levels']),attach=deepcopy(att),
         structs=deepcopy(structs),sym_pairs=context['sym_pairs'],energy=energy,optimization_metrics=estimate,
@@ -221,6 +228,10 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
             core_only_sa=True,post_sa_local_coordinates=True))
     if branch_rows is not None:
         metadata['layout_branch_rows']=deepcopy(branch_rows)
+    if branch_report is not None:
+        from netlist2schematic.plugins.organization.branch_layout import refresh
+        metadata['layout_branches']=deepcopy(branch_report)
+        metadata=refresh(packed,comps,index,metadata,stage='after_passive_module_insertion')
     report['current']=measure(packed,comps,index,report['plan'])
     if inline_bridges:
         report['inline_port_policy'] = 'unique-conduction-hosts-with-control-taps-v1'

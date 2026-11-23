@@ -66,8 +66,13 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   structure_phase=3, candidate_budget='sequential',port_preflight='off',
                   region_layout='off', readability_layout='off', readability_phase=5,
                   route_tradeoff='strict', attachment_layout='off', column_layout='off', passive_skeleton='off',
-                  simplify_policy='off', simplify_seconds=5):
+                  simplify_policy='off', simplify_seconds=5, branch_layout='off'):
     validate_policy(candidate_budget)
+    if branch_layout not in ('off','auto'):
+        raise ValueError('branch_layout must be off or auto')
+    if branch_layout=='auto' and (column_layout!='auto' or any(v!='off' for v in
+            (structure_layout,symmetry_layout,region_layout,readability_layout,attachment_layout))):
+        raise ValueError('branch_layout requires columns and no competing layout experiment')
     if port_preflight not in ('off','repair'):
         raise ValueError('port_preflight must be off or repair')
     if type(quality_seconds) not in (int, float) or not isfinite(quality_seconds) or quality_seconds <= 0:
@@ -136,6 +141,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                                        structure_phase=structure_phase, region_layout=region_layout,
                                        readability_layout=readability_layout,
                                        readability_phase=readability_phase,
+                                       **({'branch_layout':branch_layout} if branch_layout=='auto' else {}),
                                         **({'attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
                                        **({'passive_skeleton':passive_skeleton,'skeleton_columns':column_layout=='auto'}
                                           if passive_skeleton=='auto' else {}),
@@ -275,6 +281,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                     proposal = feedback_candidate(feedback_best[1], feedback_best[2], feedback_best[3], feedback_best[4],
                                                   feedback_best[5], detail)
                     branch_rows = metadata.get('layout_branch_rows')
+                    if proposal is not None and branch_layout=='auto':
+                        from netlist2schematic.plugins.organization.branch_layout import compatible
+                        if not compatible(proposal[0],placement,index):
+                            metadata.setdefault('layout_branches',{})['feedback_skipped']='incompatible_branch_frame'
+                            proposal=None
                     if proposal is not None and branch_rows and branch_rows.get('applied'):
                         from netlist2schematic.plugins.columns.branch_rows import compatible_rows
                         if not compatible_rows(branch_rows, proposal[0], proposal[3]):
@@ -399,6 +410,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 placement,metadata=refine_region_tails(par,placement,comps,nets,index,metadata,
                     options=effective_options,deadline=min(candidate_deadline,local_refinement_deadline),
                     budget=metadata.get('layout_regions',{}).get('local_budget',region_local_budget))
+            if branch_layout=='auto' and metadata.get('layout_branches',{}).get('applied'):
+                from netlist2schematic.plugins.organization.route_preparation import prepare
+                placement,metadata=prepare(par,placement,comps,nets,index,metadata,effective_options,
+                    deadline=candidate_deadline)
             if port_preflight == 'repair':
                 from netlist2schematic.plugins.preflight.placement_preflight import repair_static_ports
                 try:
@@ -458,6 +473,14 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 from netlist2schematic.plugins.attachment.attachment_selection import measure_candidate
                 metadata = measure_candidate(placement, comps, index, metadata, shared_attachment_plan,
                     policy=attachment_layout, stage='before_final_routing')
+            if branch_layout=='auto' and metadata.get('layout_branches',{}).get('applied'):
+                from netlist2schematic.plugins.organization.branch_layout import refresh,valid
+                metadata=refresh(placement,comps,index,metadata,stage='before_final_routing')
+                if not valid(placement):
+                    records.append(dict(candidate_id=identifier,status='skipped',
+                        reason='branch_contract_changed_after_initialization',
+                        layout_branches=deepcopy(metadata['layout_branches'])))
+                    continue
             routing_at = perf_counter()
             if isinstance(metadata.get('layout_hierarchy'), dict):
                 from netlist2schematic.layout.structure_hierarchy import hierarchy_report
@@ -476,6 +499,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 record['structure_layout'] = deepcopy(metadata['structure_layout'])
             if 'layout_regions' in metadata:
                 record['layout_regions'] = deepcopy(metadata['layout_regions'])
+            if 'layout_branches' in metadata:
+                record['layout_branches'] = deepcopy(metadata['layout_branches'])
             if 'layout_readability' in metadata:
                 record['layout_readability'] = deepcopy(metadata['layout_readability'])
             if 'layout_attachments' in metadata:
@@ -726,8 +751,12 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     routing_selection = None
     if candidate_id is None:
         from netlist2schematic.flow.candidate_selection import select_result
-        best, routing_selection = select_result(valid_results, stage=(
-            'after_shared_route_simplification' if prefer_primary else 'after_routing'))
+        if branch_layout=='auto':
+            from netlist2schematic.plugins.organization.branch_layout import select_results
+            best,routing_selection=select_results(valid_results)
+        else:
+            best, routing_selection = select_result(valid_results, stage=(
+                'after_shared_route_simplification' if prefer_primary else 'after_routing'))
     _, placement, comps, nets, index, metadata, routed_result, quality, identifier = best
     metadata.update(layout_style='structured', quality={
         'policy': 'balanced-v1', 'budget_seconds': quality_seconds,

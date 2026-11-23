@@ -1,5 +1,7 @@
 # SA Python 运行说明
 
+主列与区域前置组织已默认启用（`--branch-layout auto`）：候选2、3先按连接关系组织导通列和局部区域，再由SA在框架内调整；没有器件数量触发门槛，保留现有无源模块与布线插件。用 `--branch-layout off` 关闭；旧JSON、baseline／legacy、显式关闭主列或其他布局实验不隐式叠加。规则及46张实测见[说明](docs/branch-organization.md)。
+
 单文件盲测已封装为根目录 `build_evaluation.py`：用 `--manifest` 提供任意图对清单或已有正式图集，即可生成问卷，不重跑布局和布线。不内置题目排除或 VDD 换图规则，直接采用你提供的图片。只发一个 `index.html`，客户答完只返回一个含 GT／算法占比和逐题细节的 HTML 报告。清单格式和命令见[评测脚本说明](docs/blind-evaluation.md)。
 
 正式出图插件：在主 flow 末尾加 `--formal-output auto`，额外生成 GT 风格字体、数学下标、无引脚白圈和结构虚框、局部合并 VDD 的正式 SVG。默认关闭；`--formal-power-rails off` 可单独禁用合并。已有 JSON 可跳过布局与布线独立调用，见[正式出图说明](docs/formal-figures.md)。
