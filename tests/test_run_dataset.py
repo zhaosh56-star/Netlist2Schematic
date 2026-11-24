@@ -1,4 +1,4 @@
-"""Batch execution uses one cumulative 120s default run and stops owned trees."""
+"""Batch execution preserves independent candidate caps and stops owned trees."""
 from argparse import Namespace
 from contextlib import redirect_stdout
 from copy import deepcopy
@@ -41,15 +41,17 @@ class DatasetRunnerTests(unittest.TestCase):
                 self.assertIsNone(batch.run_attempt(row,budget,1,Path(td),args))
             return process.call_args,row
 
-    def test_default_has_one_120_second_wall_limit_and_no_stage_overrides(self):
+    def test_default_has_720_second_outer_limit_and_no_stage_overrides(self):
         call,row=self.attempt(None)
         command=call.args[0]
         for flag in ('--quality-seconds','--rescue-seconds','--spacing-seconds',
                      '--fallback-seconds','--simplify-seconds','--candidate-id'):
             self.assertNotIn(flag,command)
-        self.assertEqual(call.kwargs['seconds'],120)
-        self.assertEqual(command[command.index('--time-seconds')+1],'120.0')
-        self.assertEqual(row['attempts'][0]['budget']['wall'],120)
+        self.assertEqual(call.kwargs['seconds'],720)
+        self.assertEqual(command[command.index('--time-seconds')+1],'720.0')
+        self.assertEqual(row['attempts'][0]['budget']['wall'],720)
+        self.assertEqual(row['attempts'][0]['budget']['normal'],120)
+        self.assertEqual(row['attempts'][0]['budget']['repair'],30)
         self.assertEqual(call.kwargs['env'][batch.WORKER_ENV],'1')
 
     def test_quick_mode_has_explicit_wall_and_shared_stage_limits(self):

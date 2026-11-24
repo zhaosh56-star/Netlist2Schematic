@@ -257,7 +257,8 @@ class PublicRecoveryIntegrationTests(unittest.TestCase):
                     patch('netlist2schematic.recovery.spacing_retry.retry_spacing', return_value=deepcopy(normal)) as spacing, \
                     redirect_stdout(io.StringIO()):
                 data = run_flow.run(source, iterations=0, out_dir=Path(directory)/'output',
-                                    rescue_seconds=3, spacing_seconds=2, simplify_routes='off')
+                                    rescue_seconds=3, spacing_seconds=2, simplify_routes='off',
+                                    passive_skeleton='off')
             self.assertEqual(original_cells, spacing.call_args.args[0][0].cell_of)
             self.assertNotIn('uncommitted', spacing.call_args.args[0][4])
             self.assertEqual(['normal', 'local_rescue', 'spacing_retry'],

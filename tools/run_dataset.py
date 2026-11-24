@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run a directory of netlists serially and publish an embedded GT/SVG report.
 
-Default: one complete attempt per diagram, with a shared 120-second wall
-limit and automatic formal output. Explicit quick mode retains the older
+Default: independent 120/30/30/30-second candidate pipelines, with a 720-second
+outer limit and automatic formal output. Explicit quick mode retains the older
 60/120 verification protocol. No historical layout seeds the engine.
 """
 from __future__ import annotations
@@ -29,8 +29,8 @@ from netlist2schematic.common.sa_common import engine_source_files
 from netlist2schematic.netlist.netlist_core import _logical_lines,_partition,parse_netlist
 from tools.compare_power_rails import _image_uri,_image_viewer,_svg_geometry
 
-QUICK=(dict(wall=60,normal=50,rescue=1,spacing=1,bus=1,simplify=5),
-       dict(wall=120,normal=90,rescue=10,spacing=5,bus=5,simplify=5))
+QUICK=(dict(wall=60,normal=50,repair=1,rescue=1,spacing=1,bus=1,simplify=5),
+       dict(wall=120,normal=90,repair=5,rescue=10,spacing=5,bus=5,simplify=5))
 EXTENSIONS={'.cir','.spi','.sp','.net','.spice'}
 
 
@@ -114,7 +114,7 @@ def run_attempt(row,budget,number,destination,args):
     command+=['--time-seconds',str(wall)]
     if row.get('cell'):command+=['--cell',row['cell']]
     if budget is not None:
-        for name,key in (('quality','normal'),('rescue','rescue'),('spacing','spacing'),
+        for name,key in (('quality','normal'),('repair','repair'),('rescue','rescue'),('spacing','spacing'),
                          ('fallback','bus'),('simplify','simplify')):
             command+=['--'+name+'-seconds',str(budget[key])]
     log=folder/'flow.log';started=perf_counter()
@@ -122,7 +122,8 @@ def run_attempt(row,budget,number,destination,args):
         rc=run_bounded(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT,
             seconds=wall,env=dict(os.environ,**{WORKER_ENV:'1'}))
     attempt=dict(number=number,command=command,
-        budget=budget or dict(wall=wall,policy='single_attempt_shared_deadline_v1'),
+        budget=budget or dict(wall=wall,policy='independent-candidates-2-3-then-1-v1',
+                             normal=120,repair=30,rescue=30,spacing=30,bus=60),
         returncode='wall_timeout' if rc==124 else rc,
         elapsed_seconds=round(perf_counter()-started,4),log=str(log))
     row['attempts'].append(attempt)
@@ -156,11 +157,11 @@ def report(manifest,destination):
         links=('<a href="'+Path(row['placement']).as_uri()+'">布局JSON</a> · <a href="'+Path(row['color_svg']).as_uri()+'">彩色SVG</a>' if row.get('placement') else escape(row.get('message','等待运行')))
         sections.append('<section id="'+tag+'" data-title="'+escape(name,quote=True)+'"><h2>'+escape(tag+' · '+name)+'</h2><p>'+escape(state)+'；最终信号指标：'+metric(row.get('metrics'))+'</p><div class="pictures">'+picture(row.get('ground_truth'),'GT（视觉参照）')+picture(row.get('formal_svg') or row.get('clean_svg'),'当前默认正式图')+'</div><p>'+links+'</p><details><summary>本图运行记录</summary><ul>'+diagnostics+'</ul><pre>'+escape(json.dumps({k:v for k,v in row.items() if k!='attempts'},ensure_ascii=False,indent=2))+'</pre></details></section>')
     stages=dict(Counter(r['routing_stage'] for r in valid))
-    mode=(f"每张图一次完整运行，最多{manifest.get('time_seconds',120):g}秒；正常优化、失败恢复、缩线与正式出图共享总时限，完成即进入下一张，不默认60秒失败再重跑。"
+    mode=(f"每张图一次完整运行：候选2、3各自按120秒正常运行、30秒原候选修复、30秒局部救援、30秒扩距重试，成功即结束该候选的恢复；两份均失败才按相同预算尝试候选1，最后才用bus。整图保护上限{manifest.get('time_seconds',720):g}秒，完成即进入下一张。"
           if manifest['budget_mode']=='default' else
           '本次显式选择旧版快速验证：60秒失败后重新运行一次，最多120秒；不属于默认批量行为。')
     document='''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>test_data2 当前flow整批结果</title><style>body{font:15px/1.7 system-ui,sans-serif;background:#f2f5f9;color:#23324a;margin:24px}main{max-width:1780px;margin:auto}section{background:white;border:1px solid #dbe3ef;border-radius:10px;padding:18px;margin:25px 0}h2{font-size:20px;overflow-wrap:anywhere}.pictures{display:grid;grid-template-columns:1fr 1fr;gap:16px}figure{margin:0}figcaption{text-align:center;font-weight:600}img{width:100%;height:570px;object-fit:contain;background:white}table{border-collapse:collapse;background:white;width:100%}td,th{border:1px solid #dbe3ef;padding:8px;text-align:left}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#125aab}input{padding:10px;width:350px;max-width:90%}@media(max-width:900px){.pictures{grid-template-columns:1fr}}</style><main>'''
-    document+='<h1>'+escape(Path(manifest['input_dir']).name)+'：当前flow整批结果</h1><p>进度 '+str(len(done))+' / '+str(len(rows))+'；完整验收成功 '+str(len(valid))+'；阶段分布 '+escape(str(stages))+'；状态 '+manifest['status']+'。</p><p>'+mode+'</p><p>每张都从原网表重新布局、SA与布线；候选2、3优先，均失败才在剩余时间内修复。默认主列、无源骨架和端口预检开启，正式图默认使用就近标号和通过验收的局部VDD合并；额外网标保持关闭。下表为原生信号线长／交叉／折角，不含供电引线；GT仅作视觉参照，没有冒充可比的同口径GT指标。总线后备始终单独标明，不能视为普通布线成功。</p><p>每份成品从JSON独立复验，并检查黑白、彩色和独立重绘坐标一致。图片已内嵌，点击放大。<a href="manifest.json">运行清单、参数与哈希</a></p>'
+    document+='<h1>'+escape(Path(manifest['input_dir']).name)+'：当前flow整批结果</h1><p>进度 '+str(len(done))+' / '+str(len(rows))+'；完整验收成功 '+str(len(valid))+'；阶段分布 '+escape(str(stages))+'；状态 '+manifest['status']+'。</p><p>'+mode+'</p><p>每张都从原网表重新布局、SA与布线；候选2、3各自独立运行并恢复，均失败才候选1，最后bus。默认主列、无源骨架和端口预检开启，正式图默认使用就近标号和通过验收的局部VDD合并；额外网标保持关闭。下表为原生信号线长／交叉／折角，不含供电引线；GT仅作视觉参照，没有冒充可比的同口径GT指标。总线后备始终单独标明，不能视为普通布线成功。</p><p>每份成品从JSON独立复验，并检查黑白、彩色和独立重绘坐标一致。图片已内嵌，点击放大。<a href="manifest.json">运行清单、参数与哈希</a></p>'
     document+='<table><tr><th>样例</th><th>状态／阶段</th><th>信号线长／交叉／折角</th><th>候选</th><th>全部尝试耗时（秒）</th></tr>'+''.join(table)+'</table>'+''.join(sections)+'</main></html>'
     page=_image_viewer(document);temporary=destination/'index.html.tmp'
     temporary.write_text(page,encoding='utf8');temporary.replace(destination/'index.html')
@@ -170,9 +171,9 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input_dir',type=Path)
     parser.add_argument('--budget',choices=('default','quick'),default='default',
-                        help='default: one 120s run; quick: explicitly retain the old 60/120 verification')
+                        help='default: independent 120/30/30/30s candidate pipelines; quick: explicit 60/120 whole-diagram verification')
     parser.add_argument('--time-seconds',type=float,default=DEFAULT_SECONDS,
-                        help='Total seconds per diagram in default mode (default 120)')
+                        help='Outer safety limit per diagram (default 720; stage caps remain independent)')
     parser.add_argument('--out-dir',type=Path)
     parser.add_argument('--cell',help='Explicit subcircuit for all inputs; otherwise select a unique definition')
     parser.add_argument('--iterations',type=int,default=20000)

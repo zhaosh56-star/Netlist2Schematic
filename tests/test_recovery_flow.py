@@ -32,6 +32,9 @@ class RecoveryFlowTests(unittest.TestCase):
                 None, 0, 17, 10, '1', None)
 
     def generate(self, **kwargs):
+        # This suite exercises compatibility/saved-layout recovery helpers.
+        # Independent default candidate scheduling is covered separately.
+        kwargs.setdefault('passive_skeleton', 'off')
         with contextlib.redirect_stdout(io.StringIO()):
             return run_flow.run(self.source, iterations=0, seed=17,
                                 out_dir=self.destination, **kwargs)

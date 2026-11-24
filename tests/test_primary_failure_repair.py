@@ -137,12 +137,18 @@ class MainFlowProtectionTests(unittest.TestCase):
             with redirect_stdout(StringIO()):
                 normal=run_flow._normal_result(source,load_local('place_and_route','place-and-route.py'),
                     'layered','structured',None,0,17,3,'2',None)
-            with patch.object(run_flow,'_normal_result',return_value=normal), \
+            def matching_normal(*args, **kwargs):
+                proposal = deepcopy(normal)
+                proposal[4]['candidate_id'] = int(args[8])
+                proposal[4]['quality']['selected_candidate'] = str(args[8])
+                return proposal
+            with patch.object(run_flow,'_normal_result',side_effect=matching_normal), \
                     patch.object(primary_recovery,'repair',side_effect=AssertionError('normal output changed')), \
                     redirect_stdout(StringIO()):
                 result=run_flow.run(source,iterations=0,out_dir=Path(temporary)/'out',simplify_routes='off')
             self.assertTrue(result['validation']['valid'])
-            self.assertEqual([s['stage'] for s in result['recovery']['stages']],['normal'])
+            self.assertEqual([s['stage'] for s in result['recovery']['stages']],['normal','normal'])
+            self.assertEqual([s['candidate_id'] for s in result['recovery']['stages']],['2','3'])
 
     def test_repaired_primary_is_delivered_without_independent_recovery_or_reference(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -164,7 +170,9 @@ class MainFlowProtectionTests(unittest.TestCase):
                 data=run_flow.run(source,iterations=0,out_dir=Path(temporary)/'out',simplify_routes='off')
             self.assertEqual(data['routing_stage'],'primary_repair')
             self.assertTrue(data['validation']['valid'])
-            self.assertEqual([s['stage'] for s in data['recovery']['stages']],['normal','primary_repair'])
+            self.assertEqual([s['stage'] for s in data['recovery']['stages'][:2]],['normal','primary_repair'])
+            self.assertEqual(data['recovery']['stages'][2]['candidate_id'],'3')
+            self.assertNotIn('1',data['candidate_pipeline']['candidate_order'])
 
 
 if __name__=='__main__':unittest.main()

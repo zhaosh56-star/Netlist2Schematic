@@ -66,7 +66,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   structure_phase=3, candidate_budget='sequential',port_preflight='off',
                   region_layout='off', readability_layout='off', readability_phase=5,
                   route_tradeoff='strict', attachment_layout='off', column_layout='off', passive_skeleton='off',
-                  simplify_policy='off', simplify_seconds=5, branch_layout='off'):
+                  simplify_policy='off', simplify_seconds=5, branch_layout='off',
+                  capture_failed_candidate=False):
     validate_policy(candidate_budget)
     if branch_layout not in ('off','auto'):
         raise ValueError('branch_layout must be off or auto')
@@ -128,6 +129,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     effective_options = routing_options if routing_options is not None else RoutingOptions()
     include_legacy = str(candidate_id) == '0'
     prefer_primary = passive_skeleton == 'auto' and candidate_id is None
+    capture_failures = prefer_primary or capture_failed_candidate
     budget_policy = ('primary_reserved' if prefer_primary else
                      candidate_budget if candidate_id is None else 'sequential')
     reserved_budget = budget_policy in ('reserved', 'primary_reserved')
@@ -154,7 +156,10 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                                            'candidate_deadlines': {i: primary_deadline(started, quality_seconds, i)
                                                                    for i in candidate_order}}
                                           if prefer_primary else
-                                          {'candidate_ids': (int(candidate_id),)}
+                                          {'candidate_ids': (int(candidate_id),),
+                                           **({'packing_failures': packing_failures,
+                                               'candidate_deadlines': {str(candidate_id): deadline}}
+                                              if capture_failed_candidate else {})}
                                           if passive_skeleton == 'auto' and str(candidate_id) in ('1','2','3') else {}))
         for number in range(candidate_limit):
             # Check before resuming the lazy generator: a valid preferred result
@@ -191,6 +196,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 continue
             generated_at = perf_counter()
             if generated_at >= deadline:
+                if capture_failed_candidate:
+                    retry_context = deepcopy((placement, comps, nets, index, metadata))
+                    retry_options = deepcopy(effective_options)
+                    primary_placements.append(dict(candidate_id=identifier, context=deepcopy(retry_context),
+                        checkpoint=None, options=deepcopy(retry_options), attempt_index=len(records)))
                 stop_reason = 'time_budget'
                 break
             candidate_deadline = (primary_deadline(started, quality_seconds, identifier) if prefer_primary else
@@ -532,6 +542,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
             fixed_check = metadata.get('port_preflight',{}).get('static_verification',{})
             if (port_preflight=='repair' and fixed_check.get('complete')
                     and fixed_check.get('valid') is False and fixed_check.get('fault_count',0)>0):
+                if capture_failed_candidate:
+                    retry_context = deepcopy((placement, comps, nets, index, metadata))
+                    retry_options = deepcopy(effective_options)
+                    primary_placements.append(dict(candidate_id=identifier, context=deepcopy(retry_context),
+                        checkpoint=None, options=deepcopy(retry_options), attempt_index=len(records)))
                 record.update(status='failed',message='Fixed port geometry remains invalid after preflight',
                     diagnostics=dict(reason='static_port_conflict',stage='before_final_routing',
                         fault_count=fixed_check['fault_count'],violations=deepcopy(fixed_check.get('violations',[])),
@@ -592,11 +607,11 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                 if getattr(exc, 'diagnostics', {}).get('reason') == 'power_connections':
                     raise
                 rescue_context = deepcopy(getattr(exc, '_rescue_context', None))
-                if prefer_primary and rescue_context is not None:
+                if capture_failures and rescue_context is not None:
                     from netlist2schematic.recovery.candidate_rescue import capture_candidate
                     recovery_candidates.append(capture_candidate(
                         retry_context, rescue_context, retry_options, identifier, len(records)))
-                if prefer_primary:
+                if capture_failures:
                     primary_placements.append(deepcopy(dict(candidate_id=identifier,
                         context=retry_context, checkpoint=rescue_context, options=retry_options,
                         attempt_index=len(records))))
@@ -657,7 +672,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
         if best is None:
             failure.retry_context = retry_context
             failure.retry_options = retry_options or deepcopy(effective_options)
-            if prefer_primary:
+            if capture_failures:
                 failure._primary_repair_deadline = deadline
                 failure._primary_placements = deepcopy(primary_placements + packing_failures)
                 failure._primary_normal_records = deepcopy(records)
@@ -791,7 +806,8 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
     return placement, comps, nets, index, metadata, routed_result
 
 
-def _clean_primary_results(path, cell, par, results, records, options, policy, seconds, tradeoff):
+def _clean_primary_results(path, cell, par, results, records, options, policy, seconds, tradeoff,
+                           *, budget_limit=None):
     """Compare finished drawings using one shared, unchanged cleanup budget."""
     from hashlib import sha256
     from pathlib import Path
@@ -807,6 +823,8 @@ def _clean_primary_results(path, cell, par, results, records, options, policy, s
                      for r in results)
     else:
         budget = seconds
+    if budget_limit is not None:
+        budget = min(budget, max(0., budget_limit))
     started = perf_counter()
     deadline = started + budget
     remaining_candidates = 512

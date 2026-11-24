@@ -1,6 +1,6 @@
 # SA Python 运行说明
 
-**当前默认（2026-11-23）：每张图一次120秒总时限，正常候选、失败恢复、安全缩线与正式输出共用；完成就结束。** 正常阶段默认上限95秒，局部救援默认上限15秒；扩距和总线只使用剩余总时间，不额外增加60秒。候选仍只自动尝试2、3。默认生成顶层 `*-formal.svg`（就近标号、GT风格字体、无白圈/虚框、合法局部VDD合并），`flow-result.json` 指向本次正式成品。`--time-seconds 240` 可提高总上限，`--formal-output off` 可关闭正式收尾。下文历史实验的300秒与独立60秒记录保留当时口径，不代表当前默认预算。
+**当前默认（2026-11-24）：候选2、3各自按120秒正常运行＋30秒原候选修复＋30秒局部救援＋30秒1.5倍扩距重试依次执行，再按折角、交叉、信号线长比较合法结果。** 某候选成功就跳过自身后续恢复，但仍尝试另一个主候选；两者都失败才给候选1相同预算，最后才bus（最多60秒）。整图保护上限默认720秒，阶段预算不再按整图时间比例缩放。 见[候选独立预算](docs/candidate-pipeline.md)；下文历史实验时间保留当时口径。
 
 主列与区域前置组织已默认启用（`--branch-layout auto`）：候选2、3先按连接关系组织导通列和局部区域，再由SA在框架内调整；没有器件数量触发门槛，保留现有无源模块与布线插件。用 `--branch-layout off` 关闭；旧JSON、baseline／legacy、显式关闭主列或其他布局实验不隐式叠加。规则及46张实测见[说明](docs/branch-organization.md)。
 
@@ -18,7 +18,7 @@
 
 日常运行与安装命令见 [README.md](README.md)。各脚本和资源的用途见 [docs/project-layout.md](docs/project-layout.md)。
 
-终端独立运行和整批出图见[批量运行说明](docs/batch-flow.md)。`tools/run_dataset.py <目录>`默认每张一次120秒，自动正式出图；显式加`--budget quick`才采用每张先60秒、失败再120秒的验证方式，两者不混用。
+终端独立运行和整批出图见[批量运行说明](docs/batch-flow.md)。批量默认使用相同独立候选预算，整图保护上限720秒，自动正式出图；显式--budget quick仍提供短时整图验证。
 
 当前实现位于 `netlist2schematic/`：`flow/`、`common/`、`netlist/`、`recognition/`、`layout/`、`routing/`、`recovery/`、`postprocess/`、`rendering/` 按主流程职责分类；`plugins/` 保存可选增强及共享关系。根目录保留六个兼容命令入口，旧文件名对应的新路径见 [source_map.json](netlist2schematic/source_map.json)。本地交付包收在 `dist/`，手工笔记收在 `notes/`，日常命令和实验默认值保持原样。
 
@@ -52,4 +52,4 @@ Set-Location D:\gongzuo
 
 另有保守的无源整理 `--passive-embedding auto`，默认关闭：在原成品完成后，用独立5秒尝试一次无源局部重排和重布。MOS/BJT及其他非无源位置、朝向保持；只有线长、交叉、折角均不增加且附件组织改善才采用，否则恢复原图。它兼容默认长列策略，不需要开启旧附件实验；用法及边界见[说明](docs/attachment-integration.md)，本地最终对照为 `output/passive-embedding-goal/safe/index.html`。
 
-普通新网表默认开启 **`--passive-skeleton auto`**：先跑候选2、3，完成有源主列后插入串联、并联及嵌套串并联小模块。两份都失败才在剩余正常预算修复原主候选，不自动运行候选1；成功候选共用原5秒、512案安全缩线后，严格按 **折角少 → 交叉少 → 信号线长短** 选择。结构规整继续用于摆件，原Q分数及旧结构偏好仅作诊断。用 `--passive-skeleton off` 恢复原候选1→2→3生成顺序，最终仍遵守新排序。保存坐标操作和其他显式布局实验不隐式叠加。具体规则见[选图说明](docs/candidate-selection.md)、[候选调度](docs/preferred-candidates.md)与[无源模块插入](docs/passive-modules.md)。
+普通新网表默认开启有源骨架＋无源模块的候选2、3，各自执行120＋30＋30＋30秒流程。两份都失败才尝试候选1，最后bus。合法候选共用5秒、512案安全缩线后，按 **折角少 → 交叉少 → 信号线长短** 选择。显式关闭passive-skeleton保留旧候选1→2→3路径；保存坐标操作不隐式重摆。见[独立候选调度](docs/candidate-pipeline.md)。

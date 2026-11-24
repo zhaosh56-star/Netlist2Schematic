@@ -400,7 +400,7 @@ class SymmetryPublicFlowTests(unittest.TestCase):
                 patch('netlist2schematic.flow.run_flow._finish', return_value='sentinel') as finish, \
                 redirect_stdout(io.StringIO()):
             result = run_flow.run(self.source, iterations=0, fallback='off',
-                                  out_dir=self.root / 'default')
+                                  out_dir=self.root / 'default', passive_skeleton='off')
         self.assertEqual('sentinel', result)
         self.assertEqual('off', normal.call_args.kwargs['symmetry_layout'])
         self.assertEqual('off', finish.call_args.args[0]['requested_symmetry_layout'])

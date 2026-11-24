@@ -1,4 +1,4 @@
-"""Use the remaining normal budget only after both primary poses have failed."""
+"""Recover saved candidate poses without restarting SA; callers own the budget."""
 from copy import deepcopy
 from time import perf_counter
 
@@ -10,17 +10,18 @@ from netlist2schematic.recovery.candidate_rescue import progress
 VERSION='primary-failure-recovery-v1'
 
 
-def rank(candidates):
+def rank(candidates, *, candidate_ids=('2', '3')):
     def key(row):
         checkpoint=row.get('checkpoint')
         done=progress(row)['terminal_fraction'] if checkpoint is not None else 0.
         return (-done,row.get('kind')=='packing',row['candidate_id'], -row.get('attempt_index',0))
-    return sorted((row for row in candidates if row['candidate_id'] in ('2','3')),key=key)
+    return sorted((row for row in candidates if str(row['candidate_id']) in candidate_ids),key=key)
 
 
-def context_for_recovery(candidates):
+def context_for_recovery(candidates, *, candidate_ids=('2', '3')):
     """A reference pose cannot override the primary poses used for recovery."""
-    return next((row for row in rank(candidates) if row.get('context') is not None),None)
+    return next((row for row in rank(candidates, candidate_ids=candidate_ids)
+                 if row.get('context') is not None),None)
 
 
 def _spacing_allowed(context, options, scale):
@@ -36,15 +37,15 @@ def _spacing_allowed(context, options, scale):
     return all(trial.pos_of(i)==placement.pos_of(i) for i in fixed)
 
 
-def repair(candidates, *, deadline):
+def repair(candidates, *, deadline, candidate_ids=('2', '3'), budget_source='unused_normal_budget'):
     """Resume real runtime checkpoints; never read a historical result or rerun SA."""
     from netlist2schematic.flow.run_flow import _try_local_rescue
     from netlist2schematic.recovery.spacing_retry import retry_spacing
     started=perf_counter()
     report=dict(version=VERSION,status='failed',budget_seconds=max(0.,deadline-started),
-        candidate_order=[],attempts=[],source='unused_normal_budget',reference_enabled=False)
+        candidate_order=[],attempts=[],source=budget_source,reference_enabled=False)
     runtime=deepcopy(candidates)
-    queue=rank(runtime)
+    queue=rank(runtime, candidate_ids=candidate_ids)
     # There is one recovery opportunity per primary candidate, not per copy
     # of its checkpoint. Later independent rescue can use any new safe scene.
     unique=[];seen=set()
@@ -122,7 +123,7 @@ def repair(candidates, *, deadline):
             result[4]['routing_stage']='primary_repair'
             result[5][2]['routing_stage']='primary_repair'
             result[4].setdefault('quality',{}).update(selected_candidate=ident,
-                candidate_order=['2','3'],candidate_policy='primary_2_3_then_repair',
+                candidate_order=list(candidate_ids),candidate_policy='primary_2_3_then_repair',
                 reference_fallback_only=False,reference_fallback_used=False,
                 selection_policy='first_verified_primary_repair')
             return result,report,runtime

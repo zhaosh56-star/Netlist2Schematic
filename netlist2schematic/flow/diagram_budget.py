@@ -1,8 +1,11 @@
-"""One cumulative time allowance for a diagram, shared by recovery stages."""
+"""Outer diagram deadline; independent candidate stages allocate their own caps."""
 from math import isfinite
 from time import perf_counter
 
-DEFAULT_SECONDS = 120.0
+# Three possible 120+30+30+30s pipelines, a 60s bus cap, and 30s
+# for parsing, shared cleanup and verified export. Per-stage limits are
+# independent; this is only the outer CLI/process-tree protection.
+DEFAULT_SECONDS = 720.0
 
 
 def validate_seconds(seconds):

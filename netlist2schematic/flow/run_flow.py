@@ -23,6 +23,8 @@ from netlist2schematic.common.sa_saved import load_placement, saved_routing_opti
 from netlist2schematic.routing.orthogonal_router import RoutingFailure
 
 from netlist2schematic.flow.diagram_budget import DiagramBudget, DEFAULT_SECONDS
+from netlist2schematic.flow.candidate_pipeline import (
+    NORMAL_SECONDS, REPAIR_SECONDS, RESCUE_SECONDS, SPACING_SECONDS)
 
 ROUTING_FAILURES = (RoutingFailure, RoutingValidationError)
 DEFAULT_PORT_PREFLIGHT = 'repair'
@@ -33,18 +35,17 @@ DEFAULT_BRANCH_LAYOUT = 'auto'
 def run(path, *, mode='layered', iterations=20000, seed=20261029,
         out_dir=None, cell=None, analog_canvas_root=None, routing_options=None,
         layout_style='structured', quality_seconds=None, candidate_id=None,
-        fallback=None, spacing_scale=1.5, spacing_seconds=60, fallback_seconds=60,
+        fallback=None, spacing_scale=1.5, spacing_seconds=SPACING_SECONDS, fallback_seconds=60,
         local_rescue=None, rescue_seconds=None, simplify_routes='safe', simplify_seconds=5,
         passive_layout='flexible', symmetry_layout='off', structure_layout='off', structure_phase=3,
         candidate_budget='sequential', port_preflight=DEFAULT_PORT_PREFLIGHT, presentation='legacy', net_labels='off',
         region_layout='off', route_tradeoff='strict', readability_layout='off', readability_phase=5,
         attachment_layout='off', column_layout=None, passive_embedding='off', passive_skeleton=None,
         power_rails='off', formal_output='auto', formal_power_rails='auto', branch_layout=None,
-        time_seconds=DEFAULT_SECONDS):
+        time_seconds=DEFAULT_SECONDS, repair_seconds=REPAIR_SECONDS):
     budget = DiagramBudget(time_seconds)
-    scale = time_seconds / DEFAULT_SECONDS if time_seconds else 1.
-    quality_seconds = 95. * scale if quality_seconds is None else quality_seconds
-    rescue_seconds = 15. * scale if rescue_seconds is None else rescue_seconds
+    quality_seconds = NORMAL_SECONDS if quality_seconds is None else quality_seconds
+    rescue_seconds = RESCUE_SECONDS if rescue_seconds is None else rescue_seconds
     _validate_simplification(simplify_routes, simplify_seconds)
     # Keep room for shared shortening, verified saving, typography and VDD.
     finishing_reserve = (35. if simplify_seconds == 'auto' else max(0., simplify_seconds)+5.)
@@ -108,6 +109,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
         raise ValueError('fallback only cannot be combined with candidate_id')
     for name, value, minimum, inclusive in (
             ('quality_seconds', quality_seconds, 0, False),
+            ('repair_seconds', repair_seconds, 0, True),
             ('spacing_scale', spacing_scale, 1, False),
             ('spacing_seconds', spacing_seconds, 0, True),
             ('fallback_seconds', fallback_seconds, 0, False)):
@@ -139,6 +141,29 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
                 raise _time_budget_failure(budget, stages)
             result = _bus_result(source, cell, seed, options, available, stages,
                                  trigger='forced')
+        elif (mode == 'layered' and layout_style == 'structured'
+              and passive_skeleton == 'auto' and candidate_id is None):
+            from netlist2schematic.flow.candidate_pipeline import run_candidates
+            def normal_candidate(identifier, seconds):
+                return _normal_result(source, par, mode, layout_style, cell, iterations,
+                    seed, seconds, identifier, options, passive_layout=passive_layout,
+                    symmetry_layout=symmetry_layout, structure_layout=structure_layout,
+                    structure_phase=structure_phase, candidate_budget='sequential',
+                    port_preflight=port_preflight, region_layout=region_layout,
+                    readability_layout=readability_layout, readability_phase=readability_phase,
+                    route_tradeoff=route_tradeoff, attachment_layout=attachment_layout,
+                    branch_layout=branch_layout, passive_skeleton=passive_skeleton,
+                    column_layout=column_layout, simplify_policy='off',
+                    capture_failed_candidate=True)
+            result = run_candidates(source, par, normal_candidate, budget=budget, stages=stages,
+                check_source=lambda: _check_source(source, source_hash), cell=cell, seed=seed,
+                options=options, normal_seconds=quality_seconds, repair_seconds=repair_seconds,
+                rescue_seconds=rescue_seconds, spacing_seconds=spacing_seconds,
+                spacing_scale=spacing_scale, fallback_seconds=fallback_seconds,
+                fallback_policy=policy, rescue_policy=rescue_policy,
+                finishing_reserve=finishing_reserve, simplify_policy=simplify_routes,
+                simplify_seconds=simplify_seconds, route_tradeoff=route_tradeoff,
+                branch_layout=branch_layout)
         else:
             started = perf_counter()
             try:
@@ -393,7 +418,8 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    candidate_budget='sequential',port_preflight='off', region_layout='off',
                    readability_layout='off', readability_phase=5, route_tradeoff='strict',
                    attachment_layout='off', column_layout='off', passive_skeleton='off',
-                    simplify_policy='safe', simplify_seconds=5, branch_layout='off'):
+                    simplify_policy='safe', simplify_seconds=5, branch_layout='off',
+                    capture_failed_candidate=False):
     if mode == 'layered' and layout_style == 'structured':
         from netlist2schematic.flow.aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
@@ -409,6 +435,7 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                              **({'passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
                              **({'simplify_policy':simplify_policy,'simplify_seconds':simplify_seconds}
                                 if passive_skeleton=='auto' else {}),
+                             **({'capture_failed_candidate':True} if capture_failed_candidate else {}),
                              **({'column_layout': column_layout} if column_layout != 'off' else {}))
     elif mode == 'layered':
         layered = load_local('place_layered', 'place-layered.py')
@@ -1213,15 +1240,17 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--passive-embedding', choices=('off', 'auto'), default='off',
                         help='Try one reversible passive-only layout/routing improvement after a legal result; default off')
     parser.add_argument('--passive-skeleton',choices=('off','auto'),default=None,
-                        help='Active-first passive modules; default auto for new structured/flexible layouts, off for saved/legacy/other experiments. Try 2/3 first, then failure-only repair within remaining time')
+                        help='Active-first passive modules; default auto. Finish independent 2/3 pipelines, compare valid drawings; only then try 1 if both fail')
     parser.add_argument('--structure-phase', type=int, choices=(1, 2, 3), default=3,
                         help='Replay a structure rollout phase; ignored when structure-layout is off')
     parser.add_argument('--time-seconds', type=float, default=DEFAULT_SECONDS,
-                        help='Total per-diagram CLI limit including recovery and formal export (default 120; 0 disables)')
+                        help='Outer per-diagram safety limit (default 720); independent candidate stage caps still apply; 0 disables this outer limit')
     parser.add_argument('--quality-seconds', type=float, default=None,
-                        help='Normal-stage cap inside the total limit (default 95 of 120 seconds)')
+                        help='Normal layout/SA/routing seconds per candidate (default 120)')
+    parser.add_argument('--repair-seconds', type=float, default=REPAIR_SECONDS,
+                        help='Additional original-pose repair seconds per candidate (default 30; 0 skips)')
     parser.add_argument('--candidate-budget',choices=('sequential','reserved'),default='sequential',
-                        help='Old-path sequential or 70/85/100 cutoffs; default primary IDs 2/3 retain 40/80 cutoffs and use unused normal time for failure-only repair')
+                        help='Cutoff policy for the old non-skeleton path; default skeleton flow uses independent per-candidate budgets')
     parser.add_argument('--port-preflight',choices=('off','repair'),default=None,
                         help='Repair fixed-port/marker conflicts before routing; default: repair for netlists, off for saved layouts')
     parser.add_argument('--presentation',choices=('legacy','clean'),
@@ -1241,7 +1270,7 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--local-rescue', choices=('auto', 'off'),
                         help='Failure-only local routing; defaults to fallback policy, off for saved rerouting')
     parser.add_argument('--rescue-seconds', type=float, default=None,
-                        help='Local-rescue cap inside the total limit (default 15 of 120 seconds)')
+                        help='Additional local-rescue seconds per candidate (default 30)')
     parser.add_argument('--simplify-routes', choices=('safe', 'off'), default='safe')
     parser.add_argument('--route-tradeoff', choices=('strict', 'balanced'), default='strict',
                         help='Allow at most two sparse extra crossings for substantial shortening; default strict')
@@ -1249,7 +1278,8 @@ def main(argv=None, default_mode='layered'):
     parser.add_argument('--simplify-seconds', type=parse_simplify_seconds, default=5,
                         help='Fixed non-negative seconds, or auto (5-30s); default: 5')
     parser.add_argument('--spacing-scale', type=float, default=1.5)
-    parser.add_argument('--spacing-seconds', type=float, default=60)
+    parser.add_argument('--spacing-seconds', type=float, default=SPACING_SECONDS,
+                        help='Additional spacing retry seconds per candidate (default 30)')
     parser.add_argument('--fallback-seconds', type=float, default=60)
     parser.add_argument('--iterations', type=int, default=20000)
     parser.add_argument('--seed', type=int, default=20261029)
@@ -1349,6 +1379,7 @@ def main(argv=None, default_mode='layered'):
                 presentation=args.presentation or 'legacy',
                 fallback=args.fallback, spacing_scale=args.spacing_scale,
                 spacing_seconds=args.spacing_seconds, fallback_seconds=args.fallback_seconds,
+                repair_seconds=args.repair_seconds,
                 local_rescue=args.local_rescue, rescue_seconds=args.rescue_seconds,
                 simplify_routes=args.simplify_routes, simplify_seconds=args.simplify_seconds,
                 net_labels=args.net_labels, route_tradeoff=args.route_tradeoff,

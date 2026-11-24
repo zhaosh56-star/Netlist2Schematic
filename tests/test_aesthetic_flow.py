@@ -322,8 +322,11 @@ class AestheticSavedFlowTests(unittest.TestCase):
         diagnostic = json.loads((destination / 'routing-diagnostics.json').read_text(encoding='utf-8'))
         self.assertEqual('sa-routing-v1', diagnostic['diagnostic_format'])
         self.assertFalse(diagnostic['valid'])
-        self.assertEqual('time_budget', diagnostic['diagnostics']['reason'])
-        self.assertEqual([], diagnostic['diagnostics']['candidates'])
+        self.assertEqual('candidate_pipelines_failed', diagnostic['diagnostics']['reason'])
+        attempts = diagnostic['diagnostics']['candidate_pipeline']['candidates']
+        self.assertEqual(['2', '3'], [row['candidate_id'] for row in attempts])
+        self.assertTrue(all(row['stages'][0]['diagnostics']['reason'] == 'time_budget'
+                            for row in attempts))
         self.assertEqual(str(self.source.resolve()), diagnostic['source_netlist'])
         self.assertEqual(self.original, self.source.read_bytes())
 
@@ -382,7 +385,7 @@ class AestheticSavedFlowTests(unittest.TestCase):
             run_flow.main([str(self.source), '--candidate-id', '2', '--iterations', '0'])
         self.assertEqual('structured', run.call_args.kwargs['layout_style'])
         self.assertIsNone(run.call_args.kwargs['quality_seconds'])
-        self.assertEqual(120, run.call_args.kwargs['time_seconds'])
+        self.assertEqual(720, run.call_args.kwargs['time_seconds'])
         self.assertEqual('2', run.call_args.kwargs['candidate_id'])
 
 

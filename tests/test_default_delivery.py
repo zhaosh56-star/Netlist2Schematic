@@ -20,7 +20,7 @@ from netlist2schematic.plugins.formal_output import formal_output as formal
 class DiagramBudgetTests(unittest.TestCase):
     def test_later_stages_share_the_original_deadline(self):
         now = [10.]
-        budget = DiagramBudget(clock=lambda: now[0])
+        budget = DiagramBudget(120, clock=lambda: now[0])
         self.assertEqual(95., budget.allocate('normal', 95., reserve=10))
         now[0] += 90
         self.assertEqual(15., budget.allocate('rescue', 15., reserve=10))
@@ -37,7 +37,7 @@ class DiagramBudgetTests(unittest.TestCase):
         now[0] = 3.
         self.assertEqual(3., budget.snapshot()['elapsed_seconds'])
         self.assertEqual([], budget.snapshot()['stages'])
-        self.assertEqual(117., budget.remaining())
+        self.assertEqual(717., budget.remaining())
 
     def test_zero_explicitly_disables_the_total_cap_and_invalid_values_fail(self):
         budget = DiagramBudget(0)
@@ -50,7 +50,9 @@ class DiagramBudgetTests(unittest.TestCase):
         with patch.object(run_flow, 'run', return_value={}) as execute:
             self.assertEqual(0, run_flow.main(['input.cir']))
         values = execute.call_args.kwargs
-        self.assertEqual(120., values['time_seconds'])
+        self.assertEqual(720., values['time_seconds'])
+        self.assertEqual(30., values['repair_seconds'])
+        self.assertEqual(30., values['spacing_seconds'])
         self.assertIsNone(values['quality_seconds'])
         self.assertIsNone(values['rescue_seconds'])
         self.assertEqual('auto', values['formal_output'])
@@ -113,8 +115,8 @@ class DefaultFormalDeliveryTests(unittest.TestCase):
         self.assertEqual(sha256(primary.read_bytes()).hexdigest(), info['display']['svg_sha256'])
         saved = output/'local-placement.json'
         self.assertEqual(sha256(saved.read_bytes()).hexdigest(), info['native_sha256'])
-        self.assertEqual(120., data['time_budget']['limit_seconds'])
-        self.assertEqual(95., data['time_budget']['stages'][0]['allocated_seconds'])
+        self.assertEqual(720., data['time_budget']['limit_seconds'])
+        self.assertEqual(120., data['time_budget']['stages'][0]['allocated_seconds'])
         self.assertEqual(original, self.source.read_bytes())
         manifest = json.loads(Path(info['display']['record']).read_text(encoding='utf8'))
         self.assertTrue(manifest['validation']['valid'])
