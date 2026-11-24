@@ -26,6 +26,7 @@ def main(argv=None):
     if not checked['valid']:
         raise ValueError('Core layout failed independent verification')
     scene = build_scene(par, nets, placement, index, options=options)
+    escapes = {(pin.component,pin.pin):pin.escape for group in scene.pins.values() for pin in group}
     profile = json.loads(args.profile.read_text(encoding='utf-8'))
     objects, power = [], []
     for component in comps:
@@ -36,7 +37,8 @@ def main(argv=None):
         objects.append(dict(engine_id=cid, instance_id=profile['components'][cid]['instance_id'],
             position=dict(x=x, y=y), rotation=geometry['rotation'], mirror=geometry['mirror'],
             pins=[dict(name=pin, net=net, at=list(placement.pin_world(number, pin)),
-                       direction=placement.pin_dir(number, pin))
+                       direction=placement.pin_dir(number, pin),
+                       **({'escape':list(escapes[number,pin])} if (number,pin) in escapes else {}))
                   for pin, net in component['nodes'].items()]))
     if scene.power_connections is not None:
         for record in scene.power_connections:

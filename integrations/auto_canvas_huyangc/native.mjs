@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { registerProjectSources } from './source-loader.mjs';
 import { markerSeats } from './native-marker-seats.mjs';
+import { verifyVisibleRouting } from './visible-routing.mjs';
 
 const [operation, ...args] = process.argv.slice(2);
 const flags = new Map();
@@ -131,8 +132,15 @@ if (operation === 'snapshot') {
   const beforeGraph = projectElectricalGraph(project);
   const afterGraph = projectElectricalGraph(next);
   if (beforeGraph.status !== 'ready' || afterGraph.status !== 'ready' ||
-      compareElectricalGraphs(beforeGraph.graph, afterGraph.graph) !== 'equal')
-    throw new Error('NATIVE_ELECTRICAL_EQUIVALENCE_FAILED: ' + JSON.stringify({before:beforeGraph,after:afterGraph}));
+      compareElectricalGraphs(beforeGraph.graph, afterGraph.graph) !== 'equal') {
+    const failure={status:'failed',code:'NATIVE_ELECTRICAL_EQUIVALENCE_FAILED',documentId,
+      message:'Native electrical connectivity or exported terminal order changed; the drawing was preserved.',
+      details:{beforeStatus:beforeGraph.status,afterStatus:afterGraph.status,
+        beforePorts:beforeGraph.graph?.labels.filter(s=>s.startsWith('port:')),
+        afterPorts:afterGraph.graph?.labels.filter(s=>s.startsWith('port:'))}};
+    if(flags.has('--report'))writeFileSync(resolve(flags.get('--report')),JSON.stringify(failure,null,2)+'\n');
+    throw new Error(failure.code+': '+failure.message);
+  }
   const beforeCell=projectElectricalGraph({...project,topDocumentId:documentId});
   const afterCell=projectElectricalGraph({...next,topDocumentId:documentId});
   if (beforeCell.status!=='ready' || afterCell.status!=='ready' ||
@@ -163,6 +171,7 @@ if (operation === 'snapshot') {
   const audit = auditModule.auditRouting(saved, savedResolver);
   if (audit.unsafeProblems.length)
     throw new Error('NATIVE_ROUTE_AUDIT_FAILED: ' + JSON.stringify(audit.unsafeProblems));
+  const visibleSignals=verifyVisibleRouting(saved,savedResolver,plan,derived);
   let svg;
   if (flags.has('--svg')) {
     const { renderDocumentSvg } = await import('@icm/render-svg');
@@ -177,6 +186,7 @@ if (operation === 'snapshot') {
     originalInstancesPreserved: true, modelParametersPreserved: true,
     unselectedDocumentsPreserved:true,
     exactPinGeometry: true, roundtripVerified: true, nativeAudit: audit,
+    visibleSignals,
     powerInterfacePresentationChanges:plan.symbolOverrides || [],
     nativeMarkerSeats:{actions:seating.actions,attempts:seating.attempts,transactions:seating.transactions} };
   if (flags.has('--report')) writeFileSync(resolve(flags.get('--report')), JSON.stringify(report,null,2)+'\n');

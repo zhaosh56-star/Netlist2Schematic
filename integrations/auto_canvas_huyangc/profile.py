@@ -94,13 +94,13 @@ def compile_snapshot(snapshot):
             alias = 'vee'
         elif hint and hint.casefold() == '0':
             alias = '0'
-        elif group.get('powerDomain') == 'ground' or snapshot.get('netRoles', {}).get(net['id']) == 'ground':
+        elif group.get('powerDomain') == 'ground':
             preferred = hint.casefold() if hint else None
             alias = (preferred if preferred in LOW_ALIASES and preferred not in used else
                      next((n for n in LOW_ALIASES if n not in used), None))
             if alias is None:
                 raise ValueError('Too many distinct low supply rails for the engine vocabulary')
-        elif group.get('powerDomain') == 'vdd' or snapshot.get('netRoles', {}).get(net['id']) == 'supply' or (hint and hint.casefold() in
+        elif group.get('powerDomain') == 'vdd' or (hint and hint.casefold() in
                  ('vdd', 'vcc', 'avdd', 'dvdd', 'vpwr', 'vdd!', 'vcc!')):
             preferred = hint.casefold() if hint else None
             alias = (preferred if preferred in POSITIVE_ALIASES and preferred not in used else

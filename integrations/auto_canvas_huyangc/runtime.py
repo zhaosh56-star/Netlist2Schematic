@@ -5,9 +5,10 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+from time import monotonic
 
 
-def run_bounded(command, *, seconds, **kwargs):
+def run_bounded(command, *, seconds, cancel_event=None, **kwargs):
     options = dict(kwargs)
     if os.name == 'nt':
         options.setdefault('creationflags', getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -30,7 +31,21 @@ def run_bounded(command, *, seconds, **kwargs):
         process.wait()
 
     try:
-        return process.wait(timeout=seconds)
+        if cancel_event is None:
+            return process.wait(timeout=seconds)
+        deadline = monotonic() + seconds
+        while True:
+            if cancel_event.is_set():
+                stop()
+                return 130
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                stop()
+                return 124
+            try:
+                return process.wait(timeout=min(remaining, 0.2))
+            except subprocess.TimeoutExpired:
+                pass
     except subprocess.TimeoutExpired:
         stop()
         return 124

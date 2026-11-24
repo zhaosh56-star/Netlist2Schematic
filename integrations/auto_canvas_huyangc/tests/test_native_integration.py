@@ -35,6 +35,7 @@ class NativeIntegrationTests(unittest.TestCase):
             'cs':cls.target/'netlists/native-common-source/circuit.spi',
             'bjt':ADAPTER_ROOT/'tests/fixtures/bjt-dual-negative.spi',
             'ports':ADAPTER_ROOT/'tests/fixtures/multi-cell.spi',
+            'ordered':ADAPTER_ROOT/'tests/fixtures/ordered-supply-ports.spi',
         }
         for name,source in sources.items():
             project=cls.root/(name+'.icproj.json')
@@ -74,6 +75,10 @@ class NativeIntegrationTests(unittest.TestCase):
                 self.assertTrue(report['validation']['electricalEquivalent'])
                 self.assertTrue(report['validation']['roundtripVerified'])
                 self.assertEqual(report['validation']['nativeAudit']['unsafeProblems'],[])
+                visible=report['validation']['visibleSignals']
+                self.assertTrue(visible['checked'])
+                self.assertTrue(all(n['connected'] and n['coreCovered'] and
+                                    n['cycles']<=n['originalCycles'] for n in visible['nets']))
                 self.assertTrue(Path(report['native_svg']).is_file())
                 manifest=json.loads((args.out_dir/'private/engine/engine-snapshot.json').read_text(encoding='utf-8'))
                 self.assertFalse(manifest['source_code_modified'])
@@ -92,6 +97,20 @@ class NativeIntegrationTests(unittest.TestCase):
         self.assertTrue({'0','vee','vss'} <= set(profile['net_names'].values()))
         plan=json.loads((args.out_dir/'native-plan.json').read_text(encoding='utf-8'))
         self.assertEqual(sum(m['style']=='negative-cap' for m in plan['powerMarkers']),2)
+        self.assertTrue(report['validation']['electricalEquivalent'])
+
+    def test_supply_glyphs_do_not_promote_or_reorder_formal_ports(self):
+        _,args,report=self.results['ordered']
+        snapshot=json.loads((args.out_dir/'private/native-snapshot.json').read_text(encoding='utf8'))
+        before=next(d for d in snapshot['project']['documents'] if d['id']==snapshot['documentId'])
+        after_file=json.loads(Path(report['native_project']).read_text(encoding='utf8'))
+        after=next(d for d in after_file['documents'] if d['id']==before['id'])
+        self.assertEqual(before['netlist']['terminals'],after['netlist']['terminals'])
+        self.assertEqual(report['validation']['powerInterfacePresentationChanges'],[])
+        plan=json.loads((args.out_dir/'native-plan.json').read_text(encoding='utf8'))
+        protected={t['netId'] for t in before['netlist']['terminals']}
+        self.assertFalse(any(e['kind']=='upsert_connectivity_evidence' and
+            e['evidence'].get('netId') in protected for e in plan['edits']))
         self.assertTrue(report['validation']['electricalEquivalent'])
 
     def test_source_revision_and_model_version_tampering_are_refused(self):
@@ -123,12 +142,34 @@ class NativeIntegrationTests(unittest.TestCase):
             run(args)
         self.assertEqual(original,Path(report['native_project']).read_bytes())
 
+    def test_missing_signal_route_is_not_hidden_by_logical_net_membership(self):
+        project,args,_=self.results['rc']
+        plan=json.loads((args.out_dir/'native-plan.json').read_text(encoding='utf8'))
+        removed=next(e for e in plan['edits'] if e['kind']=='set_route_path' and
+                     e['route']['netId'] in plan['signalGeometry'])
+        plan['edits'].remove(removed)
+        path=self.root/'missing-visible-route.json'
+        path.write_text(json.dumps(plan),encoding='utf8')
+        output=self.root/'missing-visible-route.icproj.json'
+        result=self.native('apply',project,output,['--plan',path],expected=1)
+        self.assertRegex(result.stderr,'NATIVE_(VISIBLE_SIGNAL_DISCONNECTED|CORE_SIGNAL_REMOVED|ROUTE_AUDIT_FAILED)')
+        self.assertFalse(output.exists())
+
     def test_formal_interface_and_unselected_cells_are_preserved(self):
         project,args,report=self.results['ports']
-        self.assertEqual(len(report['validation']['powerInterfacePresentationChanges']),2)
+        self.assertEqual(report['validation']['powerInterfacePresentationChanges'],[])
         snap=json.loads((args.out_dir/'private/native-snapshot.json').read_text(encoding='utf-8'))
         selected=next(d for d in snap['project']['documents'] if d['id']==snap['documentId'])
         self.assertEqual({p['name'] for p in selected['netlist']['terminals']},{'inp','out','vdd','vss'})
+        roundtrip=self.root/'ports-after-native-snapshot.json'
+        self.native('snapshot',Path(report['native_project']),roundtrip,['--document-id',selected['id']])
+        result=json.loads(roundtrip.read_text(encoding='utf8'))
+        after_selected=next(d for d in result['project']['documents'] if d['id']==selected['id'])
+        for interface in selected['netlist']['terminals']:
+            for ident in interface['interfaceInstanceIds']:
+                before=next(i for i in selected['instances'] if i['id']==ident)
+                after=next(i for i in after_selected['instances'] if i['id']==ident)
+                self.assertEqual(before['symbolId'],after['symbolId'])
         original=json.loads(project.read_text(encoding='utf-8'))
         after=json.loads(Path(report['native_project']).read_text(encoding='utf-8'))
         self.assertGreater(len(original['documents']),1)
@@ -136,6 +177,32 @@ class NativeIntegrationTests(unittest.TestCase):
             if before['id']==snap['documentId']:continue
             copy=next(d for d in after['documents'] if d['id']==before['id'])
             self.assertEqual(before,copy)
+
+    def test_browser_model_and_final_edits_use_one_verified_native_transaction(self):
+        for name,(project,args,report) in self.results.items():
+            with self.subTest(name=name):
+                snapshot=json.loads((args.out_dir/'private/native-snapshot.json').read_text(encoding='utf8'))
+                request=dict(type='plan',runId=4,project=snapshot['project'],documentIds=[snapshot['documentId']])
+                payload=self.root/(name+'-browser-request.json')
+                payload.write_bytes(json.dumps(request).encode('utf8'))
+                converted=self.root/(name+'-browser-source.icproj.json')
+                prefix=[self.node,'--experimental-transform-types',str(ADAPTER_ROOT/'web-native.mjs')]
+                shared=['--project-root',str(self.target),'--runtime',str(RUNTIME)]
+                first=subprocess.run(prefix+['input',*shared,'--input',str(payload),'--output',str(converted)],
+                    capture_output=True,text=True,encoding='utf8',timeout=60)
+                self.assertEqual(first.returncode,0,first.stderr)
+                self.assertEqual(converted.read_bytes(),project.read_bytes())
+                result=self.root/(name+'-browser-edits.json')
+                command=prefix+['result',*shared,'--input',str(converted),'--output',str(result),
+                    '--plan',str(args.out_dir/'native-plan.json'),'--validation',str(args.out_dir/'native-validation.json'),
+                    '--expected',report['native_project']]
+                checked=subprocess.run(command,capture_output=True,text=True,encoding='utf8',timeout=60)
+                self.assertEqual(checked.returncode,0,checked.stderr)
+                data=json.loads(result.read_text(encoding='utf8'))
+                self.assertTrue(data['validation']['atomicTransaction'])
+                self.assertTrue(data['validation']['electricalEquivalent'])
+                self.assertTrue(data['validation']['visibleSignals']['checked'])
+                self.assertEqual(data['documentId'],snapshot['documentId'])
 
 
 if __name__=='__main__':unittest.main()

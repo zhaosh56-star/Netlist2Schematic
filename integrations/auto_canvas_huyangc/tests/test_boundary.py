@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from integrations.auto_canvas_huyangc.bootstrap_runtime import lock_entry
-from integrations.auto_canvas_huyangc.native_plan import native_routes, build_plan
+from integrations.auto_canvas_huyangc.native_plan import native_routes, build_plan, attach_to_last_contact, continuation_exit
 from integrations.auto_canvas_huyangc.profile import compile_snapshot, stage_engine, canonical_geometry
 from integrations.auto_canvas_huyangc.runtime import run_bounded
 
@@ -98,6 +98,29 @@ class WireConversionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.routes([((0,0),(10,0)),((10,0),(10,10)),((10,10),(0,10)),((0,10),(0,0))],{})
 
+    def test_port_branch_reuses_last_same_net_contact_in_four_directions(self):
+        tree=[((0,0),(0,30)),((0,20),(50,20))]
+        path=[(0,30),(0,24),(24,24),(24,-10)]
+        for rotation in (0,90,180,270):
+            def pose(p):
+                x,y=p
+                for _ in range(rotation//90):x,y=-y,x
+                return (x+100,y-200)
+            with self.subTest(rotation=rotation):
+                result=attach_to_last_contact([pose(p) for p in path],
+                    [[pose(a),pose(b)] for a,b in tree])
+                self.assertEqual(result,[pose((24,20)),pose((24,-10))])
+
+    def test_compatibility_escape_preserves_existing_terminal_stub(self):
+        for direction in ((1,0),(-1,0),(0,1),(0,-1)):
+            end=(direction[0]*18,direction[1]*18)
+            self.assertEqual(continuation_exit((0,0),direction,[[(0,0),end]]),end)
+
+    def test_collinear_tree_reuse_does_not_depend_on_slicing(self):
+        path=[(0,0),(40,0),(40,30)]
+        self.assertEqual(attach_to_last_contact(path,[[(0,0),(60,0)]]),
+                         attach_to_last_contact(path,[[(0,0),(20,0)],[(20,0),(60,0)]]))
+
 
 class NativeProfileTests(unittest.TestCase):
     def test_id_mapping_parameters_and_original_snapshot_are_preserved(self):
@@ -107,6 +130,39 @@ class NativeProfileTests(unittest.TestCase):
         self.assertEqual(profile['net_names'],{'a':'input','b':'output'})
         self.assertEqual(profile['components']['R1']['instance_id'],'R-original')
         self.assertIn('12k',profile['netlist'])
+
+    def test_unclassified_dc_driver_is_not_renamed_to_a_supply(self):
+        source=snapshot()
+        source['logicalNets'][0]['name']=None
+        source['project']['documents'][0]['connectivityEvidence']=[
+            dict(kind='net-name-hint',netId='a',sourceName='net12')]
+        source['netRoles']={'a':'supply'}
+        profile=compile_snapshot(source)
+        self.assertEqual(profile['net_names']['a'],'net12')
+        source['logicalNets'][0]['powerDomain']='vdd'
+        self.assertEqual(compile_snapshot(source)['net_names']['a'],'vdd')
+
+    def test_ground_formal_keeps_its_interface_symbol_and_domain(self):
+        source=snapshot();doc=source['project']['documents'][0]
+        source['logicalNets'][0].update(name='0',powerDomain='ground')
+        pin=dict(name='P',at=dict(x=0,y=0),landing=dict(x=0,y=0),direction='east')
+        shape=dict(id='port',viewBox=dict(x=-14,y=-7,width=18,height=14),
+                   pins=[{k:v for k,v in pin.items() if k!='landing'}],primitives=[])
+        source['symbols']['formal']=dict(definition=shape,pins=[pin],variant=None)
+        doc['instances'].append(dict(id='formal',symbolId='port',placement=None))
+        doc['nets'][0]['terminals'].append(dict(instanceId='formal',pinName='P'))
+        doc['netlist']=dict(name='cell',formalParameters=[],terminals=[dict(
+            id='formal-decl',name='gnda',direction='passive',netId='a',interfaceInstanceIds=['formal'])])
+        profile=compile_snapshot(source)
+        wire=dict(validation=dict(valid=True),metrics={},components=[dict(instance_id='R-original',
+            position=dict(x=100,y=100),rotation=0,mirror='none',
+            pins=[dict(name='1',net='0',at=[100,80]),dict(name='2',net='output',at=[100,120])])],
+            power=[dict(component_id='R1',pin='1',net='0',symbol='ground',anchor=[100,160],
+                        origin=[100,170],segments=[[[100,80],[100,160]]])],routes={})
+        plan=build_plan(source,profile,wire)
+        self.assertEqual(plan['symbolOverrides'],[])
+        self.assertTrue(any(e['kind']=='place_instance' and e['instanceId']=='formal' for e in plan['edits']))
+        self.assertFalse(any(e['kind']=='upsert_connectivity_evidence' for e in plan['edits']))
 
     def test_ground_and_negative_supply_are_not_merged(self):
         source=snapshot();source['logicalNets'][0]['name']='0';source['logicalNets'][1]['name']='VEE'

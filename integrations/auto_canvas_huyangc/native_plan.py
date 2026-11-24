@@ -26,6 +26,46 @@ def on_segment(p, a, b):
             (a[1] == b[1] == p[1] and min(a[0], b[0]) <= p[0] <= max(a[0], b[0])))
 
 
+def continuation_exit(source, direction, segments):
+    """Compatibility for older geometry exports without explicit Pin.escape."""
+    candidates=[]
+    for a,b in segments:
+        a,b=point(a),point(b)
+        if not on_segment(source,a,b):
+            continue
+        for p in (a,b):
+            delta=(p[0]-source[0],p[1]-source[1])
+            if delta[0]*direction[1] == delta[1]*direction[0] and sum(x*y for x,y in zip(delta,direction))>0:
+                candidates.append(p)
+    return min(candidates,key=lambda p:abs(p[0]-source[0])+abs(p[1]-source[1])) if candidates else source
+
+
+def attach_to_last_contact(path, existing):
+    """Only add the suffix after the last meeting with the existing same-net tree.
+
+    Keeping a prefix that leaves and rejoins that tree creates a wire loop.
+    Collinear overlap counts as contact, independently of segment slicing.
+    """
+    path=[point(p) for p in path]
+    path=[p for i,p in enumerate(path) if not i or p!=path[i-1]]
+    last=None
+    for i,(a,b) in enumerate(zip(path,path[1:])):
+        contacts=[]
+        for c,d in existing:
+            c,d=point(c),point(d)
+            contacts.extend(p for p in (a,b,c,d) if on_segment(p,a,b) and on_segment(p,c,d))
+            if (a[0]==b[0])!=(c[0]==d[0]):
+                p=(a[0],c[1]) if a[0]==b[0] else (c[0],a[1])
+                if on_segment(p,a,b) and on_segment(p,c,d):contacts.append(p)
+        if contacts:
+            last=(i,max(contacts,key=lambda p:abs(p[0]-a[0])+abs(p[1]-a[1])))
+    if last is None:
+        raise ValueError('The formal port extension does not meet its original signal tree')
+    i,contact=last
+    result=[contact,*path[i+1:]]
+    return [p for i,p in enumerate(result) if not i or p!=result[i-1]]
+
+
 def native_routes(net_id, segments, contacts):
     """Split only same-net intersections; compress degree-two paths into bends."""
     lines = [(point(a), point(b)) for a, b in segments if a != b]
@@ -126,6 +166,7 @@ def build_plan(snapshot, profile, wire_plan):
     edits.extend(dict(kind='remove_route_geometry', routeId=r['id']) for r in doc['routes'])
     edits.extend(dict(kind='remove_junction', junctionId=j['id']) for j in doc['junctions'])
     expected_pins, power_markers, symbol_overrides = [], [], []
+    pin_escapes = []
     native_nets = {alias: net_id for net_id, alias in profile['net_names'].items()}
     contacts = defaultdict(lambda: defaultdict(list))
     signal_routes = deepcopy(wire_plan['routes'])
@@ -167,6 +208,9 @@ def build_plan(snapshot, profile, wire_plan):
             endpoint = dict(kind='terminal', instanceId=ident, pinName=pin['name'])
             p = point(pin['at'])
             expected_pins.append(dict(endpoint=endpoint, position=dict(x=p[0], y=p[1])))
+            if 'escape' in pin:
+                escape=point(pin['escape'])
+                pin_escapes.append(dict(endpoint=endpoint,position=dict(x=escape[0],y=escape[1])))
             if pin['net'] in native_nets:
                 contacts[pin['net']][p].append(endpoint)
                 hosts[pin['net']].append(dict(component=component, pin=pin))
@@ -174,8 +218,50 @@ def build_plan(snapshot, profile, wire_plan):
     for marker in profile['markers']:
         pools[marker['net_id']].append(marker)
     power_routes = defaultdict(list)
+    deferred_labels = []
+    # Native export orders formal pins by their electrical power domains.
+    # A decorative cap must never promote another formal Net to VDD:
+    # that changes the positional Cell contract even if every wire is intact.
+    logical_groups = {n:g for g in snapshot.get('logicalNets', []) for n in g['baseNetIds']}
+    protected_formals = {t['netId'] for t in doc.get('netlist', {}).get('terminals', [])
+                         if logical_groups.get(t['netId'], {}).get('powerDomain', 'none') != 'vdd'}
     for item in wire_plan['power']:
         net_id = native_nets[item['net']]
+        if net_id in protected_formals:
+            p = point(item['anchor'])
+            power_routes[item['net']].extend(item['segments'])
+            if pools[net_id]:
+                marker = pools[net_id].pop(0)
+                ident = marker['instance_id']
+                if not marker.get('interface'):
+                    raise ValueError('An unclassified existing power marker needs explicit native power evidence')
+                pin = snapshot['symbols'][ident]['pins'][0]
+                toward = next((point(b if point(a)==p else a) for a,b in item['segments']
+                               if p in (point(a),point(b))), None)
+                vectors = {'east':(1,0),'west':(-1,0),'north':(0,-1),'south':(0,1)}
+                direction = ((toward[0]>p[0])-(toward[0]<p[0]),
+                             (toward[1]>p[1])-(toward[1]<p[1])) if toward else (0,1)
+                rotation = next(r for r in (0,90,180,270)
+                                if transform(vectors[pin['direction']],r,'none')==direction)
+                local = transform((pin['at']['x'],pin['at']['y']),rotation,'none')
+                place(ident,dict(x=p[0]-local[0],y=p[1]-local[1]),rotation,'none')
+                endpoint = dict(kind='terminal',instanceId=ident,pinName=pin['name'])
+                contacts[item['net']][p].append(endpoint)
+                expected_pins.append(dict(endpoint=endpoint,position=dict(x=p[0],y=p[1])))
+                power_markers.append(dict(instanceId=ident,pinName=pin['name'],netId=net_id,
+                                          style='formal-power-port'))
+            else:
+                # The original Base Net already carries electrical identity.
+                # A junction with a bound name draws a local named supply stub
+                # without introducing a new power-domain/name claim.
+                junction = stable_id('junction',[net_id,p])
+                deferred_labels.append(dict(kind='upsert_schematic_annotation',annotation=dict(
+                    id=stable_id('label',[junction,'net-label']),kind='net-label',netId=net_id,
+                    binding=dict(kind='net-name',netId=net_id),
+                    anchor=dict(kind='object',objectId=junction,localOffset=dict(x=12,y=-8),
+                                fallbackPosition=dict(x=p[0]+12,y=p[1]-8)),
+                    alignment='start',rotation=0,locked=False)))
+            continue
         canonical = item['symbol']
         # The engine can draw VSS as a ground-style glyph while keeping its
         # Net distinct from 0. Native Ground has stronger node-0 semantics;
@@ -280,11 +366,12 @@ def build_plan(snapshot, profile, wire_plan):
         expected_pins.append(dict(endpoint=endpoint,position=dict(x=anchor[0],y=anchor[1])))
         contacts[alias][point(anchor)].append(endpoint)
         if offset:
-            exit_point=(source[0]+direction[0]*12,source[1]+direction[1]*12)
+            exit_point=point(pin['escape']) if 'escape' in pin else continuation_exit(source,direction,signal_routes.get(alias,[]))
             corner=(exit_point[0],anchor[1]) if direction[0] else (anchor[0],exit_point[1])
             path=[source,exit_point,corner,anchor]
         else:
             path=[source,anchor]
+        path=attach_to_last_contact(path,[*signal_routes.get(alias,[]),[source,source]])
         signal_routes.setdefault(alias,[]).extend([[a,b] for a,b in zip(path,path[1:]) if a!=b])
         power_markers.append(dict(instanceId=ident,pinName=port['pin'],netId=port['net_id'],style='signal-port'))
     for net, segments in {**signal_routes, **power_routes}.items():
@@ -293,6 +380,7 @@ def build_plan(snapshot, profile, wire_plan):
         # Disconnected power stubs are deliberately equivalent by their
         # existing native Net; no long artificial power bus is invented.
         edits.extend(native_routes(native_nets[net], segments, contacts[net]))
+    edits.extend(deferred_labels)
     for edit in edits:
         p = edit.get('position') or edit.get('instance',{}).get('placement',{}).get('position')
         if p:
@@ -307,4 +395,8 @@ def build_plan(snapshot, profile, wire_plan):
                 transactionId=stable_id('transaction', [profile['source']['sha256'], edits]),
                 edits=edits, expectedPins=expected_pins, engineMetrics=wire_plan['metrics'],
                 powerMarkers=power_markers,symbolOverrides=symbol_overrides,
+                pinEscapes=pin_escapes,signalGeometry={native_nets[alias]:dict(
+                    coreSegments=deepcopy(segments),
+                    terminals=[endpoint for members in contacts[alias].values() for endpoint in members])
+                    for alias,segments in wire_plan['routes'].items() if alias in native_nets},
                 nativeGrid=grid, originalGrid=doc['presentation']['grid'])

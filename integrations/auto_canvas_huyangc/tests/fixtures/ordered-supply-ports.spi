@@ -1,0 +1,7 @@
+* VCC/VEE are ordinary formal pins; drawing must not reorder the interface.
+.subckt ordered VCC VEE VSS inp out
+R1 VCC out 10k
+R2 out VEE 20k
+R3 out VSS 30k
+V1 inp VSS DC 0
+.ends ordered

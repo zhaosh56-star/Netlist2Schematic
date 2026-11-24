@@ -18,6 +18,8 @@ export function markerSeats(document, plan, context) {
       y0:Math.min(...points.map(p=>p.y)),y1:Math.max(...points.map(p=>p.y))};
   };
   const escape = (doc, endpoint, geometry) => {
+    const fixed=plan.pinEscapes?.find(p=>endpointKey(p.endpoint)===endpointKey(endpoint));
+    if(fixed)return fixed.position;
     const p = geometry.gridLanding, d = geometry.outward;
     if (!d) return p;
     const b = bounds(doc, endpoint);
