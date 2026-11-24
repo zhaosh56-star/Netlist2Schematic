@@ -89,7 +89,7 @@ def _pitch(par, comps, options):
         half_height = max(-box['y'], box['y'] + box['height'])
         required = max(required, (half_width + options.halo + step) / 2,
                        (half_height + options.halo + step) / 2)
-    for symbol in ('vdd-port', 'ground'):
+    for symbol in ('vdd-port', 'ground', *(['vee-port'] if 'vee-port' in par.GEO_DOC else [])):
         geometry = par.GEO_DOC[symbol]['orientations'][0]
         pin = geometry['pins'][0]['at']
         box = geometry['viewBoxAABB']
@@ -138,7 +138,7 @@ def _power_connections(par, ports, lanes, power_y, pitch, deadline):
             continue
         _check_deadline(deadline, 'power_connections')
         lane = lanes[(port.component, port.pin)]
-        anchor = (lane + pitch, power_y + (pitch if symbol == 'ground' else -pitch))
+        anchor = (lane + pitch, power_y + (-pitch if symbol == 'vdd-port' else pitch))
         points = [port.point, port.escape, (lane, port.escape[1]),
                   (lane, power_y), (anchor[0], power_y), anchor]
         segments = [[list(a), list(b)] for a, b in zip(points, points[1:]) if a != b]

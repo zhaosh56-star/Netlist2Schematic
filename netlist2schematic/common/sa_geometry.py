@@ -52,7 +52,8 @@ def regenerate_geometry():
 
 
 def validate_geometry(geometry):
-    expected = regenerate_geometry()['symbols']
+    from netlist2schematic.common.supply_markers import SYMBOL, symbol_geometry
+    expected = {**regenerate_geometry()['symbols'], SYMBOL: symbol_geometry()}
     for symbol_id, current in geometry.items():
         if current['orientations'] != expected[symbol_id]['orientations']:
             raise ValueError(f'Geometry cache does not match symbol {symbol_id!r}; '

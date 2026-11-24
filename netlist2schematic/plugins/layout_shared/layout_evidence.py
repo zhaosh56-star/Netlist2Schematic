@@ -11,8 +11,10 @@ from __future__ import annotations
 from collections import defaultdict
 from copy import deepcopy
 from itertools import combinations
+from netlist2schematic.recognition.transistor_topology import channel_pins, common_kind
 
-from netlist2schematic.netlist.netlist_core import SRC_ALIASES, SNK_ALIASES
+from netlist2schematic.netlist.netlist_core import SRC_ALIASES, SNK_ALIASES as GROUND_ALIASES
+SNK_ALIASES = GROUND_ALIASES | frozenset(('vee', 'vee!'))
 
 VERSION = 'validated-layout-evidence-v1'
 BRANCH_VERSION = 'anchored-branch-evidence-v1'
@@ -39,11 +41,7 @@ def _ports(device):
 
 
 def _channel(device):
-    if device.get('cls') == 'MOS':
-        return 'D', 'G', 'S'
-    if device.get('cls') == 'BJT':
-        return 'C', 'B', 'E'
-    return None
+    return channel_pins(device)
 
 
 def _incidence(devices):
@@ -247,8 +245,9 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
         return external, 'formal_control_pair' if len(formal_members) == 2 else 'external_control_pair'
 
     for row in baseline:
-        kind = row.get('kind')
-        if kind in ('differential_pair', 'bjt_differential_pair'):
+        kind = common_kind(row.get('kind'))
+        row['kind'] = kind
+        if kind == 'differential_pair':
             names = [row.get('roles', {}).get(key) for key in ('left', 'right')]
             if not all(n in devices for n in names):
                 diagnostics['rejected_pairs'].append({'id': row.get('id'), 'reason': 'missing_members'})
@@ -314,7 +313,7 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
                 devices, incidence, pb[channel[0]], chosen):
             record['reason'] = 'incomparable_output_branches'
             continue
-        kind = 'differential_pair' if family == 'MOS' else 'bjt_differential_pair'
+        kind = 'differential_pair'
         left, right = sorted(chosen)
         row = _structure(kind, chosen,
             {'left': left, 'right': right, 'source_net': source, 'source_users': list(all_source_users[source]),
@@ -325,6 +324,9 @@ def build_layout_evidence(devices, baseline_structs=(), *, formal_ports=(), net_
             layout={'align_rows': [[left, right]], 'branches': [[left], [right]]},
             evidence={'kind': reason, 'source': source, 'source_users': users,
                       'comparable_visible_output_incidence': True})
+        if family == 'BJT':
+            row['family'] = family
+            row['terminal_roles'] = {'drain':'C', 'control':'B', 'source':'E'}
         structures.append(row)
         diagnostics['added_pairs'].append(row['id'])
         known_pairs.add(frozenset(chosen))

@@ -36,7 +36,7 @@ SWAPPABLE = {"mos": {"nmos", "pmos"}, "bjt": {"npn", "pnp"}}
 MIRRORABLE = {"nmos", "pmos", "npn", "pnp"}
 POWER_NETS = {"VDD": "vdd-port", "0": "ground", "GND": "ground", "VSS": "ground"}
 
-def power_marker_sym(net):
+def legacy_power_marker_sym(net):
     """Case-insensitive power-net lookup: netlists from the wild use
     vdd/gnds/VDD! etc. Returns the marker symbol id or None."""
     if net in POWER_NETS:
@@ -48,7 +48,16 @@ def power_marker_sym(net):
         return "ground"
     return None
 
-GEO_DOC = read_json(GEO)["symbols"]
+from netlist2schematic.common.supply_markers import (
+    CURRENT_POLICY, SYMBOL as NEGATIVE_SUPPLY_SYMBOL, is_negative_supply,
+    symbol_definition, symbol_geometry)
+
+
+def power_marker_sym(net):
+    return NEGATIVE_SUPPLY_SYMBOL if is_negative_supply(net) else legacy_power_marker_sym(net)
+
+
+GEO_DOC = {**read_json(GEO)["symbols"], NEGATIVE_SUPPLY_SYMBOL: symbol_geometry()}
 
 def pin_pos(sym, orient_idx, pin_name):
     """Symbol-local pin coords for a given orientation variant."""
@@ -1227,6 +1236,8 @@ def sa(pl, nets, comp_index, iterations=None):
 DEFS = os.fspath(resource_root() / "packages" / "components" / "definitions")
 
 def load_def(symbol_id):
+    if symbol_id == NEGATIVE_SUPPLY_SYMBOL:
+        return symbol_definition()
     return read_json(resource_root() / "packages" / "components" / "definitions"
                      / (symbol_id + ".json"))["symbol"]
 

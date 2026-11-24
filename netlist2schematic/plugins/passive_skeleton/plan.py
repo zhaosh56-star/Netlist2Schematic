@@ -1,4 +1,6 @@
 """A layout projection, never an electrically contracted netlist."""
+from netlist2schematic.recognition.transistor_topology import common_kind
+
 from collections import Counter
 from copy import deepcopy
 from itertools import product
@@ -150,7 +152,7 @@ def compile_plan(par, devices, comps, nets, structs, *, include_sources=True):
     # Shared VDD, GND, CLK or a model name alone cannot create a family.
     pairs = set()
     for record in structs:
-        if record['kind'] not in ('differential_pair', 'cross_coupled', 'current_mirror', 'latch'):
+        if common_kind(record['kind']) not in ('differential_pair', 'cross_coupled', 'current_mirror', 'latch'):
             continue
         roles = record.get('roles', {})
         candidates = [(roles.get('left'), roles.get('right'))]

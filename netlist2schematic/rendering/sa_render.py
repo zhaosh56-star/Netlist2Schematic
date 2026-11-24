@@ -141,6 +141,21 @@ def _clean_text(label, fmt, *, kind, attributes='', local_origin=None):
             f'font-family="monospace" font-size="14" fill="#111">{escape(label["text"])}</text>')
 
 
+def _negative_marker(par, placement, index, cid, pin, net, validation,
+                     markers, power_runs, supplies):
+    from netlist2schematic.common.supply_markers import negative_connection
+    options = (validation or {}).get('parameters', {})
+    record = negative_connection(par, placement, index[cid], pin, net,
+        halo=options.get('halo', 12), grid_step=options.get('grid_step', 2))
+    origin = record['anchor']
+    b = par.GEO_DOC[record['symbol']]['orientations'][0]['viewBoxAABB']
+    box = origin[0]+b['x'], origin[1]+b['y'], origin[0]+b['x']+b['width'], origin[1]+b['y']+b['height']
+    markers.append((record, origin, (origin[0]+18, origin[1]+20)))
+    power_runs.setdefault(net, []).extend(record['segments'])
+    supplies.append((net, box, origin, (cid, pin)))
+    return record, box
+
+
 def net_label_render_hints(par, placement, comps, nets, index, routed, validation):
     """Freeze clean text before a display-only wire transformation."""
     stubs, markers, power_runs, supplies = [], [], {}, []
@@ -151,6 +166,9 @@ def net_label_render_hints(par, placement, comps, nets, index, routed, validatio
             if not symbol:
                 continue
             for cid, pin in members:
+                if symbol == 'vee-port':
+                    _negative_marker(par, placement, index, cid, pin, net, validation, markers, power_runs, supplies)
+                    continue
                 endpoint = placement.pin_world(index[cid], pin)
                 tip = (endpoint[0], endpoint[1] + (-par.STUB_LEN if symbol == 'vdd-port' else par.STUB_LEN))
                 stubs.append((symbol, tip, endpoint))
@@ -227,7 +245,8 @@ def render_svg(par, placement, comps, nets, comp_index, routed, metrics, out,
                   or stage == 'bus_fallback')
     definitions = {symbol: par.effective_symbol(par.load_def(symbol))
                    for symbol in sorted({comp['symbol'] for comp in comps}
-                                        | {'vdd-port', 'ground'})}
+                                        | {'vdd-port', 'ground'}
+                                        | set(filter(None, map(par.power_marker_sym, nets))))}
     xs, ys, labels = [], [], []
     for i, comp in enumerate(comps):
         cx, cy = placement.pos_of(i)
@@ -251,6 +270,13 @@ def render_svg(par, placement, comps, nets, comp_index, routed, metrics, out,
             if not symbol:
                 continue
             for cid, pin in members:
+                if symbol == 'vee-port':
+                    record, rect = _negative_marker(par, placement, comp_index, cid, pin, net, validation,
+                        power_markers, power_runs, supply_markers)
+                    xs.extend((rect[0], rect[2])); ys.extend((rect[1], rect[3]))
+                    for a, b in record['segments']:
+                        xs.extend((a[0], b[0])); ys.extend((a[1], b[1]))
+                    continue
                 endpoint = placement.pin_world(comp_index[cid], pin)
                 tip = (endpoint[0], endpoint[1] + (-par.STUB_LEN if symbol == 'vdd-port' else par.STUB_LEN))
                 stubs.append((symbol, tip, endpoint))

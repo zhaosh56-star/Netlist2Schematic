@@ -110,7 +110,7 @@ def build_attachment_plan(devices, comps, nets, index, structs, levels, row_of, 
     rows = readable['display_rows']
     owners = [sorted(comps[i]['id'] for i in block) for block in blocks]
     protected = [{comps[i]['id'] for i in b} for b in blocks if len(b)>1]
-    mos_conflicts = [p for p in input_blocks['pairs'] if p.get('kind')=='differential_pair'
+    mos_conflicts = [p for p in input_blocks['pairs'] if p.get('kind')=='differential_pair' and p.get('family','MOS')=='MOS'
         and any(set(p['members']) & block for block in protected)]
     input_blocks['skipped'].extend(dict(id=p['id'], reason='preexisting_MOS_owner') for p in mos_conflicts)
     input_blocks['pairs'] = [p for p in input_blocks['pairs'] if p not in mos_conflicts]
@@ -1757,7 +1757,7 @@ def _input_block_seed(par, current, original, comps, nets, index, plan, options,
         # A newly verified shared-source MOS pair may already be contiguous.
         # Install its leaf without inventing a positional improvement. This
         # makes subsequent existing block moves/undo protect it as one unit.
-        missing_mos = [p['id'] for p in model['pairs'] if p.get('kind')=='differential_pair'
+        missing_mos = [p['id'] for p in model['pairs'] if p.get('kind')=='differential_pair' and p.get('family','MOS')=='MOS'
             and {index[n] for n in p['members']} not in [set(b) for b in current.blocks]
             and {index[n] for n in p['members']} in [set(b) for b in trial.blocks]]
         same_world = (trial.cell_of==current.cell_of and trial.orient==current.orient

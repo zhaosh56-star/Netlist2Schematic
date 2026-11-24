@@ -6,6 +6,8 @@ router.  It never edits the source circuit or writes generated artifacts.
 """
 from __future__ import annotations
 
+from netlist2schematic.recognition.transistor_topology import common_kind
+
 from collections import Counter, defaultdict
 import contextlib
 import copy
@@ -93,7 +95,7 @@ def _relations(devices, structs, index, row_of):
 
     for record in structs:
         values = _members(record, index)
-        kind = record['kind']
+        kind = common_kind(record['kind'])
         roles = record.get('roles', {})
         high = record.get('confidence', 'high') == 'high'
         if high and kind not in ('series_chain', 'parallel_passives', 'feedback_network', 'opamp_core'):
@@ -445,8 +447,8 @@ def _initial_placement(devices, comps, nets, index, levels, att, structs, seed, 
     priority = {'latch': 4, 'folded_core': 4, 'output_pair': 3,
                 'complementary_branch': 2, 'differential_pair': 1, 'current_mirror': 1}
     rank_priority = {}
-    for record in sorted(structs, key=lambda s: priority.get(s['kind'], 0)):
-        roles, kind = record.get('roles', {}), record['kind']
+    for record in sorted(structs, key=lambda s: priority.get(common_kind(s['kind']), 0)):
+        roles, kind = record.get('roles', {}), common_kind(record['kind'])
         assignments = []
         if kind == 'latch':
             assignments = [(roles.get('left_upper'), -1), (roles.get('left_lower'), -1),

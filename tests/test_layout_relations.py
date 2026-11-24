@@ -49,18 +49,19 @@ class RelationRecognitionTests(unittest.TestCase):
     def test_strict_bjt_pair_and_tail(self):
         devices = {'a': transistor('ca', 'ba', 'tail'), 'b': transistor('cb', 'bb', 'tail'),
                    'i': source('ISRC', 'tail')}
-        pairs = [r for r in build_layout_relations(devices) if r['kind'] == 'bjt_differential_pair']
+        pairs = [r for r in build_layout_relations(devices) if r['kind'] == 'differential_pair']
         self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]['family'], 'BJT')
         self.assertEqual(pairs[0]['roles']['exclusive_tails'], ['i'])
         del devices['i']
-        self.assertFalse(any(r['kind'] == 'bjt_differential_pair' for r in build_layout_relations(devices)))
+        self.assertFalse(any(r['kind'] == 'differential_pair' for r in build_layout_relations(devices)))
 
     def test_rail_common_emitter_and_identical_collectors_are_not_input_pairs(self):
         for common, collector in [('0', 'different'), ('tail', 'same')]:
             devices = {'a': transistor('ca', 'ba', common),
                        'b': transistor('ca' if collector == 'same' else 'cb', 'bb', common),
                        'i': source('ISRC', common)}
-            self.assertFalse(any(r['kind'] == 'bjt_differential_pair' for r in build_layout_relations(devices)))
+            self.assertFalse(any(r['kind'] == 'differential_pair' for r in build_layout_relations(devices)))
 
     def test_pair_load_requires_two_existing_branches(self):
         devices = strict_pair()
@@ -110,7 +111,7 @@ class RelationRecognitionTests(unittest.TestCase):
     def test_bjt_mirror_keeps_reference_and_output_roles(self):
         devices = {'r': transistor('bias', 'bias', '0'),
                    'o': transistor('out', 'bias', '0')}
-        mirror = next(r for r in build_layout_relations(devices) if r['kind'] == 'bjt_current_mirror')
+        mirror = next(r for r in build_layout_relations(devices) if r['kind'] == 'current_mirror')
         self.assertEqual(mirror['roles']['reference'], 'r')
         self.assertEqual(mirror['roles']['outputs'], ['o'])
 

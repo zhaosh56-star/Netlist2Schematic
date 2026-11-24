@@ -60,7 +60,9 @@ def _sources(source):
 def _resource_hashes(par, comps):
     symbols = {component['symbol'] for component in comps} | {'ground', 'vdd-port'}
     definitions = resource_root()/'packages'/'components'/'definitions'
-    paths = [Path(par.GEO), *(definitions/(symbol+'.json') for symbol in sorted(symbols))]
+    from netlist2schematic.common.supply_markers import resource_files
+    paths = [Path(par.GEO), *(definitions/(symbol+'.json') for symbol in sorted(symbols)),
+             *resource_files(par, comps)]
     return {str(path.resolve()): _file_hash(path) for path in paths}
 
 

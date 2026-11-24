@@ -110,7 +110,8 @@ def validate_view(scene, routed, terminals, geometry, view, hints, *, scale, dea
     rebuilt.marker_rects, rebuilt.marker_components = [], []
     untouched = [p for p in terminals if (p['component_id'], p['pin']) not in seen]
     for p in untouched:
-        rebuilt.fixed_segments.setdefault(p['net'], []).append(tuple(map(tuple, p['stub'])))
+        rebuilt.fixed_segments.setdefault(p['net'], []).extend(
+            tuple(map(tuple, segment)) for segment in p.get('segments', [p['stub']]))
         rebuilt.marker_rects.append((p['net'], tuple(p['marker_rect'])))
         rebuilt.marker_components.append(p['component'])
     all_shapes = [(p['net'], tuple(p['marker_rect']), None) for p in untouched]
@@ -156,7 +157,8 @@ def validate_view(scene, routed, terminals, geometry, view, hints, *, scale, dea
         if any(_overlap(shape['rect'], box, 3) for box in old_texts):
             raise ValueError('New supply symbol overlaps existing text')
         # Separate local rails of the same net remain distinct visible groups.
-        others = [line for p in untouched if p['net'] == net for line in [tuple(map(tuple, p['stub']))]]
+        others = [tuple(map(tuple, line)) for p in untouched if p['net'] == net
+                  for line in p.get('segments', [p['stub']])]
         others.extend(line for i, (g, s) in enumerate(zip(groups, shapes))
                       if i != number and g['net'] == net for line in s['segments'])
         if any(segment_distance(a, b, c, d) < scene.options.center_spacing-EPS

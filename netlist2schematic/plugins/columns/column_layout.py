@@ -6,6 +6,8 @@ controls on disjoint paths; longest-path preference alone cannot resolve it.
 """
 from __future__ import annotations
 
+from netlist2schematic.recognition.transistor_topology import common_kind
+
 from collections import defaultdict
 from copy import deepcopy
 from hashlib import sha256
@@ -46,7 +48,7 @@ def build_column_plan(par, pl, comps, nets, index, structures=(), *, inline_brid
         if r.get('confidence', 'high') != 'high':
             continue
         roles = r.get('roles', {})
-        if r['kind'] == 'differential_pair':
+        if common_kind(r['kind']) == 'differential_pair':
             pair = [roles.get('left'), roles.get('right')]
             if all(n in active for n in pair):
                 terminal = CHANNELS[active[pair[0]]['symbol']][1]

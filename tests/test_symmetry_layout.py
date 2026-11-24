@@ -81,7 +81,7 @@ class SymmetryTopologyTests(unittest.TestCase):
         devices = {'a': bjt('da', 'ia', 'tail'), 'b': bjt('db', 'ib', 'tail'),
                    'i': current('tail')}
         comps = to_document(devices)['components']
-        self.assertEqual(symmetry.build_symmetry_groups(comps)[0]['kind'], 'bjt_differential_pair')
+        self.assertEqual(symmetry.build_symmetry_groups(comps)[0]['kind'], 'differential_pair')
         self.assertEqual(symmetry.build_symmetry_groups(comps[:2]), [])
         devices['a']['e'] = devices['b']['e'] = '0'
         self.assertEqual(symmetry.build_symmetry_groups(to_document(devices)['components']), [])

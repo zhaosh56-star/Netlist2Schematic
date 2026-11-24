@@ -56,6 +56,8 @@ def load_placement(jpath, *, analog_canvas_root=None):
         raise ValueError('Saved placement must be an object')
     configure_resources(analog_canvas_root or data.get('analog_canvas_root'))
     par = load_local('place_and_route', 'place-and-route.py')
+    from netlist2schematic.common.supply_markers import saved_module
+    par, supply_policy = saved_module(par, data)
     validate_geometry(par.GEO_DOC)
     pn = load_local('parse_netlist', 'parse-netlist.py')
     source = data.get('source_netlist')
@@ -78,6 +80,7 @@ def load_placement(jpath, *, analog_canvas_root=None):
             raise ValueError(f"Saved hidden supply connections do not match the source for {comp['id']}")
     placement = par.Placement.__new__(par.Placement)
     placement.comps = comps
+    placement.supply_marker_policy = supply_policy
     placement.rng = random.Random(data.get('seed', 20261029))
     placement.cell_of = [(saved[c['id']]['row'], saved[c['id']]['col']) for c in comps]
     placement.orient = [saved[c['id']]['orient'] for c in comps]

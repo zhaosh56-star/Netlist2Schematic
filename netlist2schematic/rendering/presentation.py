@@ -16,7 +16,12 @@ _INPUT_NAME = re.compile(r'^(?:v[_-]?)?(?:in(?:put)?)(?:[pn]|[+\-]|[_-]?[0-9]+|[
 _CONTROL_PINS = frozenset(('G', 'B', 'IN+', 'IN-'))
 
 
-def _power(net):
+from netlist2schematic.common.supply_markers import CURRENT_POLICY, is_negative_supply
+
+
+def _power(net, policy=CURRENT_POLICY):
+    if policy == CURRENT_POLICY and is_negative_supply(net):
+        return 'power'
     key = str(net).casefold().rstrip('!')
     if key in SRC_ALIASES or key in ('vdd', 'vcc', 'vpwr', 'avdd', 'dvdd'):
         return 'power'
@@ -37,7 +42,7 @@ def _formal_names(tokens):
     return result
 
 
-def prepare_presentation(source, cell, comps, nets):
+def prepare_presentation(source, cell, comps, nets, *, supply_policy=CURRENT_POLICY):
     """Return JSON rendering hints from selected formals or explicit Vin sources.
 
     Flat circuits accept only a grounded voltage source whose instance or
@@ -65,7 +70,7 @@ def prepare_presentation(source, cell, comps, nets):
     def record(net, name, origin, evidence):
         key = str(net).casefold()
         points = terminals.get(key, [])
-        power = _power(net)
+        power = _power(net, supply_policy)
         role = power or ('control' if points and all(
             item['pin'] in _CONTROL_PINS for item in points) else 'generic')
         return {'net': actual_nets.get(key, key), 'name': name, 'aliases': [name],
@@ -110,13 +115,13 @@ def prepare_presentation(source, cell, comps, nets):
                 skipped.append({'component': comp['id'], 'reason': 'source_component_mismatch'})
                 continue
             p, n = tokens[1], tokens[2]
-            grounded = [_power(p) == 'ground', _power(n) == 'ground']
+            grounded = [_power(p, supply_policy) == 'ground', _power(n, supply_policy) == 'ground']
             if sum(grounded) != 1:
                 skipped.append({'component': comp['id'], 'reason': 'no_unique_ground_reference'})
                 continue
             driven = n if grounded[0] else p
             pin = '-' if grounded[0] else '+'
-            if _power(driven):
+            if _power(driven, supply_policy):
                 continue
             name = driven if _INPUT_NAME.fullmatch(driven) else (
                 tokens[0] if _INPUT_NAME.fullmatch(tokens[0]) else None)
@@ -152,7 +157,8 @@ def configure_presentation(placement, source, cell, comps, nets, style='legacy')
     if style not in ('legacy','clean'):
         raise ValueError('presentation must be legacy or clean')
     report={'style':style}
-    if style=='clean':report.update(prepare_presentation(source,cell,comps,nets))
+    if style=='clean':report.update(prepare_presentation(source,cell,comps,nets,
+        supply_policy=getattr(placement,'supply_marker_policy',CURRENT_POLICY)))
     placement.presentation_style=style
     placement.presentation_ports=report.get('render_hints',{}).get('port_labels',{})
     placement.presentation_supply_names={p['net']:p['name'] for p in report.get('named_ports',())

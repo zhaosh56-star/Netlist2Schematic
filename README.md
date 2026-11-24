@@ -4,6 +4,10 @@
 
 新网表的结构化主flow默认启用主列与区域前置组织（`--branch-layout auto`）：候选2、3先组织连续支路和局部区域，再执行SA、无源模块插入及最终布线；没有大小图门槛。可用 `--branch-layout off` 关闭，保存位置操作及其他显式布局实验保持原路径。算法、兼容边界和实测见[支路组织说明](docs/branch-organization.md)。
 
+BJT与MOS现在共用差分对、电流镜、交叉耦合和串接支路的基础识别、结构保护及主列布局接口：MOS提供D/G/S，BJT提供C/B/E，家族、极性和真实引脚仍分别保存。只共电源、共偏置不能形成配对；MOS专用的锁存、折叠复合规则继续独立。默认候选2、3直接使用，无需新开关。规则与含BJT的三张实测见[运行说明](docs/flow-guide.md#bjt与mos共用基础结构)。
+
+VEE现在按独立负电源绘制向下单横杠盖帽；VDD保持向上，GND保持接地符号，不将VEE与地短接。新布局默认启用，旧JSON按原解释重绘；规则和实测见[运行说明](docs/flow-guide.md#vee负电源标记)。
+
 Python 实现已分类放入 `netlist2schematic/`，根目录保留原命令入口。查找算法文件请从[目录与文件用途](docs/project-layout.md)或[旧文件名映射](netlist2schematic/source_map.json)进入；布局插件的开关保持；正式出图现已默认启用。
 
 ```text

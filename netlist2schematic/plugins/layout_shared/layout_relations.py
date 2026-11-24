@@ -10,6 +10,7 @@ from collections import defaultdict
 from copy import deepcopy
 from itertools import combinations
 from statistics import fmean
+from netlist2schematic.recognition.transistor_topology import channel_nets, common_kind
 
 VERSION = 'structure-layout-v1'
 _ACTIVE = frozenset(('MOS', 'BJT'))
@@ -28,16 +29,12 @@ _PRIORITY = {'differential_pair': 100, 'bjt_differential_pair': 100,
 def _rail(net):
     from netlist2schematic.netlist.netlist_core import SRC_ALIASES, SNK_ALIASES
     value = str(net).lower().rstrip('!')
-    return value in SRC_ALIASES or value in SNK_ALIASES or value in (
+    return value in SRC_ALIASES or value in SNK_ALIASES or value in ('vee', 'vee!') or value in (
         'gnd', 'gnds', 'vss', 'agnd', 'dgnd', 'vdd', 'vcc', 'vpwr', 'avdd', 'dvdd')
 
 
 def _ports(device):
-    if device.get('cls') == 'MOS':
-        return device['d'], device['g'], device['s']
-    if device.get('cls') == 'BJT':
-        return device['c'], device['b'], device['e']
-    return None
+    return channel_nets(device)
 
 
 def _members(roles, keys):
@@ -70,7 +67,7 @@ def build_layout_relations(devices, structs=(), *, validated_evidence=None):
         return row
 
     for structure in structs:
-        kind, roles = structure.get('kind'), deepcopy(structure.get('roles') or {})
+        kind, roles = common_kind(structure.get('kind')), deepcopy(structure.get('roles') or {})
         if kind not in _FUNCTIONAL | _AUXILIARY:
             continue
         if kind in _FUNCTIONAL and structure.get('confidence', 'high') != 'high':
@@ -119,6 +116,8 @@ def build_layout_relations(devices, structs=(), *, validated_evidence=None):
                   evidence={'kind': 'functional_roles' if kind in _FUNCTIONAL else 'existing_attachment',
                             'source_structure': structure.get('id'),
                             'nets': deepcopy(structure.get('nets', {}))}, layout=layout)
+        if row is not None and structure.get('family'):
+            row['family'] = structure['family']
         if row is not None and structure.get('id'):
             sources[structure['id']] = row
 
@@ -132,46 +131,8 @@ def build_layout_relations(devices, structs=(), *, validated_evidence=None):
                                           'source_structure': parent['evidence']['source_structure']},
                     layout={'pairs': [pair], 'orders': [pair]})
 
-    # Strict BJT seeds: a shared supply alone, or an unfed emitter node, does not
-    # establish an input pair. Visible collector/base roles remain distinct.
-    emitters, mirror_banks = defaultdict(list), defaultdict(list)
-    voltage_rails = set()
-    for name, dev in devices.items():
-        if dev.get('cls') == 'BJT':
-            emitters[(dev['type'], dev['e'])].append(name)
-            mirror_banks[(dev['type'], dev['e'], dev['b'])].append(name)
-        elif dev.get('cls') == 'VSRC':
-            if _rail(dev['n']):
-                voltage_rails.add(dev['p'])
-            if _rail(dev['p']):
-                voltage_rails.add(dev['n'])
-    for (_, source), names in emitters.items():
-        names = sorted(names)
-        if len(names) != 2 or _rail(source) or source in voltage_rails:
-            continue
-        a, b = (devices[name] for name in names)
-        if a['c'] == b['c'] or a['b'] == b['b']:
-            continue
-        tails = sorted(name for name, dev in devices.items() if name not in names and (
-            (dev.get('cls') == 'ISRC' and source in (dev['p'], dev['n']))
-            or (dev.get('cls') == 'MOS' and dev['d'] == source)
-            or (dev.get('cls') == 'BJT' and dev['c'] == source)))
-        if tails:
-            add('bjt_differential_pair', names,
-                {'left': names[0], 'right': names[1], 'tail': tails, 'source_net': source},
-                rigid=True, evidence={'kind': 'two_emitters_and_tail', 'tail': tails},
-                layout={'pairs': [names], 'orders': [names]})
-    for (_, source, control), names in mirror_banks.items():
-        refs = sorted(name for name in names if devices[name]['c'] == control)
-        outputs = sorted(name for name in names if devices[name]['c'] != control)
-        if not refs or not outputs:
-            continue
-        pairs = [[refs[0], outputs[0]]] if len(refs) == len(outputs) == 1 else []
-        add('bjt_current_mirror', names,
-            {'reference': refs[0], 'references': refs, 'outputs': outputs,
-             'shared_source': source, 'shared_control': control}, rigid=bool(pairs),
-            evidence={'kind': 'base_collector_reference'},
-            layout={'pairs': pairs, 'same_row': [sorted(names)]})
+    # Bipolar leaves now arrive through the common functional recognizer.
+    # Never regenerate a second BJT-specific owner for the same devices.
 
     # Full visible-port identity is a stronger repeatability proof than sharing
     # an arbitrary rail. Large banks remain soft groups, never arbitrary pairs.

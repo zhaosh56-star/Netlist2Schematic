@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from hashlib import sha256
-from itertools import combinations
 
-from netlist2schematic.netlist.netlist_core import SNK_ALIASES, SRC_ALIASES
+from netlist2schematic.netlist.netlist_core import SNK_ALIASES as GROUND_ALIASES, SRC_ALIASES
+# Supply-role evidence; parser ground references remain strictly unchanged.
+SNK_ALIASES = GROUND_ALIASES | frozenset(('vee', 'vee!'))
+from netlist2schematic.recognition.transistor_topology import basic_structures
 
 
 _LABELS = {
@@ -123,67 +125,19 @@ def analyze_structures(devices):
             if dev['p'] in SNK_ALIASES:
                 voltage_rails.add(dev['n'])
     rails = set(SRC_ALIASES) | set(SNK_ALIASES) | voltage_rails
+    bipolar_rails = set(rails)
     rails.update(net for net, users in sources.items() if len(users) >= 3)
 
-    # A pair needs a real tail, not merely two devices sharing a supply rail.
-    differential = []
-    for source, names in sources.items():
-        for polarity in ('NMOS', 'PMOS'):
-            pair = ordered(n for n in names if mos[n]['type'] == polarity)
-            if source in rails or len(pair) != 2:
-                continue
-            left, right = pair
-            a, b = mos[left], mos[right]
-            if a['d'] == b['d'] or a['g'] == b['g']:
-                continue
-            tails = ordered([n for n, dev in mos.items()
-                             if n not in pair and dev['d'] == source] +
-                            [n for n, dev in devices.items()
-                             if dev.get('cls') == 'ISRC' and source in (dev['p'], dev['n'])])
-            if not tails:
-                continue
-            differential.append(add('differential_pair', pair,
-                                    {'left': left, 'right': right, 'tail': tails},
-                                    {'source': source, 'left_drain': a['d'],
-                                     'right_drain': b['d']},
-                                    layout={'align_rows': [pair], 'aligned': [],
-                                            'branches': [[left], [right]]}))
-
-    bias_groups = defaultdict(list)
-    for name, dev in mos.items():
-        bias_groups[(dev['type'], dev['s'], dev['g'])].append(name)
-    common_bias = []
-    for (polarity, source, gate), names in bias_groups.items():
-        names = ordered(names)
-        if len(names) < 2:
-            continue
-        references = ordered(n for n in names if mos[n]['d'] == gate)
-        outputs = ordered(n for n in names if mos[n]['d'] != gate)
-        if references and outputs:
-            add('current_mirror', names,
-                {'reference': references[0], 'references': references, 'outputs': outputs},
-                {'source': source, 'bias': gate},
-                layout={'align_rows': [names], 'aligned': [], 'branches': []})
-        elif len({mos[n]['d'] for n in names}) > 1:
-            common_bias.append(add('common_bias_pair', names, {'members': names},
-                                   {'source': source, 'bias': gate}, 'relation'))
-
-    for source, names in sources.items():
-        if len(names) >= 3:
-            names = ordered(names)
-            add('common_source_bank', names, {'members': names},
-                {'source': source}, 'relation')
-
-    cross_pairs = []
-    for left, right in combinations(ordered(mos), 2):
-        a, b = mos[left], mos[right]
-        if (a['type'] == b['type'] and a['s'] == b['s'] and a['d'] != b['d']
-                and a['g'] == b['d'] and b['g'] == a['d']):
-            cross_pairs.append(add('cross_coupled', [left, right],
-                                   {'left': left, 'right': right},
-                                   {'left_output': a['d'], 'right_output': b['d']},
-                                   layout={'align_rows': [[left, right]],
-                                           'aligned': [], 'branches': []}))
+    # Both families use the same port-role motifs. Existing MOS supply and
+    # composite policies remain intact; bipolar motifs are emitted below.
+    basic = basic_structures(devices, 'MOS', ordered, rails)
+    differential = [add(**row) for row in basic['differential_pair']]
+    for row in basic['current_mirror']:
+        add(**row)
+    common_bias = [add(**row) for row in basic['common_bias_pair']]
+    for row in basic['common_source_bank']:
+        add(**row)
+    cross_pairs = [add(**row) for row in basic['cross_coupled']]
 
     complementary = []
     for drain, names in drains.items():
@@ -268,20 +222,15 @@ def analyze_structures(devices):
                                    {'bias': fa['g']}, 'relation')
                     parent(relation, block)
 
-    for upstream, a in mos.items():
-        for downstream in sources.get(a['d'], []):
-            b = mos[downstream]
-            if upstream == downstream or a['type'] != b['type']:
-                continue
-            # A local conduction relation is useful without stealing a core's owner.
-            upper = upstream if a['type'] == 'PMOS' else downstream
-            lower = downstream if a['type'] == 'PMOS' else upstream
-            add('series_branch', [upstream, downstream],
-                {'upper': upper, 'lower': lower},
-                {'junction': a['d']}, 'relation',
-                {'aligned': [[upstream, downstream]],
-                 'align_columns': [[upstream, downstream]],
-                 'branches': [[upper, lower]]})
+    for row in basic['series_branch']:
+        add(**row)
+
+    bipolar = basic_structures(devices, 'BJT', ordered, bipolar_rails)
+    for descriptions in bipolar.values():
+        for description in descriptions:
+            row = add(**description)
+            row['family'] = 'BJT'
+            row['terminal_roles'] = {'drain': 'C', 'control': 'B', 'source': 'E'}
 
     _passive_structures(devices, ordered, add, parent)
 

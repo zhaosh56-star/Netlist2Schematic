@@ -216,6 +216,7 @@ class Scene:
     power_corridors: dict = field(default_factory=dict)
     power_markers: list = field(default_factory=list)
     power_stub_faults: list = field(default_factory=list)
+    negative_connections: list = field(default_factory=list)
     marker_components: list = field(default_factory=list)
 
     def prepare_occupied(self, occupied):
@@ -498,6 +499,23 @@ def build_scene(par, nets, placement, comp_index, options=None, deadline=None):
                     record = custom[component_id, pin_name]
                     fixed.extend(record['segments'])
                     continue
+                if symbol == 'vee-port':
+                    from netlist2schematic.common.supply_markers import negative_connection
+                    record = negative_connection(par, placement, component, pin_name, net,
+                        halo=options.halo, grid_step=options.grid_step)
+                    tip = record['anchor']
+                    fixed.extend(record['segments'])
+                    box = par.GEO_DOC[symbol]['orientations'][0]['viewBoxAABB']
+                    marker = _inflate((tip[0]+box['x'], tip[1]+box['y'],
+                        tip[0]+box['x']+box['width'], tip[1]+box['y']+box['height']), options.halo)
+                    direction = tuple(par.DIR_VEC[placement.pin_dir(component, pin_name)])
+                    record.update(component=component, marker_rect=marker,
+                        source_corridor=(point, _escape(point, direction, bodies[component], options.grid_step)),
+                        marker_entry=(_escape(tip, (0, -1), marker, options.grid_step), tip))
+                    scene.negative_connections.append(record)
+                    scene.marker_rects.append((net, marker))
+                    scene.marker_components.append(component)
+                    continue
                 tip = (point[0], point[1] + (-par.STUB_LEN if symbol == 'vdd-port' else par.STUB_LEN))
                 direction = par.DIR_VEC[placement.pin_dir(component, pin_name)]
                 if sum((tip[k]-point[k])*direction[k] for k in (0, 1)) < -EPS:
@@ -610,6 +628,8 @@ def analyze_routes(routed, scene, deadline=None):
         check_deadline(deadline, 'power_geometry')
         add(**fault)
     _audit_power_connections(scene, add, deadline)
+    from netlist2schematic.common.supply_markers import audit_negative_connections
+    audit_negative_connections(scene, add, deadline)
     operations = 0
     for net, topology in topologies.items():
         check_deadline(deadline, 'geometry_validation')
@@ -680,5 +700,5 @@ def analyze_routes(routed, scene, deadline=None):
             'overlap': overlap, 'proximity': proximity,
             'body_violations': sum(item['kind'] in ('body','marker','power_body','power_marker','power_stub_body',
                                                    'power_marker_body','power_marker_overlap') for item in violations),
-            'power_connections_checked': len(scene.power_connections or ()),
+            'power_connections_checked': len(scene.power_connections or ()) + len(scene.negative_connections),
             'topologies': topologies}

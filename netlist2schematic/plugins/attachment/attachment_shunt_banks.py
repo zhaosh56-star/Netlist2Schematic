@@ -120,7 +120,7 @@ def bank_trials(par, pl, comps, nets, index, bank, options, deadline=None, diagn
     host_i = index[host]
     direction = pl.pin_dir(host_i, host_pin)
     symbol = par.power_marker_sym(bank['rail_net'])
-    if (symbol not in ('vdd-port', 'ground') or direction not in ('north', 'south')
+    if (symbol not in ('vdd-port', 'ground', 'vee-port') or direction not in ('north', 'south')
             or direction != ('north' if symbol == 'vdd-port' else 'south')):
         diagnostic['stop_reason'] = 'rail_access_direction_not_supported'
         return

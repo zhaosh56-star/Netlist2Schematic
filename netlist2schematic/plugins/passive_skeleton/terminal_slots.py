@@ -60,6 +60,17 @@ def _local_shapes(par, comps, geometry, options):
             symbol = par.power_marker_sym(net)
             if symbol:
                 tip = p[0], p[1]+(-par.STUB_LEN if symbol == 'vdd-port' else par.STUB_LEN)
+                if symbol == 'vee-port':
+                    from types import SimpleNamespace
+                    from netlist2schematic.common.supply_markers import negative_connection
+                    local = SimpleNamespace(comps=[comps[i]], orient=[orient],
+                        pos_of=lambda _: point, pin_world=lambda _, name: tuple(
+                            point[k]+par.pin_pos(comps[i]['symbol'], orient, name)[k] for k in (0, 1)),
+                        pin_dir=lambda _, name: next(p['direction'] for p in definition['pins'] if p['name'] == name))
+                    connection = negative_connection(par, local, 0, pin, net,
+                        halo=options.halo, grid_step=options.grid_step)
+                    tip = connection['anchor']
+                    stubs.extend((net, a, b) for a, b in connection['segments'])
                 box = par.GEO_DOC[symbol]['orientations'][0]['viewBoxAABB']
                 markers.append(_inflate((tip[0]+box['x'], tip[1]+box['y'],
                     tip[0]+box['x']+box['width'], tip[1]+box['y']+box['height']), options.halo))

@@ -84,7 +84,7 @@ def _drawing_environment(context, view):
         box = tip[0]+b['x'], tip[1]+b['y'], tip[0]+b['x']+b['width'], tip[1]+b['y']+b['height']
         boxes.append(box)
         supplies.append((port['net'], box))
-        wires.append(port['stub'])
+        wires.extend(port.get('segments', [port['stub']]))
     for group in view['groups']:
         shape = _group_geometry(group, ports, context['geometry'],
                                 context['scene'].options, context['scale'])
@@ -181,7 +181,7 @@ def _label_records(root, context, component_boxes, supplies):
             current = parents.get(current)
         if kind in ('supply', 'shared-supply'):
             text = getattr(context['placement'], 'presentation_supply_names', {}).get(net, text)
-            if str(net).casefold() in ('vdd', 'vcc') and text.casefold() == str(net).casefold():
+            if str(net).casefold() in ('vdd', 'vcc', 'vee', 'vee!') and text.casefold() == str(net).casefold():
                 text = text.upper()  # SPICE is case-insensitive; use the conventional cap name.
         x = float(element.get('x', 0))+origin[0]
         y = float(element.get('y', 0))+origin[1]

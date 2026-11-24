@@ -36,17 +36,20 @@ def compile_input_blocks(devices, comps, structs, rows, *, formal_ports=()):
             continue
         # Ordinary MOS pairs already have legacy owners. This rollout only
         # fills a missing shared-source leaf, never replaces a known core.
-        if kind == 'differential_pair' and not relation['roles'].get('validated_shared_source'):
-            continue
         names = relation['members']
+        family = {devices[n]['cls'] for n in names}
+        is_mos = family == {'MOS'}
+        if is_mos and not relation['roles'].get('validated_shared_source'):
+            continue
         if len(names) != 2 or len({rows[n] for n in names}) != 1:
             result['skipped'].append(dict(id=relation['id'], reason='input_pair_rows_incompatible'))
             continue
         result['pairs'].append(dict(id=relation['id'], members=list(names),
             roles=deepcopy(relation['roles']), evidence=deepcopy(relation['evidence']),
             terminal_contract={n: deepcopy(by_id[n]['nodes']) for n in names}))
-        if kind == 'differential_pair':
-            result['pairs'][-1]['kind'] = kind
+        result['pairs'][-1]['kind'] = 'differential_pair'
+        result['pairs'][-1]['family'] = 'MOS' if is_mos else 'BJT'
+        if is_mos:
             # Shared-source selection depends on the other users, tail and
             # comparable branch incidence, not only the two selected devices.
             result['pairs'][-1]['evidence_contract'] = {
@@ -111,10 +114,12 @@ def compile_input_blocks(devices, comps, structs, rows, *, formal_ports=()):
 
 
 def owner_blocks(blocks, comps, model):
-    """Preserve all existing owners; only replace disjoint singleton BJT leaves."""
+    """Reuse an identical confirmed leaf; preserve every unrelated existing owner."""
     pairs = [set(p['members']) for p in model.get('pairs', ())]
     protected = [set(comps[i]['id'] for i in block) for block in blocks if len(block) > 1]
-    if any(a & b for a in pairs for b in protected):
+    # The common recognizer may already own this exact leaf. Reusing it
+    # must not look like a conflicting partial overlap.
+    if any(a & b and a != b for a in pairs for b in protected):
         return None
     taken = set().union(*pairs) if pairs else set()
     return [sorted(comps[i]['id'] for i in block) for block in blocks

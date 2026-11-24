@@ -5,6 +5,8 @@ module never invokes an annealer or a router and never changes physical axes.
 """
 from __future__ import annotations
 
+from netlist2schematic.recognition.transistor_topology import common_kind
+
 from collections import defaultdict
 from copy import deepcopy
 from itertools import combinations, product
@@ -71,12 +73,16 @@ def build_symmetry_groups(comps, structs=()):
         from netlist2schematic.recognition.circuit_structures import analyze_structures
         structs = analyze_structures(_canonical(comps))
     seeds = []
+    seen_seeds = set()
 
     def seed(kind, pairs, tails=(), *, axis_family=None):
         pairs = [list(pair) for pair in pairs if len(pair) == 2
                  and all(name in by_id for name in pair)
                  and by_id[pair[0]]['symbol'] == by_id[pair[1]]['symbol']]
-        if pairs:
+        kind = common_kind(kind)
+        identity = kind, tuple(sorted(tuple(sorted(p)) for p in pairs)), axis_family
+        if pairs and identity not in seen_seeds:
+            seen_seeds.add(identity)
             seeds.append({'kind': kind, 'pairs': pairs,
                           'tails': [name for name in tails if name in by_id],
                           'axis_family': axis_family})
@@ -84,7 +90,7 @@ def build_symmetry_groups(comps, structs=()):
     for record in structs:
         if record.get('confidence', 'high') != 'high':
             continue
-        kind, roles = record.get('kind'), record.get('roles') or {}
+        kind, roles = common_kind(record.get('kind')), record.get('roles') or {}
         if kind in ('differential_pair', 'cross_coupled'):
             seed(kind, [(roles.get('left'), roles.get('right'))], roles.get('tail', ()))
         elif kind == 'current_mirror':
@@ -102,31 +108,18 @@ def build_symmetry_groups(comps, structs=()):
             seed(kind, [(roles.get(prefix + '_left'), roles.get(prefix + '_right'))
                         for prefix in ('folded', 'bias')], axis_family='folded_output')
 
-    # BJT differential pairs require exactly two emitters on a non-rail node,
-    # separate collectors/bases, and a genuine current/tail device at that node.
+    # Explicit partial structure lists can omit bipolar leaves. Reuse the
+    # common recognizer rather than maintaining another emitter-pair matcher.
     canonical = _canonical(comps)
-    emitter_users = defaultdict(list)
-    driven_rails = set()
-    for name, dev in canonical.items():
-        if dev['cls'] == 'BJT':
-            emitter_users[(dev['type'], dev['e'])].append(name)
-        elif dev['cls'] == 'VSRC':
-            if _rail(dev['n']):
-                driven_rails.add(dev['p'])
-            if _rail(dev['p']):
-                driven_rails.add(dev['n'])
-    for (_, common), names in emitter_users.items():
-        if len(names) != 2 or _rail(common) or common in driven_rails:
-            continue
-        a, b = (canonical[name] for name in names)
-        if a['c'] == b['c'] or a['b'] == b['b']:
-            continue
-        tails = [name for name, dev in canonical.items() if name not in names and (
-            (dev['cls'] == 'ISRC' and common in (dev['p'], dev['n']))
-            or (dev['cls'] == 'MOS' and dev['d'] == common)
-            or (dev['cls'] == 'BJT' and dev['c'] == common))]
-        if tails:
-            seed('bjt_differential_pair', [names], tails)
+    if any(d['cls']=='BJT' for d in canonical.values()):
+        from netlist2schematic.recognition.circuit_structures import analyze_structures
+        for record in analyze_structures(canonical):
+            if record.get('family')!='BJT' or record['confidence']!='high':continue
+            roles=record['roles'];kind=record['kind']
+            if kind in ('differential_pair','cross_coupled'):
+                seed(kind,[(roles['left'],roles['right'])],roles.get('tail',()))
+            elif kind=='current_mirror' and len(roles['references'])==len(roles['outputs'])==1:
+                seed(kind,[(roles['reference'],roles['outputs'][0])])
 
     incidence = defaultdict(list)
     for name, comp in by_id.items():

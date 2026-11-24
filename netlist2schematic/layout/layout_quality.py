@@ -7,6 +7,8 @@ receives an extra detour penalty merely for being long.
 """
 from __future__ import annotations
 
+from netlist2schematic.recognition.transistor_topology import common_kind
+
 from itertools import combinations
 
 from netlist2schematic.routing.routing_rules import canonical_topology, intersection
@@ -43,7 +45,7 @@ def _role_layout(record):
     if record.get('layout'):
         return record['layout']
     roles = record.get('roles') or {}
-    kind = record.get('kind')
+    kind = common_kind(record.get('kind'))
     if kind in ('complementary_branch', 'output_pair'):
         return {'align_columns': [[roles.get('upper'), roles.get('lower')]]}
     if kind == 'latch':

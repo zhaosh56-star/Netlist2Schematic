@@ -63,7 +63,7 @@ Netlist2Schematic/
 |---|---|---|
 | 总调度 | `flow/run_flow.py`、`flow/aesthetic_flow.py`、`flow/diagram_budget.py`、`flow/process_budget.py` | 读取参数、安排候选及预算、组织恢复和输出 |
 | 解析 | `netlist/netlist_core.py`、`netlist/parse_netlist.py` | 读取扁平电路或显式指定的 cell，规范器件与引脚连接 |
-| 分层与识别 | `recognition/device_leveling.py`、`circuit_structures.py`、`vf2_match.py` | 计算导通层级，识别有角色的子结构；VF2 保留给旧参考路径 |
+| 分层与识别 | `recognition/device_leveling.py`、`circuit_structures.py`、`transistor_topology.py`、`vf2_match.py` | 计算导通层级，识别有角色的子结构；VF2 保留给旧参考路径 |
 | 布局 | `layout/structured_placement.py`、`passive_placement.py`、`layout_quality.py` | 结构初排、SA、无源跨行和真实布线质量测量 |
 | 默认模块布局 | `plugins/passive_skeleton/` | 候选2/3先排有源骨架，再插入真实串并联无源模块；均失败后修复原候选 |
 | 基础布局能力 | `layout/place_layered.py`、`layout/place_and_route.py` | Placement、真实引脚坐标、快速估价和旧布局参考；结构化流程也会复用 |

@@ -53,7 +53,9 @@ def _dependencies(source, par, comps):
     visit(source)
     definitions = resource_root()/'packages'/'components'/'definitions'
     symbols = {c['symbol'] for c in comps} | {'vdd-port', 'ground'}
-    files = [Path(par.GEO), *(definitions/(symbol+'.json') for symbol in sorted(symbols))]
+    from netlist2schematic.common.supply_markers import resource_files
+    files = [Path(par.GEO), *(definitions/(symbol+'.json') for symbol in sorted(symbols)),
+             *resource_files(par, comps)]
     return {'source_files': dict(sorted(sources.items())),
             'resource_files': {str(p.resolve()): _file_hash(p) for p in files}}
 
@@ -96,9 +98,16 @@ def _load_context(path):
             point = tuple(placement.pin_world(component, pin))
             direction = tuple(par.DIR_VEC[placement.pin_dir(component, pin)])
             tip = (point[0], point[1]+(-par.STUB_LEN if symbol == 'vdd-port' else par.STUB_LEN))
+            segments = None
+            if symbol == 'vee-port':
+                from netlist2schematic.common.supply_markers import negative_connection
+                record = negative_connection(par, placement, component, pin, net,
+                    halo=options.halo, grid_step=options.grid_step)
+                tip, segments = record['anchor'], record['segments']
             b = par.GEO_DOC[symbol]['orientations'][0]['viewBoxAABB']
             terminals.append(dict(component_id=cid, component=component, pin=pin, net=net, symbol=symbol,
                 point=point, direction=direction, escape=_escape(point, direction, bodies[component], options.grid_step),
+                **({'segments': segments} if segments is not None else {}),
                 stub=(point, tip), marker_rect=_inflate((tip[0]+b['x'], tip[1]+b['y'],
                     tip[0]+b['x']+b['width'], tip[1]+b['y']+b['height']), options.halo)))
     geom = par.GEO_DOC['vdd-port']['orientations'][0]

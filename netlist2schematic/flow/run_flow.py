@@ -256,6 +256,7 @@ def run(path, *, mode='layered', iterations=20000, seed=20261029,
     data = {
         'format_version': 1, 'source_netlist': str(source), 'source_cell': cell,
         'source_sha256': source_hash,
+        'supply_marker_policy': par.CURRENT_POLICY,
         'analog_canvas_root': str(resource_root()), 'mode': mode,
         'seed': seed, 'iterations': iterations, **metadata,
         'time_budget': budget.snapshot(),

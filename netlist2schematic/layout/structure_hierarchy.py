@@ -7,6 +7,8 @@ whole two-dimensional bounding box or changes a conduction row.
 """
 from __future__ import annotations
 
+from netlist2schematic.recognition.transistor_topology import common_kind
+
 from collections import defaultdict
 from copy import deepcopy
 
@@ -31,7 +33,7 @@ def compile_hierarchy(structures, comps, index, row_of, blocks):
         for i in ids:
             by_row[row_of[i]].append(i)
         if (len(ids) == 2 and len(by_row) > 1
-                and (role is not None or record['kind'] in
+                and (role is not None or common_kind(record['kind']) in
                      ('differential_pair', 'cross_coupled', 'current_mirror'))):
             skipped.append({'structure': record['id'], 'role': role,
                             'members': [comps[i]['id'] for i in ids],
@@ -46,7 +48,7 @@ def compile_hierarchy(structures, comps, index, row_of, blocks):
                                      'parent': record.get('parent'), 'role': role})
 
     for record in structures:
-        if record.get('confidence', 'high') != 'high' or record['kind'] not in ACTIVE_KINDS:
+        if record.get('confidence', 'high') != 'high' or common_kind(record['kind']) not in ACTIVE_KINDS:
             continue
         add(record, record['devices'])
         if record['kind'] == 'folded_core':

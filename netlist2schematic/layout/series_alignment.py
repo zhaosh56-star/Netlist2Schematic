@@ -11,9 +11,7 @@ from math import isfinite
 from time import perf_counter
 
 VERSION = 'unique-series-alignment-v1'
-CHANNELS = {'nmos': ('D', 'S'), 'pmos': ('D', 'S'),
-            'npn': ('C', 'E'), 'pnp': ('C', 'E')}
-CONTROLS = {'nmos': 'G', 'pmos': 'G', 'npn': 'B', 'pnp': 'B'}
+from netlist2schematic.recognition.transistor_topology import CHANNELS, CONTROLS
 EPS = 1e-8
 
 

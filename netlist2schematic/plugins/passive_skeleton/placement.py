@@ -108,7 +108,7 @@ def make_frame(par, core, comps, index, options):
             for pin,net in comps[i]['nodes'].items():
                 marker=par.power_marker_sym(net)
                 if marker:
-                    score+=pl.pin_dir(i,pin)!=('south' if marker=='ground' else 'north')
+                    score+=pl.pin_dir(i,pin)!=('south' if marker in ('ground','vee-port') else 'north')
             best.append((score,orientation))
         pl.orient[i]=min(best)[1]
     pl.row_of=[r for r,c in pl.cell_of];pl.comp_at={cell:i for i,cell in enumerate(pl.cell_of)}
@@ -201,10 +201,10 @@ def _anchor_geometry(par, pl, comps, index, group, options):
         terminals=group['anchors'][net]
         conductive=[t for t in terminals if t[1] in ('D','S','C','E') and comps[index[t[0]]]['symbol'] in ACTIVE]
         if conductive:terminals=conductive
-        terminal=min(terminals,key=lambda t:(-pl.pin_world(index[t[0]],t[1])[1] if rail and par.power_marker_sym(rail)=='ground'
+        terminal=min(terminals,key=lambda t:(-pl.pin_world(index[t[0]],t[1])[1] if rail and par.power_marker_sym(rail) in ('ground','vee-port')
                                               else pl.pin_world(index[t[0]],t[1])[1],pl.pin_world(index[t[0]],t[1])[0]))
     if rail is not None:
-        outward=(0,1 if par.power_marker_sym(rail)=='ground' else -1)
+        outward=(0,1 if par.power_marker_sym(rail) in ('ground','vee-port') else -1)
     else:
         outward=VECTORS[pl.pin_dir(index[terminal[0]],terminal[1])]
         if terminal[1] in ('D','C') and comps[index[terminal[0]]]['symbol'] in ACTIVE:
@@ -377,7 +377,7 @@ def slot_trials(par, pl, comps, index, group, options):
         direction=VECTORS[pl.pin_dir(index[a[0]],a[1])]
         pad=options.halo+options.center_spacing+2*step
         contact=list(ea)
-        ground_shunt=(any(par.power_marker_sym(n)=='ground' for n in group['ends'])
+        ground_shunt=(any(par.power_marker_sym(n) in ('ground','vee-port') for n in group['ends'])
                       and a[1] in ('D','C') and group['role'] not in INLINE_ROLES | {'terminal_bank'})
         if direction==outer and not ground_shunt:
             contact=[ea[k]+outer[k]*pad for k in range(2)]
