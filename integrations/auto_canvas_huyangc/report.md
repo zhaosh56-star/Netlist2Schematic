@@ -1,0 +1,54 @@
+# 原生项目 JSON 适配 — 第一轮报告
+
+## Summary
+
+按用户确认，先完成原生 `.icproj.json` 输入输出，尚未接网页按钮。独立分支 `adapt/auto-canvas-huyangc` 基于主线 `19741f0`，本轮只增加 `integrations/`，不改主算法或目标项目源码。
+
+## Steps
+
+| 步骤 | 状态 | 结果 |
+| --- | --- | --- |
+| 调查现有接入 | done | 确认 Hook、Worker、会话版本检查、Edit Engine 及原生读写协议 |
+| 原生快照与符号映射 | done | 实际可见引脚、网络、模型绑定、正式端口、选中单元与源哈希 |
+| 独立算法调用 | done | 字节不变的核心快照、任务私有符号资源；沿用现有候选及恢复预算 |
+| 原生编辑输出 | done | 位姿、junction、route、供电标记及正式接口均为原生对象 |
+| 独立复验 | done | 项目与单元电气图等价、原器件及参数、准确引脚、原生审计、序列化重读 |
+| 小例、文档与结果页 | done | RC、MOS、BJT、多单元接口四例；README、测试和本地可查看成果 |
+| 网页按钮 | deferred | 用户指定先验证 JSON，下一阶段再接 |
+
+## Review findings addressed
+
+本轮没有独立 review.md。实现中已纠正：条件隐藏的 MOS 体端误枚举、真实供电符号 pin 与绘图原点差异、VSS/VEE 与节点 0 的不同语义、正式端口入口穿过已有线路、及仅检查项目顶层不能覆盖未使用子单元的问题。均保留了对应测试或真实原生往返检查。
+
+## Acceptance results
+
+```text
+python -X utf8 -B -m unittest discover -s integrations/auto_canvas_huyangc/tests -t . -v
+→ 32 tests, OK，25.452 秒；集成环境已设置，无跳过。
+
+四个独立实测，iterations=20000, seed=20261029，原候选与预算：
+RC                 valid，5.100 秒
+SKY130 共源级      valid，5.455 秒
+BJT VSS/VEE/0      valid，5.168 秒
+multi-cell         valid，5.232 秒；只修改 amplifier，其他两份 Document 保持原样。
+```
+
+四例原生 unsafeProblems、draftingProblems 均为空；源输入未改，算法快照源码未改。指标与路径见 README 和 `output/auto-canvas-adapter/verified-20261124/summary.json`。
+
+主算法此前独立预算提交的全量测试为 2583 项通过；本轮没有核心变更，不将这次适配层 32 项冒充为再次全量运行。
+
+## Investigation results
+
+1. auto-canvas 的算法入口返回 typed edits，SVG 不是编辑接口。当前适配已实际使用原生 Edit Engine，后续按钮可以复用现有会话／revision 提交边界。
+2. 文件 schema 78 和内存 schema 58 不同；输出通过目标项目 serializeProject / parseProject，未手写伪原生协议。
+3. 原生符号与当前算法大体相近，但真实供电接点、条件可见引脚和端口入口存在差异；这些差异只在适配层与私有资源副本处理。
+4. 当前目标工作区没有已安装完整 pnpm 依赖；使用现有 Node 24 与独立缓存运行所需包，下载摘要按目标锁文件校验，没有安装或修改目标仓库依赖。
+5. 原生图形规则与核心几何规则并不完全相同；允许有限调整原生单端标记并重新审计，不能因此放宽核心或原生规则，也不能移动算法已布置的电气器件。
+
+## Deviations and open questions
+
+- 使用源码加载桥，而不是改动目标工程来构建或安装依赖；生产服务可换为已构建原生包。
+- 现有明确拒绝边界包括层次展开、总线、耦合电感、原生布局约束、多个 Base Net 待合并、复杂可见引脚及不同几何；详见 README。
+- 原生供电语义会使部分低电源使用向下命名帽而非 Ground；保持网络独立性优先。
+- 原生事务一次最多 1024 项编辑，超限明确拒绝；后续若需要更大电路，应在项目接口阶段设计原子批次而非删除验收。
+- 四个小例证明原生输入输出及连接保留，不代表整个目标项目所有电路均已验收。网页交互、服务生命周期与目标项目完整 pnpm 测试尚未实施。

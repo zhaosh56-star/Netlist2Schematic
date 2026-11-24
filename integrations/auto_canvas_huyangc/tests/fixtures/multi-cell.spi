@@ -1,0 +1,14 @@
+* Only amplifier is selected for layout; top and spare retain their drawings.
+.model NN NMOS
+.subckt amplifier inp out vdd vss
+M1 out inp vss vss NN W=10u L=1u
+R1 vdd out 10k
+C1 out vss 1p
+.ends amplifier
+.subckt spare a b
+Rkeep a b 47k
+.ends spare
+X1 input output vdd vss amplifier
+Vdd vdd 0 DC 5
+Vin input 0 DC 0.7
+.end

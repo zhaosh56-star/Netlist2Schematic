@@ -1,0 +1,7 @@
+* Distinct low rails must never be collapsed onto each other or node 0.
+.model NN NPN
+Q1 out input vss NN
+R1 vdd out 10k
+R2 out vee 50k
+V1 input 0 DC 0.7
+.end

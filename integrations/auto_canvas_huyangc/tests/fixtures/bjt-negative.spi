@@ -1,0 +1,6 @@
+* Adapter regression: a negative rail remains distinct from electrical ground.
+.model NN NPN
+Q1 out input vee NN
+R1 vdd out 10k
+V1 input 0 DC 0.7
+.end

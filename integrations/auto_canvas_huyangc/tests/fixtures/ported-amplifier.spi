@@ -1,0 +1,8 @@
+* Native formal ports remain editable; sibling Cells must stay unchanged.
+.model NN NMOS
+.subckt amplifier inp out vdd vss
+M1 out inp vss vss NN W=10u L=1u
+R1 vdd out 10k
+C1 out vss 1p
+.ends amplifier
+.end
