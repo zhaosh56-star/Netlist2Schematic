@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { registerProjectSources } from './source-loader.mjs';
 import { markerSeats } from './native-marker-seats.mjs';
 import { verifyVisibleRouting } from './visible-routing.mjs';
+import { verifyVisibleSupplies } from './visible-supplies.mjs';
 
 const [operation, ...args] = process.argv.slice(2);
 const flags = new Map();
@@ -172,6 +173,7 @@ if (operation === 'snapshot') {
   if (audit.unsafeProblems.length)
     throw new Error('NATIVE_ROUTE_AUDIT_FAILED: ' + JSON.stringify(audit.unsafeProblems));
   const visibleSignals=verifyVisibleRouting(saved,savedResolver,plan,derived);
+  const visibleSupplies=verifyVisibleSupplies(saved,savedResolver,plan,derived,model);
   let svg;
   if (flags.has('--svg')) {
     const { renderDocumentSvg } = await import('@icm/render-svg');
@@ -186,7 +188,7 @@ if (operation === 'snapshot') {
     originalInstancesPreserved: true, modelParametersPreserved: true,
     unselectedDocumentsPreserved:true,
     exactPinGeometry: true, roundtripVerified: true, nativeAudit: audit,
-    visibleSignals,
+    visibleSignals,visibleSupplies,
     powerInterfacePresentationChanges:plan.symbolOverrides || [],
     nativeMarkerSeats:{actions:seating.actions,attempts:seating.attempts,transactions:seating.transactions} };
   if (flags.has('--report')) writeFileSync(resolve(flags.get('--report')), JSON.stringify(report,null,2)+'\n');

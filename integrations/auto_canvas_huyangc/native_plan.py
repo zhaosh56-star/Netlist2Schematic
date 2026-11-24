@@ -252,15 +252,24 @@ def build_plan(snapshot, profile, wire_plan):
                                           style='formal-power-port'))
             else:
                 # The original Base Net already carries electrical identity.
-                # A junction with a bound name draws a local named supply stub
-                # without introducing a new power-domain/name claim.
+                # Register this visible local owner as well as its text. A
+                # display-only label leaves the formal port's component open
+                # in the editor's imported routing reference. No power domain
+                # is added: classification and formal pin order stay intact.
                 junction = stable_id('junction',[net_id,p])
+                label_id = stable_id('label',[junction,'net-label'])
                 deferred_labels.append(dict(kind='upsert_schematic_annotation',annotation=dict(
-                    id=stable_id('label',[junction,'net-label']),kind='net-label',netId=net_id,
+                    id=label_id,kind='net-label',netId=net_id,
                     binding=dict(kind='net-name',netId=net_id),
                     anchor=dict(kind='object',objectId=junction,localOffset=dict(x=12,y=-8),
                                 fallbackPosition=dict(x=p[0]+12,y=p[1]-8)),
                     alignment='start',rotation=0,locked=False)))
+                group = logical_groups.get(net_id,{})
+                name = group.get('name') or next(t['name'] for t in doc['netlist']['terminals']
+                                                if t['netId']==net_id)
+                deferred_labels.append(dict(kind='upsert_connectivity_evidence',evidence=dict(
+                    id=stable_id('claim',label_id),kind='name-claim',netId=net_id,name=name,
+                    owner=dict(kind='net-label',annotationId=label_id),scope=group.get('scope','local'))))
             continue
         canonical = item['symbol']
         # The engine can draw VSS as a ground-style glyph while keeping its
@@ -399,4 +408,9 @@ def build_plan(snapshot, profile, wire_plan):
                     coreSegments=deepcopy(segments),
                     terminals=[endpoint for members in contacts[alias].values() for endpoint in members])
                     for alias,segments in wire_plan['routes'].items() if alias in native_nets},
+                powerGeometry={native_nets[alias]:dict(
+                    name=logical_groups.get(native_nets[alias],{}).get('name') or alias,
+                    scope=logical_groups.get(native_nets[alias],{}).get('scope','local'),
+                    terminals=[endpoint for members in contacts[alias].values() for endpoint in members])
+                    for alias in power_routes},
                 nativeGrid=grid, originalGrid=doc['presentation']['grid'])

@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { registerProjectSources } from './source-loader.mjs';
 import { verifyVisibleRouting } from './visible-routing.mjs';
+import { verifyVisibleSupplies } from './visible-supplies.mjs';
 
 const [operation, ...args] = process.argv.slice(2);
 const flags = new Map();
@@ -79,10 +80,11 @@ if (operation === 'input') {
   if (audit.unsafeProblems.length || ['wireLength','crossings','bends'].some(k=>audit[k]!==validation.nativeAudit[k]))
     throw new Error('WEB_ATOMIC_ROUTE_AUDIT_FAILED: '+JSON.stringify(audit));
   const visibleSignals=verifyVisibleRouting(committed.document,resolver,plan,derived);
+  const visibleSupplies=verifyVisibleSupplies(committed.document,resolver,plan,derived,model);
   const roundtrip=protocol.parseProject(protocol.serializeProject(next));
   if (!same(project,roundtrip)) throw new Error('WEB_ROUNDTRIP_FAILED');
   write({documentId:original.id,result:{edits,groups:[],diagnostics:[]},
     validation:{electricalEquivalent:true,atomicTransaction:true,nativeAudit:audit,
-      visibleSignals,
+      visibleSignals,visibleSupplies,
       expectedRevision:original.revision,engine:'Netlist2Schematic'}});
 } else throw new Error(`Unknown operation ${operation}`);

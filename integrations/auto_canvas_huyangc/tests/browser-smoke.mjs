@@ -77,6 +77,8 @@ try {
   await cdp.call('DOM.setFileInputFiles',{nodeId:file.nodeId,files:[input]});
   await until(()=>cdp.evaluate(`!document.querySelector('[data-testid="auto-layout-button"]')?.disabled`));
   const before=await save('before');await screenshot('before');
+  const beforeGuidance=flags.get('--expect-no-flightlines')==='true'?
+    await cdp.evaluate(`({visible:document.querySelectorAll('[data-testid="flightline"]').length,total:document.querySelector('[data-testid="editor-test-telemetry"] [data-testid="flightline-count"]')?.textContent ?? null})`):null;
   console.log('Browser input opened; clicking original Auto Layout button');
   const oldJobs=new Set(jobIds());
   await click('[data-testid="auto-layout-button"]');
@@ -84,6 +86,13 @@ try {
   const final=await status();console.log('First result:',final);
   await screenshot('after');
   assert.match(final,/^Auto Layout applied/);
+  if(flags.get('--expect-no-flightlines')==='true') {
+    const guidance=await cdp.evaluate(`({visible:document.querySelectorAll('[data-testid="flightline"]').length,total:document.querySelector('[data-testid="editor-test-telemetry"] [data-testid="flightline-count"]')?.textContent ?? null})`);
+    assert.equal(guidance.visible,0);
+    if(guidance.total!==null)assert.equal(Number(guidance.total),0);
+    writeFileSync(join(out,'routing-guidance.json'),JSON.stringify({before:beforeGuidance,after:guidance},null,2));
+    steps.push({step:'no-pending-routing-guides',status:'passed',before:beforeGuidance,after:guidance});
+  }
   const newJob=await until(()=>jobIds().find(id=>!oldJobs.has(id)));
   const job=await until(()=>{const file=join(jobsRoot,newJob,'web-job.json');return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):null;});
   assert.equal(job.status,'succeeded');assert.ok(job.results.some(r=>r.result.edits.length>0));

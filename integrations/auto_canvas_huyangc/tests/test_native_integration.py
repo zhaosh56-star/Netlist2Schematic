@@ -36,6 +36,7 @@ class NativeIntegrationTests(unittest.TestCase):
             'bjt':ADAPTER_ROOT/'tests/fixtures/bjt-dual-negative.spi',
             'ports':ADAPTER_ROOT/'tests/fixtures/multi-cell.spi',
             'ordered':ADAPTER_ROOT/'tests/fixtures/ordered-supply-ports.spi',
+            'named':ADAPTER_ROOT/'tests/fixtures/named-supplies.spi',
         }
         for name,source in sources.items():
             project=cls.root/(name+'.icproj.json')
@@ -79,6 +80,10 @@ class NativeIntegrationTests(unittest.TestCase):
                 self.assertTrue(visible['checked'])
                 self.assertTrue(all(n['connected'] and n['coreCovered'] and
                                     n['cycles']<=n['originalCycles'] for n in visible['nets']))
+                supplies=report['validation']['visibleSupplies']
+                self.assertTrue(supplies['checked'])
+                self.assertEqual(supplies['remainingSupplyGuides'],0)
+                self.assertTrue(all(n['connected'] for n in supplies['nets']))
                 self.assertTrue(Path(report['native_svg']).is_file())
                 manifest=json.loads((args.out_dir/'private/engine/engine-snapshot.json').read_text(encoding='utf-8'))
                 self.assertFalse(manifest['source_code_modified'])
@@ -110,8 +115,51 @@ class NativeIntegrationTests(unittest.TestCase):
         plan=json.loads((args.out_dir/'native-plan.json').read_text(encoding='utf8'))
         protected={t['netId'] for t in before['netlist']['terminals']}
         self.assertFalse(any(e['kind']=='upsert_connectivity_evidence' and
-            e['evidence'].get('netId') in protected for e in plan['edits']))
+            e['evidence'].get('netId') in protected and
+            'powerDomain' in e['evidence'] for e in plan['edits']))
         self.assertTrue(report['validation']['electricalEquivalent'])
+
+    def test_named_supply_stubs_complete_import_guidance_without_promoting_ports(self):
+        _,args,report=self.results['named']
+        snapshot=json.loads((args.out_dir/'private/native-snapshot.json').read_text(encoding='utf8'))
+        before=next(d for d in snapshot['project']['documents'] if d['id']==snapshot['documentId'])
+        after=json.loads(Path(report['native_project']).read_text(encoding='utf8'))
+        selected=next(d for d in after['documents'] if d['id']==before['id'])
+        self.assertEqual(before['netlist']['terminals'],selected['netlist']['terminals'])
+        plan=json.loads((args.out_dir/'native-plan.json').read_text(encoding='utf8'))
+        names=[e['evidence'] for e in plan['edits'] if e['kind']=='upsert_connectivity_evidence' and
+               e['evidence'].get('owner',{}).get('kind')=='net-label']
+        self.assertTrue(names)
+        self.assertFalse(any('powerDomain' in e for e in names))
+        self.assertEqual(report['validation']['visibleSupplies']['remainingSupplyGuides'],0)
+        self.assertTrue(any(n['physicalComponents']>1 for n in report['validation']['visibleSupplies']['nets']))
+
+    def test_missing_supply_name_or_wire_is_rejected_before_success_output(self):
+        project,args,_=self.results['named']
+        original=json.loads((args.out_dir/'native-plan.json').read_text(encoding='utf8'))
+        for failure in ('name','wire','wrong-name'):
+            plan=deepcopy(original)
+            if failure=='name':
+                plan['edits']=[e for e in plan['edits'] if not(e['kind']=='upsert_connectivity_evidence' and
+                    e['evidence'].get('owner',{}).get('kind')=='net-label')]
+            elif failure=='wire':
+                removed=next(e for e in plan['edits'] if e['kind']=='set_route_path' and
+                             e['route']['netId'] in plan['powerGeometry'])
+                plan['edits'].remove(removed)
+            else:
+                claim=next(e['evidence'] for e in plan['edits'] if e['kind']=='upsert_connectivity_evidence' and
+                           e['evidence'].get('owner',{}).get('kind')=='net-label')
+                claim['name']='WRONG_RAIL'
+            path=self.root/('supply-'+failure+'.json');path.write_text(json.dumps(plan),encoding='utf8')
+            output=self.root/('supply-'+failure+'.icproj.json')
+            with self.subTest(failure=failure):
+                result=self.native('apply',project,output,['--plan',path],expected=1)
+                if failure=='wrong-name':
+                    self.assertIn('NATIVE_TRANSACTION_REJECTED',result.stderr)
+                    self.assertIn('conflicting Logical Net names',result.stderr)
+                else:
+                    self.assertRegex(result.stderr,'NATIVE_(SUPPLY_|ELECTRICAL_EQUIVALENCE_FAILED|ROUTE_AUDIT_FAILED)')
+                self.assertFalse(output.exists())
 
     def test_source_revision_and_model_version_tampering_are_refused(self):
         project,args,_=self.results['rc']
@@ -202,6 +250,8 @@ class NativeIntegrationTests(unittest.TestCase):
                 self.assertTrue(data['validation']['atomicTransaction'])
                 self.assertTrue(data['validation']['electricalEquivalent'])
                 self.assertTrue(data['validation']['visibleSignals']['checked'])
+                self.assertTrue(data['validation']['visibleSupplies']['checked'])
+                self.assertEqual(data['validation']['visibleSupplies']['remainingSupplyGuides'],0)
                 self.assertEqual(data['documentId'],snapshot['documentId'])
 
 

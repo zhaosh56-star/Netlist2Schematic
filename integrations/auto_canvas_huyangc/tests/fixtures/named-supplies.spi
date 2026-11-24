@@ -1,0 +1,11 @@
+* Repeated, unclassified formal rails need real local named connections.
+.subckt named VCC VEE VSS inp out
+R1 VCC a 10k
+R2 VCC out 20k
+R3 a VSS 30k
+R4 out VSS 40k
+R5 a VEE 50k
+R6 VEE out 60k
+R7 inp a 1k
+V1 inp VSS DC 0
+.ends named

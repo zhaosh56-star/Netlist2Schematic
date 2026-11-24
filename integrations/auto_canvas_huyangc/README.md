@@ -97,6 +97,8 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 
 `engine_metrics` 是算法原来的信号线路指标；`nativeAudit` 还统计供电引线及正式端口支线，线长和折角可能更多。二者不能直接当作算法优化前后对比。
 
+分散供电标签同时登记原生同名连接，不新增电源域或重排正式端口。`native-validation.json` 的 `visibleSupplies` 验证每个实际供电分支接到了对应命名接点，并检查原始网表的供电飞线已清空；它与信号线检查分别执行。目标库的 `missingConnections` 只统计实体导线，仍可能把合法的命名供电分支计为分离，不能用它替代上述验收。详见 [供电飞线修复](web-supply-fix-report.md)。
+
 网页接入复用正式主算法源码，但为了生成可编辑的原生项目，按目标项目的实际符号几何计算位置与引脚，并使用目标渲染器。适配命令目前显式设置 `--formal-output off`；主项目正式 SVG 的字体、标注和 VDD 合并展示尚未完整移植到网页，不能把两者视为完全相同的成品样式。
 
 ## 第一版支持边界
@@ -127,12 +129,13 @@ $env:NETLIST2SCHEMATIC_ENGINE_ROOT = 'D:\gongzuo'
   -t . -v
 ```
 
-当前共有 54 项 Python 测试，完整回归通过，其中 10 项经过真实原生包。另有 11 项 Node 测试，覆盖 Worker 协议和实际导线拓扑。未设置上述环境或未准备缓存时，10 项集成测试会明确跳过。第二阶段验证了 RC、MOS 的真实按钮、Undo/Redo、版本保护和取消，并在实际 637 电路及 MOS 用户输入上完成重新布局、原生回写及一次撤销／重做。详见 WEB.md。
+当前共有 56 项 Python 测试，完整回归通过，其中 12 项经过真实原生包。另有 15 项 Node 测试，覆盖 Worker 协议、信号导线及命名供电连通。未设置上述环境或未准备缓存时，12 项集成测试会明确跳过。第二阶段验证了 RC、MOS 的真实按钮、Undo/Redo、版本保护和取消，并在实际 637 电路及 MOS 用户输入上完成重新布局、原生回写及一次撤销／重做。1874 实际网页供电飞线从 2 条降至 0 条。详见 WEB.md。
 
 ```powershell
 & D:\auto-canvas-huyangc\.local\preview\runtime\node.exe --test `
   .\integrations\auto_canvas_huyangc\tests\web-worker.test.mjs `
-  .\integrations\auto_canvas_huyangc\tests\visible-routing.test.mjs
+  .\integrations\auto_canvas_huyangc\tests\visible-routing.test.mjs `
+  .\integrations\auto_canvas_huyangc\tests\visible-supplies.test.mjs
 ```
 
 2026-11-24 第一阶段接口验证记录（本次供电判定修复前），使用主算法、20,000 次迭代、默认候选与预算：
