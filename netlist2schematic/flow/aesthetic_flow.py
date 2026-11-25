@@ -67,7 +67,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                   region_layout='off', readability_layout='off', readability_phase=5,
                   route_tradeoff='strict', attachment_layout='off', column_layout='off', passive_skeleton='off',
                   simplify_policy='off', simplify_seconds=5, branch_layout='off',
-                  capture_failed_candidate=False):
+                  capture_failed_candidate=False, layout_budget=None):
     validate_policy(candidate_budget)
     if branch_layout not in ('off','auto'):
         raise ValueError('branch_layout must be off or auto')
@@ -145,6 +145,7 @@ def select_layout(path, *, cell=None, iterations=20000, seed=20261029,
                                        structure_phase=structure_phase, region_layout=region_layout,
                                        readability_layout=readability_layout,
                                        readability_phase=readability_phase,
+                                       **({'layout_budget':layout_budget} if layout_budget is not None else {}),
                                        **({'branch_layout':branch_layout} if branch_layout=='auto' else {}),
                                         **({'attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
                                        **({'passive_skeleton':passive_skeleton,'skeleton_columns':column_layout=='auto'}

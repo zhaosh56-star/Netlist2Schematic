@@ -485,7 +485,7 @@ def _guest_guards(par, trial, comps, index, groups):
 
 
 def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds=1., max_trials=128,
-         skip_rejected_geometry=False):
+         skip_rejected_geometry=False, refine_terminal_placements=True):
     """Compact then standard, sharing one original finite packing quota."""
     from netlist2schematic.plugins.passive_skeleton.module_geometry import can_compact, SPACING_VERSION
     if type(seconds) not in (int,float) or not isfinite(seconds) or seconds<0:
@@ -511,7 +511,8 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
         for group in attempt_plan['groups']:group['spacing_policy']=profile
         result,report=_pack_once(par,core,comps,nets,index,attempt_plan,options,
             deadline=min(stop,perf_counter()+allowance),seconds=allowance,max_trials=quota,
-            skip_rejected_geometry=skip_rejected_geometry,_rejected_geometry=rejected_geometry)
+            skip_rejected_geometry=skip_rejected_geometry,_rejected_geometry=rejected_geometry,
+            **({'refine_terminal_placements':False} if not refine_terminal_placements else {}))
         used+=report['trials']
         attempts.append(dict(profile=profile,status='valid' if result is not None else 'failed',
             trials=report['trials'],seconds=report['elapsed_seconds'],stop_reason=report['stop_reason'],
@@ -527,7 +528,7 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
 
 
 def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, seconds=1., max_trials=128,
-               skip_rejected_geometry=False,_rejected_geometry=None):
+               skip_rejected_geometry=False,_rejected_geometry=None, refine_terminal_placements=True):
     """Atomic family packing with a single finite local budget."""
     from netlist2schematic.plugins.preflight.placement_preflight import _static_faults
     from netlist2schematic.routing.orthogonal_router import RoutingFailure
@@ -620,8 +621,11 @@ def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, s
     # Endpoint refinement only consumes remaining packing time/trials; a
     # partial/expired proposal never discards this safe original result.
     from netlist2schematic.plugins.passive_skeleton.terminal_slots import refine_terminals
-    frame, terminal_report = refine_terminals(par,frame,comps,nets,index,plan,options,
-        deadline=stop,max_trials=max(0,max_trials-report['trials']))
+    if refine_terminal_placements:
+        frame, terminal_report = refine_terminals(par,frame,comps,nets,index,plan,options,
+            deadline=stop,max_trials=max(0,max_trials-report['trials']))
+    else:
+        terminal_report = dict(trials=0, stop_reason='necessary_packing_only')
     report['terminal_search']=terminal_report
     report['trials']+=terminal_report['trials']
     for action in report['actions']:
