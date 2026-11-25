@@ -4,6 +4,8 @@
 
 网页入口为 `http://127.0.0.1:4174/editor`，原来的 4173 保留原项目算法。[网页启动、停止、使用和验证说明](WEB.md)。以下内容说明离线 JSON 接口及共同的支持边界。
 
+**网页当前默认（2026-11-25）：整次执行预算300秒，只尝试候选2、3。** 有完整合法结果时正常选图；两者都未完成时，选择结构完整、连接进度较好的安全布局，保留已验收的网络和真实引脚短出线，交付带待连飞线的可编辑草稿。草稿明确标为未完成，跳过候选1和总线。可选的通用算法预算接口已同步到`main`，网页显式启用`adaptive`；原CLI默认、SA/A*规则保持。每次任务仍逐字节复制选定版本的算法源码，不在运行时修改或替换函数。预算、边界与实测见[可编辑草稿说明](editable-drafts.md)。
+
 ## 代码放在哪里
 
 - 算法主线：`main`，本轮基线 `19741f0`。
@@ -118,18 +120,20 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 
 ## 测试与实测
 
+网页当前先正常运行候选2、3，任一正常结果合法就按原规则选图；两个都失败才共享剩余预算进行恢复。调度只位于 `candidate_schedule.py` 适配层，原主算法及离线完整模式不改。C23同参验证保持相同布局及线路，耗时由162.402秒降到134.444秒；详见[调度及草稿说明](editable-drafts.md)。
+
 ```powershell
 Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 $env:AUTO_CANVAS_PROJECT_ROOT = 'D:\auto-canvas-huyangc'
 $env:AUTO_CANVAS_RUNTIME = "$PWD\.cache\auto-canvas-runtime"
-$env:NETLIST2SCHEMATIC_ENGINE_ROOT = 'D:\gongzuo'
+$env:NETLIST2SCHEMATIC_ENGINE_ROOT = "$PWD"
 
 & D:\gongzuo\.venv\Scripts\python.exe -X utf8 -B -m unittest discover `
   -s integrations\auto_canvas_huyangc\tests `
   -t . -v
 ```
 
-当前共有 56 项 Python 测试，完整回归通过，其中 12 项经过真实原生包。另有 15 项 Node 测试，覆盖 Worker 协议、信号导线及命名供电连通。未设置上述环境或未准备缓存时，12 项集成测试会明确跳过。第二阶段验证了 RC、MOS 的真实按钮、Undo/Redo、版本保护和取消，并在实际 637 电路及 MOS 用户输入上完成重新布局、原生回写及一次撤销／重做。1874 实际网页供电飞线从 2 条降至 0 条。详见 WEB.md。
+当前共有 85 项适配层Python测试，其中16项经过真实原生包，均已通过；另有151项相关算法测试及18项Node测试通过。算法检查是本轮相关范围，不冒充全部主项目回归。未设置上述环境或未准备缓存时，16项原生集成测试会明确跳过。实际浏览器验证了完整结果的按钮、Undo/Redo、版本保护和取消，也验证了C23草稿的按钮回写、真实待连飞线、手工起线及保存。详见WEB.md。
 
 ```powershell
 & D:\auto-canvas-huyangc\.local\preview\runtime\node.exe --test `

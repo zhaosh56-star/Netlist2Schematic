@@ -34,3 +34,16 @@ test('existing same-net rings are preserved while additional rings are rejected'
   const core=[[[0,0],[40,0]],[[40,0],[40,40]],[[40,40],[0,40]],[[0,40],[0,0]]];
   assert.equal(verifySignalConductors(core,core,[p(0,0),p(40,40)]).cycles,1);
 });
+
+test('only explicit draft validation allows disconnected but safe terminal groups',()=>{
+  const stubs=[[[0,0],[20,0]],[[80,0],[100,0]]];
+  assert.throws(()=>verifySignalConductors(stubs,stubs,[p(0,0),p(100,0)]),/DISCONNECTED/);
+  const draft=verifySignalConductors(stubs,stubs,[p(0,0),p(100,0)],{allowIncomplete:true});
+  assert.equal(draft.connected,false);assert.equal(draft.components,2);assert.equal(draft.coreCovered,true);
+});
+test('draft policy does not excuse missing original wires, extra loops or islands',()=>{
+  const core=[[[0,0],[0,30]],[[0,20],[50,20]]],contacts=[p(0,0),p(0,30),p(50,20)];
+  assert.throws(()=>verifySignalConductors(core,[core[0]],contacts,{allowIncomplete:true}),/CORE_SIGNAL_REMOVED/);
+  assert.throws(()=>verifySignalConductors(core,[...core,[[0,24],[24,24]],[[24,24],[24,20]]],contacts,{allowIncomplete:true}),/LOOP_ADDED/);
+  assert.throws(()=>verifySignalConductors(core,[...core,[[100,0],[120,0]]],contacts,{allowIncomplete:true}),/ISLAND_ADDED/);
+});

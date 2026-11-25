@@ -26,6 +26,15 @@ def refusal_message(output, error):
                 return str(report['message'])[:1000]
         except (OSError,ValueError):
             pass
+    for relative in ('adapter-report.json','engine-result/editable-engine-report.json'):
+        path=output/relative
+        if path.is_file():
+            try:
+                report=json.loads(path.read_text(encoding='utf8'))
+                if report.get('status')=='failed' and report.get('message'):
+                    return str(report['message'])[:1000]
+            except (OSError,ValueError):
+                pass
     lines=str(error).splitlines()
     for line in lines:
         if line.startswith('Adapter error: ') or line.startswith('Error: '):
@@ -58,11 +67,12 @@ class WebJobConfig:
     runtime: Path
     node: str
     jobs_root: Path
-    engine_seconds: float = 720
+    engine_seconds: float = 300
     iterations: int = 20000
     seed: int = 20261029
     lease_seconds: float = 8
     queue_limit: int = 4
+    layout_budget: str = 'adaptive'
 
 
 @dataclass
@@ -77,6 +87,7 @@ class Job:
     finished_at: float | None = None
     results: list = field(default_factory=list)
     message: str = ''
+    execution_seconds: float = 0.
     cancel: threading.Event = field(default_factory=threading.Event)
 
 
@@ -123,6 +134,7 @@ class JobManager:
     def _view(self, job):
         result = dict(jobId=job.id, status=job.state, stage=job.stage,
             runId=job.request['runId'], leaseSeconds=self.config.lease_seconds,
+            totalSeconds=self.config.engine_seconds,executionSeconds=job.execution_seconds,
             progress=dict(cell=job.cell, cells=len(job.request['documentIds']), evaluations=0, budget=0))
         if job.state == 'succeeded':
             result['results'] = job.results
@@ -172,7 +184,9 @@ class JobManager:
                 self._run(job)
                 with self.lock:
                     if not job.cancel.is_set():
-                        job.state, job.stage = 'succeeded', 'verified'
+                        job.state='succeeded'
+                        job.stage=('draft_ready' if any(r.get('resultKind')=='editable_draft' for r in job.results)
+                                   else 'verified')
             except JobCancelled:
                 self.cancel_job(job.id)
             except Exception as exc:
@@ -188,6 +202,7 @@ class JobManager:
     def _command(self, job, label, command, seconds):
         if job.cancel.is_set():
             raise JobCancelled()
+        if seconds<=0:raise ValueError('The web layout total budget is exhausted before '+label)
         with self.lock:
             job.stage = label
         log = job.folder/(label+'.log')
@@ -208,9 +223,10 @@ class JobManager:
 
     def _run(self, job):
         c = self.config
+        execution_started=perf_counter();deadline=execution_started+c.engine_seconds
         source = job.folder/'source.icproj.json'
         self._command(job, 'native-input', self._native('input',
-            job.folder/'worker-request.json', source), 60)
+            job.folder/'worker-request.json', source), min(30.,c.engine_seconds*.1))
         results = []
         for index, ident in enumerate(job.request['documentIds']):
             started = perf_counter()
@@ -218,21 +234,31 @@ class JobManager:
                 job.cell = index+1
             output = job.folder/f'cell-{index+1}'
             try:
+                available=max(0.,deadline-perf_counter())/(len(job.request['documentIds'])-index)
+                atomic_reserve=min(20.,available*.1)
+                adapter_seconds=max(0.,available-atomic_reserve)
                 self._command(job, f'cell-{index+1}-python', [sys.executable,'-X','utf8','-B',
                     '-m','integrations.auto_canvas_huyangc','--project-root',str(c.project_root),
                     '--engine-root',str(c.engine_root),'--runtime',str(c.runtime),'--node',c.node,
                     '--input',str(source),'--document-id',ident,'--out-dir',str(output),
                     '--engine-seconds',str(c.engine_seconds),'--iterations',str(c.iterations),
-                    '--seed',str(c.seed)], c.engine_seconds+190)
+                    '--seed',str(c.seed),'--result-policy','editable',
+                    '--total-seconds',str(adapter_seconds),
+                    '--layout-budget',c.layout_budget], adapter_seconds)
                 report = json.loads((output/'adapter-report.json').read_text(encoding='utf8'))
-                if report['status'] != 'valid':
+                if report['status'] not in ('valid','editable_draft'):
                     raise ValueError('The adapter did not produce a verified result')
                 browser_result = output/'browser-result.json'
+                extra=['--allow-draft','true'] if report['status']=='editable_draft' else []
                 self._command(job, f'cell-{index+1}-atomic-verify', self._native('result', source,
                     browser_result, '--plan',output/'native-plan.json',
-                    '--validation',output/'native-validation.json','--expected',report['native_project']), 60)
+                    '--validation',output/'native-validation.json','--expected',report['native_project'],*extra),
+                    min(60.,max(0.,deadline-perf_counter())))
                 item = json.loads(browser_result.read_text(encoding='utf8'))
+                if perf_counter()>deadline:
+                    raise ValueError('Web layout total budget exhausted before the result could be returned')
                 results.append(dict(documentId=ident, result=item['result'],
+                    resultKind=item.get('resultKind','complete'),
                     milliseconds=round((perf_counter()-started)*1000, 3)))
             except ValueError as exc:
                 # The editor's existing import session can apply other valid Cells
@@ -243,6 +269,7 @@ class JobManager:
         with self.lock:
             if job.cancel.is_set():
                 raise JobCancelled()
+            job.execution_seconds=round(perf_counter()-execution_started,6)
             job.results = results
 
     def close(self):

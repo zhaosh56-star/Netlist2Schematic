@@ -79,6 +79,24 @@ try {
   const before=await save('before');await screenshot('before');
   const beforeGuidance=flags.get('--expect-no-flightlines')==='true'?
     await cdp.evaluate(`({visible:document.querySelectorAll('[data-testid="flightline"]').length,total:document.querySelector('[data-testid="editor-test-telemetry"] [data-testid="flightline-count"]')?.textContent ?? null})`):null;
+  if(flags.get('--open-only')==='true') {
+    const guidance=await cdp.evaluate(`({visible:document.querySelectorAll('[data-testid="flightline"]').length,total:document.querySelector('[data-testid="editor-test-telemetry"] [data-testid="flightline-count"]')?.textContent ?? null})`);
+    assert.ok(guidance.visible>0,'A draft must retain real pending-connection guides');
+    if(guidance.total!==null)assert.ok(Number(guidance.total)>0);
+    steps.push({step:'saved-editable-draft-with-real-flightlines',status:'passed',...guidance});
+    await cdp.evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Draw');b?.click();})()`);
+    await wait(250);
+    await cdp.evaluate(`document.querySelector('[data-testid="flightline-hit"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
+    const wireStatus=await status();
+    assert.match(wireStatus,/Wire source/);
+    steps.push({step:'pending-connection-can-start-manual-wiring',status:'passed',message:wireStatus});
+    await cdp.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await cdp.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    const cancelled=await save('after-wire-cancel');assert.deepEqual(content(cancelled),content(before));
+    await screenshot('draft');
+    writeFileSync(join(out,'report.json'),JSON.stringify({status:'passed',origin,input,steps,errors},null,2));
+    console.log('EDITABLE DRAFT BROWSER CHECK PASSED',guidance.visible,'guides');
+  } else {
   console.log('Browser input opened; clicking original Auto Layout button');
   const oldJobs=new Set(jobIds());
   await click('[data-testid="auto-layout-button"]');
@@ -96,6 +114,14 @@ try {
   const newJob=await until(()=>jobIds().find(id=>!oldJobs.has(id)));
   const job=await until(()=>{const file=join(jobsRoot,newJob,'web-job.json');return existsSync(file)?JSON.parse(readFileSync(file,'utf8')):null;});
   assert.equal(job.status,'succeeded');assert.ok(job.results.some(r=>r.result.edits.length>0));
+  if(flags.get('--expect-editable-draft')==='true') {
+    assert.equal(job.stage,'draft_ready');
+    assert.ok(job.results.some(r=>r.resultKind==='editable_draft' &&
+      r.result.diagnostics.some(d=>d.severity==='warning' && d.code==='NETLIST2SCHEMATIC_EDITABLE_DRAFT')));
+    const guides=await cdp.evaluate(`document.querySelectorAll('[data-testid="flightline"]').length`);
+    assert.ok(guides>0,'Incomplete output must keep its real pending connections visible');
+    steps.push({step:'real-button-editable-draft-with-pending-guides',status:'passed',guides});
+  }
   const after=await save('after');
   assert.notDeepEqual(content(after),content(before));
   steps.push({step:'real-button-python-result',status:'passed',jobId:newJob,message:final});
@@ -134,6 +160,7 @@ try {
   }
   writeFileSync(join(out,'report.json'),JSON.stringify({status:'passed',origin,input,steps,errors},null,2));
   console.log('BROWSER ACCEPTANCE PASSED',steps.length);
+  }
 } catch(error) {
   if(cdp){
     try{writeFileSync(join(out,'failure-dom.json'),JSON.stringify(await cdp.evaluate(`({status:document.querySelector('[data-testid="status"]')?.textContent,body:document.body.innerText,files:[...document.querySelectorAll('input[type=file]')].map(e=>({id:e.dataset.testid,accept:e.accept})),buttons:[...document.querySelectorAll('button')].map(e=>({text:e.textContent,testid:e.dataset.testid,label:e.getAttribute('aria-label'),disabled:e.disabled}))})`),null,2));await screenshot('failure');}catch{}

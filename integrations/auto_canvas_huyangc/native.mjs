@@ -90,6 +90,8 @@ if (operation === 'snapshot') {
 } else if (operation === 'apply') {
   if (!flags.has('--plan')) throw new Error('Missing --plan');
   const plan = JSON.parse(readFileSync(resolve(flags.get('--plan')), 'utf8'));
+  const draft=plan.resultKind==='editable_draft';
+  if(draft && flags.get('--allow-draft')!=='true')throw new Error('EDITABLE_DRAFT_POLICY_REQUIRED');
   if (plan.protocolVersion !== 1 || plan.source.sha256 !== sourceSha256 ||
       plan.projectId !== project.id || plan.documentId !== documentId ||
       plan.expectedRevision !== document.revision ||
@@ -172,7 +174,7 @@ if (operation === 'snapshot') {
   const audit = auditModule.auditRouting(saved, savedResolver);
   if (audit.unsafeProblems.length)
     throw new Error('NATIVE_ROUTE_AUDIT_FAILED: ' + JSON.stringify(audit.unsafeProblems));
-  const visibleSignals=verifyVisibleRouting(saved,savedResolver,plan,derived);
+  const visibleSignals=verifyVisibleRouting(saved,savedResolver,plan,derived,{allowIncomplete:draft});
   const visibleSupplies=verifyVisibleSupplies(saved,savedResolver,plan,derived,model);
   let svg;
   if (flags.has('--svg')) {
@@ -183,7 +185,8 @@ if (operation === 'snapshot') {
   mkdirSync(dirname(output), { recursive: true });
   writeFileSync(output, serialized);
   if (svg !== undefined) writeFileSync(resolve(flags.get('--svg')), svg);
-  const report = { status: 'valid', documentId, sourceSha256, output,
+  const report = { status: draft?'editable_draft':'valid',complete:!draft,geometryValid:true,
+    documentId, sourceSha256, output,
     edits: plan.edits.length, revision: saved.revision, electricalEquivalent: true,
     originalInstancesPreserved: true, modelParametersPreserved: true,
     unselectedDocumentsPreserved:true,

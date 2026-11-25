@@ -35,6 +35,11 @@ def find_node(project_root, supplied):
 
 
 def run(args):
+    if getattr(args,'layout_budget','legacy')!='legacy' and getattr(args,'result_policy','complete')!='editable':
+        raise ValueError('Adaptive layout budget requires the editable result policy')
+    if getattr(args,'result_policy','complete')=='editable':
+        from .editable_adapter import run_editable
+        return run_editable(args)
     project_root, engine_root = args.project_root.resolve(), args.engine_root.resolve()
     source, destination = args.input.resolve(), args.out_dir.resolve()
     if not source.is_file():
@@ -150,10 +155,15 @@ def main(argv=None):
     selection.add_argument('--document-id')
     selection.add_argument('--cell',help='Select a unique native Cell/Document name without expanding hierarchy')
     parser.add_argument('--engine-seconds', type=float, default=720)
+    parser.add_argument('--result-policy',choices=('complete','editable'),default='complete')
+    parser.add_argument('--layout-budget',choices=('legacy','adaptive'),default='legacy')
+    parser.add_argument('--total-seconds',type=float,default=300,
+                        help='Editable policy total budget, including conversion and validation')
     parser.add_argument('--iterations', type=int, default=20000)
     parser.add_argument('--seed', type=int, default=20261029)
     args = parser.parse_args(argv)
-    if not isfinite(args.engine_seconds) or args.engine_seconds <= 0 or args.iterations < 0:
+    if (not isfinite(args.engine_seconds) or args.engine_seconds <= 0 or args.iterations < 0
+            or not isfinite(args.total_seconds) or args.total_seconds<=0):
         parser.error('Engine budget must be positive and iterations nonnegative')
     try:
         run(args)

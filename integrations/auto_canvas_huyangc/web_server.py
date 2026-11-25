@@ -17,6 +17,8 @@ import threading
 from urllib.parse import unquote, urlsplit
 
 from .cli import ADAPTER_ROOT, REPOSITORY_ROOT, find_node, write_json
+from .candidate_schedule import POLICY as CANDIDATE_SCHEDULE
+from .editable_adapter import validate_layout_budget_capability
 from .web_jobs import JobManager, WebJobConfig
 
 API = '/api/netlist2schematic'
@@ -145,6 +147,9 @@ class Handler(BaseHTTPRequestHandler):
             c = self.server.config
             self._reply(200, dict(status='ok', engine='Netlist2Schematic', protocolVersion=1,
                 pythonLayout=True, iterations=c.iterations, seed=c.seed, engineSeconds=c.engine_seconds,
+                resultPolicy='editable',totalSeconds=c.engine_seconds,primaryCandidates=['2','3'],
+                candidateSchedule=CANDIDATE_SCHEDULE,
+                layoutBudgetPolicy=c.layout_budget,
                 cancellationLeaseSeconds=c.lease_seconds))
         elif path == '/api/session':
             self._reply(200, dict(mode='local'))
@@ -228,9 +233,11 @@ def main(argv=None):
     parser.add_argument('--web-root', type=Path)
     parser.add_argument('--node', type=Path)
     parser.add_argument('--port', type=int, default=4174)
-    parser.add_argument('--engine-seconds', type=float, default=720)
+    parser.add_argument('--engine-seconds', type=float, default=300,
+                        help='Total running-job budget including conversion and verification; queue wait excluded')
     parser.add_argument('--iterations', type=int, default=20000)
     parser.add_argument('--seed', type=int, default=20261029)
+    parser.add_argument('--layout-budget',choices=('legacy','adaptive'),default='adaptive')
     parser.add_argument('--lease-seconds', type=float, default=8)
     parser.add_argument('--jobs-root', type=Path, default=REPOSITORY_ROOT/'.cache/auto-canvas-web/jobs')
     parser.add_argument('--state-file', type=Path)
@@ -238,12 +245,16 @@ def main(argv=None):
     if not 0 <= args.port <= 65535 or args.iterations < 0 or not isfinite(args.engine_seconds) or args.engine_seconds <= 0 or not isfinite(args.lease_seconds) or args.lease_seconds < 3:
         parser.error('Invalid port, iteration count, engine budget or lease')
     target, runtime = args.project_root.resolve(), args.runtime.resolve()
+    try:
+        validate_layout_budget_capability(args.engine_root.resolve(),args.layout_budget)
+    except ValueError as exc:
+        parser.error(str(exc))
     manifest = runtime/'runtime-manifest.json'
     if not manifest.is_file() or json.loads(manifest.read_text(encoding='utf8'))['target_lock_sha256'] != hashlib.sha256((target/'pnpm-lock.yaml').read_bytes()).hexdigest():
         parser.error('Prepare the matching isolated native runtime first')
     config = WebJobConfig(target, args.engine_root.resolve(), runtime,
         find_node(target,args.node), args.jobs_root.resolve(), args.engine_seconds,
-        args.iterations, args.seed, args.lease_seconds)
+        args.iterations, args.seed, args.lease_seconds,layout_budget=args.layout_budget)
     server = LayoutServer(('127.0.0.1',args.port),config=config,
         web_root=args.web_root or target/'.local/preview/web')
     origin = 'http://127.0.0.1:'+str(server.server_address[1])

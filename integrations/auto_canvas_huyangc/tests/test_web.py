@@ -7,6 +7,7 @@ import tempfile
 import threading
 from time import monotonic
 import unittest
+from unittest.mock import patch
 
 from integrations.auto_canvas_huyangc.runtime import run_bounded
 from integrations.auto_canvas_huyangc.web_jobs import JobManager, WebJobConfig, validate_request, refusal_message
@@ -69,6 +70,41 @@ class WebTests(unittest.TestCase):
         self.assertEqual(m.get(job.id)['status'],'succeeded')
         self.assertFalse(job.cancel.is_set())
         m.close()
+
+    def test_web_budget_includes_input_adapter_and_atomic_draft_verification(self):
+        manager=JobManager(self.config,start=False)
+        job=manager.jobs[manager.submit(request())['jobId']]
+        clock=[0.];calls=[]
+        def command(job,label,args,seconds):
+            calls.append((label,args,seconds))
+            if label=='native-input':
+                clock[0]+=20
+                (job.folder/'source.icproj.json').write_text('{}',encoding='utf8')
+            elif label.endswith('-python'):
+                self.assertIn('--result-policy',args)
+                self.assertEqual(args[args.index('--result-policy')+1],'editable')
+                self.assertEqual(args[args.index('--layout-budget')+1],'adaptive')
+                clock[0]+=259
+                output=job.folder/'cell-1';output.mkdir()
+                (output/'adapter-report.json').write_text(json.dumps(dict(status='editable_draft',
+                    native_project=str(output/'layout.icproj.json'))),encoding='utf8')
+            else:
+                clock[0]+=.5
+                result=dict(resultKind='editable_draft',result=dict(edits=[dict(kind='move_instance')],
+                    groups=[],diagnostics=[dict(severity='warning',message='Incomplete draft')]))
+                (job.folder/'cell-1/browser-result.json').write_text(json.dumps(result),encoding='utf8')
+        manager._command=command
+        try:
+            with patch('integrations.auto_canvas_huyangc.web_jobs.perf_counter',side_effect=lambda:clock[0]):
+                manager._run(job)
+            self.assertEqual(self.config.engine_seconds,300)
+            self.assertEqual(calls[0][2],30)
+            self.assertEqual(calls[1][2],260)
+            self.assertEqual(calls[2][2],21)
+            self.assertIn('--allow-draft',calls[2][1])
+            self.assertEqual(job.results[0]['resultKind'],'editable_draft')
+            self.assertLessEqual(job.execution_seconds,300)
+        finally:manager.close()
 
     def test_cancel_event_stops_owned_child_without_waiting_for_budget(self):
         event=threading.Event();timer=threading.Timer(0.25,event.set)
@@ -155,6 +191,8 @@ class HttpTests(unittest.TestCase):
     def test_native_button_backend_health_and_submit_poll_cancel(self):
         code,data,_=self.call('GET',API+'/health')
         self.assertEqual(code,200);self.assertEqual(data['engine'],'Netlist2Schematic')
+        self.assertEqual(data['candidateSchedule'],'normal-2-3-then-shared-recovery-v1')
+        self.assertEqual(data['layoutBudgetPolicy'],'adaptive')
         code,data,_=self.call('POST',API+'/jobs',request())
         self.assertEqual(code,202);ident=data['jobId']
         self.assertEqual(self.call('GET',API+'/jobs/'+ident)[1]['status'],'queued')

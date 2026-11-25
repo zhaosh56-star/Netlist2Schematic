@@ -7,27 +7,14 @@ from pathlib import Path
 import sys
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--engine-root', type=Path, required=True)
-    parser.add_argument('--placement', type=Path, required=True)
-    parser.add_argument('--profile', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
-    args = parser.parse_args(argv)
-    sys.path.insert(0, str(args.engine_root.resolve()))
-    from netlist2schematic.common.sa_saved import load_placement, saved_routing_options
-    from netlist2schematic.routing.sa_routing import validate_final_routes
+def export_context(par, placement, comps, nets, index, routes, metrics, checked,
+                   profile, options, metadata=None, *, scene=None):
+    """Serialize one pose and its own wires; no routing or algorithm changes."""
     from netlist2schematic.routing.routing_rules import build_scene
     from netlist2schematic.common.supply_markers import symbol_definition
-    data, source, par, placement, comps, nets, index = load_placement(args.placement)
-    options = saved_routing_options(data)
-    routes, metrics, checked = validate_final_routes(par, nets, placement, index,
-        list(data['routes'].items()), options=options)
-    if not checked['valid']:
-        raise ValueError('Core layout failed independent verification')
-    scene = build_scene(par, nets, placement, index, options=options)
+    metadata = metadata or {}
+    scene = scene or build_scene(par, nets, placement, index, options=options)
     escapes = {(pin.component,pin.pin):pin.escape for group in scene.pins.values() for pin in group}
-    profile = json.loads(args.profile.read_text(encoding='utf-8'))
     objects, power = [], []
     for component in comps:
         cid = component['id']
@@ -72,11 +59,35 @@ def main(argv=None):
     result = dict(protocolVersion=1, components=objects, routes=dict(routes),
         power=power, metrics=metrics, validation=checked,
         negativeSymbol=symbol_definition(),
-        selected_candidate=data.get('quality', {}).get('selected_candidate'),
-        routing_stage=data.get('routing_stage', 'normal'),
-        candidate_pipeline=data.get('candidate_pipeline'))
+        selected_candidate=metadata.get('quality', {}).get('selected_candidate', metadata.get('candidate_id')),
+        routing_stage=metadata.get('routing_stage', 'normal'),
+        candidate_pipeline=metadata.get('candidate_pipeline'))
+    if 'layout_budget' in metadata:
+        result['layout_budget']=metadata['layout_budget']
+    return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--engine-root', type=Path, required=True)
+    parser.add_argument('--placement', type=Path, required=True)
+    parser.add_argument('--profile', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args(argv)
+    sys.path.insert(0, str(args.engine_root.resolve()))
+    from netlist2schematic.common.sa_saved import load_placement, saved_routing_options
+    from netlist2schematic.routing.sa_routing import validate_final_routes
+    data, source, par, placement, comps, nets, index = load_placement(args.placement)
+    options = saved_routing_options(data)
+    routes, metrics, checked = validate_final_routes(par, nets, placement, index,
+        list(data['routes'].items()), options=options)
+    if not checked['valid']:
+        raise ValueError('Core layout failed independent verification')
+    profile = json.loads(args.profile.read_text(encoding='utf-8'))
+    result = export_context(par, placement, comps, nets, index, routes, metrics, checked,
+                            profile, options, data)
     args.output.write_bytes((json.dumps(result, ensure_ascii=False, indent=2)+'\n').encode('utf-8'))
-    print(json.dumps(dict(status='valid', components=len(objects), power_markers=len(power),
+    print(json.dumps(dict(status='valid', components=len(result['components']), power_markers=len(result['power']),
                          selected_candidate=result['selected_candidate'], metrics=metrics)))
 
 

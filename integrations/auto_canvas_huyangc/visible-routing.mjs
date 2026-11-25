@@ -47,11 +47,12 @@ function covered(a,b,segments) {
   return false;
 }
 
-export function verifySignalConductors(coreSegments,drawnSegments,contacts) {
+export function verifySignalConductors(coreSegments,drawnSegments,contacts,{allowIncomplete=false}={}) {
   const base=coreSegments.map(([a,b])=>[point(a),point(b)]);
   const drawn=drawnSegments.map(([a,b])=>[point(a),point(b)]);
   const graph=conductorGraph(drawn,contacts),original=conductorGraph(base);
-  if(new Set(contacts.map(p=>graph.components.get(key(p)))).size>1)
+  const components=new Set(contacts.map(p=>graph.components.get(key(p)))).size;
+  if(components>1 && !allowIncomplete)
     throw new Error('NATIVE_VISIBLE_SIGNAL_DISCONNECTED: drawn wires do not connect every signal pin');
   for(const [a,b] of base)if(!covered(a,b,drawn))
     throw new Error(`NATIVE_CORE_SIGNAL_REMOVED: ${key(a)} to ${key(b)}`);
@@ -60,10 +61,10 @@ export function verifySignalConductors(coreSegments,drawnSegments,contacts) {
   const joined=new Set(contacts.map(p=>graph.components.get(key(p))));
   if([...graph.components.values()].some(c=>!joined.has(c)))
     throw new Error('NATIVE_SIGNAL_ISLAND_ADDED: wire island has no signal terminal');
-  return {connected:true,coreCovered:true,cycles:graph.cycles,originalCycles:original.cycles,terminals:contacts.length};
+  return {connected:components<=1,components,coreCovered:true,cycles:graph.cycles,originalCycles:original.cycles,terminals:contacts.length};
 }
 
-export function verifyVisibleRouting(document,resolver,plan,derived) {
+export function verifyVisibleRouting(document,resolver,plan,derived,{allowIncomplete=false}={}) {
   if(!plan.signalGeometry)return {status:'legacy-plan-without-geometry',checked:false};
   const results=[];
   for(const [netId,expected] of Object.entries(plan.signalGeometry)) {
@@ -77,7 +78,8 @@ export function verifyVisibleRouting(document,resolver,plan,derived) {
       if(!geometry)throw new Error('NATIVE_SIGNAL_ROUTE_UNRESOLVED');
       return geometry.centerline.slice(1).map((p,i)=>[geometry.centerline[i],p]);
     });
-    results.push({netId,...verifySignalConductors(expected.coreSegments,segments,contacts)});
+    results.push({netId,...verifySignalConductors(expected.coreSegments,segments,contacts,{allowIncomplete})});
   }
-  return {status:'valid',checked:true,nets:results};
+  const remaining=results.reduce((sum,n)=>sum+Math.max(0,n.components-1),0);
+  return {status:remaining?'incomplete':'valid',checked:true,nets:results,remainingConnections:remaining};
 }

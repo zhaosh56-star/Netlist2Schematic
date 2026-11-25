@@ -20,12 +20,12 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 # 首次先按 README 准备隔离的 Node 运行库；Python 使用算法现有环境。
 & D:\gongzuo\.venv\Scripts\python.exe -X utf8 -B `
   -m integrations.auto_canvas_huyangc.web_control open `
-  --project-root D:\auto-canvas-huyangc --engine-root D:\gongzuo
+  --project-root D:\auto-canvas-huyangc --engine-root .
 
 # 只启动，不打开浏览器
 & D:\gongzuo\.venv\Scripts\python.exe -X utf8 -B `
   -m integrations.auto_canvas_huyangc.web_control start `
-  --project-root D:\auto-canvas-huyangc --engine-root D:\gongzuo
+  --project-root D:\auto-canvas-huyangc --engine-root .
 
 # 停止自己的任务与服务，不停止原来的 4173
 & D:\gongzuo\.venv\Scripts\python.exe -X utf8 -B `
@@ -39,22 +39,24 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 & D:\gongzuo\.venv\Scripts\python.exe -X utf8 -B `
   -m integrations.auto_canvas_huyangc.web_server `
   --project-root D:\auto-canvas-huyangc `
-  --engine-root D:\gongzuo `
+  --engine-root . `
   --port 4174
 ```
 
-支持 `--engine-seconds`、`--iterations`、`--seed` 配置；默认沿用主算法的 720 秒整图上限、20,000 次迭代及独立候选流程。完成即返回，不会等满预算。监听地址固定为本机 loopback，不会开放到局域网。
+支持 `--engine-seconds`、`--iterations`、`--seed` 配置。网页当前默认总执行上限300秒，含模型读取、候选2/3、必要修复、转换和原生回写复验；20,000次迭代和种子不变。完成即返回，不会等满预算。队列等待和浏览器传输延迟不计入后台执行额度；一次选择多个Document时共享这300秒。监听地址固定为本机loopback，不会开放到局域网。离线完整CLI及主算法默认预算保持原样。
 
 ## 使用
 
+网页默认使用`--layout-budget adaptive`，要求`engine-root`包含可选预算接口。该通用接口已同步到最新`main`，可使用本分支或更新后的`main`算法；上面的`.`指当前adapt工作区。使用没有该接口的旧算法检出目录时显式传`--layout-budget legacy`；服务不会静默修改旧算法或忽略策略。健康接口的`layoutBudgetPolicy`显示实际选择。
+
 1. 打开 `4174/editor`，导入原生 `.icproj.json` 或 SPICE 网表。
 2. 打开要布置的 Cell，点击已有 **Auto Layout** 按钮。
-3. 网页显示运行时间，Python 后台依次运行原候选和恢复流程。
-4. 完整验收后，原生编辑器将位置、方向和线路作为一个事务应用；可继续编辑、保存，或一次 Undo 撤销。
+3. 网页显示运行时间，Python 后台先分别正常运行候选2、3。任一正常结果合法就比较并交付；两个都失败才共享剩余时间进行原候选修复、局部救援及扩距，救援成功即停止。
+4. 完整结果通过原验收；若两个候选均未完成，安全草稿通过独立的部分布线验收。原生编辑器将位置、方向和线路作为一个事务应用，可继续编辑、保存或一次Undo撤销。草稿显示warning及Details中的未完成说明，并保留真实待连飞线。
 
 运行时手动修改图纸，旧结果会显示 `The drawing changed … nothing was applied` 并被丢弃。切换项目或取消会终止网页 Worker；后台最长 8 秒租约到期后停止这个任务的进程树。很快完成的任务可能在租约到期前结束，但取消后的结果不会应用到图纸。
 
-计算期间画布保留原图，按钮显示累计秒数；完整计算与验收结束后才一次性更新。失败时保留原图，并在原生状态及 Details 中显示原因，不表示点击没有生效。
+计算期间画布保留原图，按钮显示累计秒数；结果验收后才一次性更新。草稿允许缺线，但不允许已画线路短路、穿体或脱离原引脚。解析、资源、源变化、静态布局不合法，以及没有完整器件布局的失败仍保留原图，并在Details说明原因。取消或版本变化不会应用草稿。
 
 第一版 JSON 适配的边界仍有效：尚不展开选中单元内的层次实例，不支持总线成员或未映射器件等。不支持的 Cell 会在原有 Details 中显示具体原因，保持原图；不会静默改回网页原算法。多 Cell 导入逐个计算，全部结束后由原生会话决定哪些合法结果可以作为一次撤销提交。
 
@@ -66,8 +68,9 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 → 适配 Worker：提交与轮询本机任务
 → 原生模型验证与正式项目序列化
 → 第一阶段适配 CLI
-→ 独立主算法 run_flow.py
-→ 完整电气、几何及原生审计
+→ 网页调度：先正常候选2/3，都失败才共享救援
+→ 调用独立主算法的原有函数；离线完整模式仍运行run_flow.py
+→ 原电气归属、几何及原生审计；草稿另报未完成连接
 → 合并成一个原始版本的编辑事务并再次复验
 → 原网页会话检查 session/revision 后应用
 ```
@@ -83,7 +86,7 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 - 布局服务检查 Host、Origin、同源会话凭据，拒绝跨站写入；没有对外 CORS。
 - 任务目录：适配工作区 `.cache/auto-canvas-web/jobs/<ID>/`。包含原生输入、各单元算法输出、最终原生项目、合并编辑方案、诊断及 `web-job.json`。
 - 日志与服务状态：`.cache/auto-canvas-web/port-4174*.log/json`。状态文件含仅供本机服务使用的会话凭据，不应上传。
-- 网页返回失败不覆盖已有电路；关闭服务会停止自身运行任务，不影响其他 Python 进程或原来的 Node 服务。
+- 完整结果和安全草稿都会经原事务应用；明确拒绝时保持原图。关闭服务会停止自身任务，不影响其他Python进程或原来的Node服务。
 
 ## 验证命令
 

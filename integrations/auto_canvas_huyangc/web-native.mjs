@@ -33,11 +33,14 @@ if (operation === 'input') {
   const project = protocol.parseProject(source.toString('utf8'));
   const plan = JSON.parse(readFileSync(flags.get('--plan'), 'utf8'));
   const validation = JSON.parse(readFileSync(flags.get('--validation'), 'utf8'));
+  const draft=plan.resultKind==='editable_draft';
+  if(draft && (flags.get('--allow-draft')!=='true' || validation.status!=='editable_draft' ||
+      validation.complete!==false || validation.geometryValid!==true))throw new Error('EDITABLE_DRAFT_POLICY_REQUIRED');
   const expectedProject = protocol.parseProject(readFileSync(flags.get('--expected'), 'utf8'));
   const original = project.documents.find(d => d.id === plan.documentId);
   if (plan.protocolVersion !== 1 || plan.source.sha256 !== createHash('sha256').update(source).digest('hex') ||
       plan.projectId !== project.id || !original || plan.expectedRevision !== original.revision ||
-      plan.nativeModelVersion !== model.CURRENT_MODEL_SCHEMA_VERSION || validation.status !== 'valid' ||
+      plan.nativeModelVersion !== model.CURRENT_MODEL_SCHEMA_VERSION || (!draft && validation.status !== 'valid') ||
       validation.sourceSha256 !== plan.source.sha256 || validation.documentId !== plan.documentId)
     throw new Error('STALE_OR_UNVERIFIED_WEB_PLAN');
   const edits = [...plan.edits, ...validation.nativeMarkerSeats.transactions.flatMap(t => t.edits)];
@@ -79,12 +82,16 @@ if (operation === 'input') {
   const audit=auditRouting(committed.document,resolver);
   if (audit.unsafeProblems.length || ['wireLength','crossings','bends'].some(k=>audit[k]!==validation.nativeAudit[k]))
     throw new Error('WEB_ATOMIC_ROUTE_AUDIT_FAILED: '+JSON.stringify(audit));
-  const visibleSignals=verifyVisibleRouting(committed.document,resolver,plan,derived);
+  const visibleSignals=verifyVisibleRouting(committed.document,resolver,plan,derived,{allowIncomplete:draft});
   const visibleSupplies=verifyVisibleSupplies(committed.document,resolver,plan,derived,model);
   const roundtrip=protocol.parseProject(protocol.serializeProject(next));
   if (!same(project,roundtrip)) throw new Error('WEB_ROUNDTRIP_FAILED');
-  write({documentId:original.id,result:{edits,groups:[],diagnostics:[]},
-    validation:{electricalEquivalent:true,atomicTransaction:true,nativeAudit:audit,
+  const pending=derived.assessImportReference(committed.document,resolver).guides;
+  const diagnostics=draft?[{severity:'warning',code:'NETLIST2SCHEMATIC_EDITABLE_DRAFT',rule:'manual-routing',
+    message:`Routing is incomplete. Editable draft applied: ${visibleSignals.nets.filter(n=>n.connected).length}/${visibleSignals.nets.length} signal nets connected; ${visibleSignals.remainingConnections} joins remain. Follow the flightlines to finish wiring. This is not a fully routed result.`}]:[];
+  write({documentId:original.id,resultKind:draft?'editable_draft':'complete',result:{edits,groups:[],diagnostics},
+    validation:{complete:!draft,geometryValid:true,electricalEquivalent:true,atomicTransaction:true,nativeAudit:audit,
       visibleSignals,visibleSupplies,
+      pendingRoutingGuides:pending.length,
       expectedRevision:original.revision,engine:'Netlist2Schematic'}});
 } else throw new Error(`Unknown operation ${operation}`);

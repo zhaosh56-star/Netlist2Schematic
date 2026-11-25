@@ -67,12 +67,14 @@ def run(args):
             if saved.get(key) and Path(saved[key]).resolve()!=want.resolve():
                 raise ValueError('A service with different source roots is running; stop it before changing roots')
         health=api(origin,'/api/netlist2schematic/health')
+        if health.get('layoutBudgetPolicy','legacy')!=args.layout_budget:
+            raise ValueError('A service with a different layout budget policy is running; stop it before changing policy')
         if health.get('engine')!='Netlist2Schematic':
             raise ValueError('Another host is using this port; it was left running')
     else:
         command=[sys.executable,'-X','utf8','-B','-m','integrations.auto_canvas_huyangc.web_server',
             '--project-root',str(args.project_root.resolve()),'--engine-root',str(args.engine_root.resolve()),
-            '--port',str(args.port),'--state-file',str(state_path)]
+            '--port',str(args.port),'--state-file',str(state_path),'--layout-budget',args.layout_budget]
         options=dict(cwd=REPOSITORY_ROOT,stdin=subprocess.DEVNULL,close_fds=True)
         if sys.platform=='win32':
             options['creationflags']=getattr(subprocess,'CREATE_NO_WINDOW',0)
@@ -103,6 +105,7 @@ def main(argv=None):
     parser.add_argument('--project-root',type=Path,required=True)
     parser.add_argument('--engine-root',type=Path,default=REPOSITORY_ROOT)
     parser.add_argument('--port',type=int,default=4174)
+    parser.add_argument('--layout-budget',choices=('legacy','adaptive'),default='adaptive')
     args=parser.parse_args(argv)
     if not 1<=args.port<=65535:
         parser.error('Port must be between 1 and 65535')

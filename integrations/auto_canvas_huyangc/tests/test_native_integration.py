@@ -190,6 +190,102 @@ class NativeIntegrationTests(unittest.TestCase):
             run(args)
         self.assertEqual(original,Path(report['native_project']).read_bytes())
 
+    def test_editable_draft_is_explicit_geometric_and_atomic_with_real_flightlines(self):
+        from integrations.auto_canvas_huyangc.native_plan import build_plan
+        project,args,_=self.results['named']
+        wire_path=self.root/'controlled-draft-wire.json'
+        command=[os.sys.executable,'-X','utf8','-B',str(ADAPTER_ROOT/'tests/draft-checkpoint.py'),
+            '--engine-root',str(args.out_dir/'private/engine'),
+            '--placement',str(args.out_dir/'engine-result/layout-input-placement.json'),
+            '--profile',str(args.out_dir/'private/adapter-profile.json'),'--output',str(wire_path)]
+        made=subprocess.run(command,capture_output=True,text=True,encoding='utf8',timeout=20)
+        self.assertEqual(made.returncode,0,made.stderr)
+        snapshot=json.loads((args.out_dir/'private/native-snapshot.json').read_text(encoding='utf8'))
+        profile=json.loads((args.out_dir/'private/adapter-profile.json').read_text(encoding='utf8'))
+        wire=json.loads(wire_path.read_text(encoding='utf8'))
+        with self.assertRaisesRegex(ValueError,'unverified'):build_plan(snapshot,profile,wire)
+        plan=build_plan(snapshot,profile,wire,allow_draft=True)
+        plan['nativeModelVersion']=snapshot['nativeModelVersion']
+        path=self.root/'controlled-draft-plan.json';path.write_text(json.dumps(plan),encoding='utf8')
+        output=self.root/'controlled-draft.icproj.json';validation=self.root/'controlled-draft-validation.json'
+        refused=self.native('apply',project,output,['--plan',path],expected=1)
+        self.assertIn('EDITABLE_DRAFT_POLICY_REQUIRED',refused.stderr)
+        self.assertFalse(output.exists())
+        self.native('apply',project,output,['--plan',path,'--report',validation,'--allow-draft','true'])
+        checked=json.loads(validation.read_text(encoding='utf8'))
+        self.assertEqual(checked['status'],'editable_draft');self.assertFalse(checked['complete'])
+        self.assertTrue(checked['geometryValid']);self.assertTrue(checked['electricalEquivalent'])
+        self.assertGreater(checked['visibleSignals']['remainingConnections'],0)
+        self.assertEqual(checked['visibleSupplies']['remainingSupplyGuides'],0)
+        browser=self.root/'controlled-draft-browser.json'
+        call=[self.node,'--experimental-transform-types',str(ADAPTER_ROOT/'web-native.mjs'),'result',
+            '--project-root',str(self.target),'--runtime',str(RUNTIME),'--input',str(project),
+            '--plan',str(path),'--validation',str(validation),'--expected',str(output),
+            '--output',str(browser),'--allow-draft','true']
+        result=subprocess.run(call,capture_output=True,text=True,encoding='utf8',timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr)
+        actual=json.loads(browser.read_text(encoding='utf8'))
+        self.assertFalse(actual['validation']['complete'])
+        self.assertGreater(actual['validation']['pendingRoutingGuides'],0)
+        self.assertEqual(actual['result']['diagnostics'][0]['severity'],'warning')
+        self.assertEqual(actual['result']['diagnostics'][0]['code'],'NETLIST2SCHEMATIC_EDITABLE_DRAFT')
+
+    def test_failed_primary_candidates_select_a_safe_draft_without_reference_or_bus(self):
+        from integrations.auto_canvas_huyangc.drafts import choose_payloads
+        _,args,_=self.results['named']
+        folder=self.root/'failed-primary-candidates'
+        command=[os.sys.executable,'-X','utf8','-B',str(ADAPTER_ROOT/'tests/failed-candidates.py'),
+            '--engine-root',str(args.out_dir/'private/engine'),
+            '--placement',str(args.out_dir/'engine-result/layout-input-placement.json'),
+            '--profile',str(args.out_dir/'private/adapter-profile.json'),'--out-dir',str(folder)]
+        result=subprocess.run(command,capture_output=True,text=True,encoding='utf8',timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr)
+        report=json.loads((folder/'editable-engine-report.json').read_text(encoding='utf8'))
+        self.assertEqual(report['candidate_order'],['2','3'])
+        self.assertEqual(report['scheduling']['normal_order'], ['2', '3'])
+        self.assertTrue(report['scheduling']['recovery_attempted'])
+        self.assertEqual([s['stage'] for s in report['stages'][:2]], ['normal', 'normal'])
+        self.assertFalse(report['reference_candidate_used']);self.assertFalse(report['bus_used'])
+        self.assertEqual(report['selected_candidate'],'3')
+        profile=json.loads((args.out_dir/'private/adapter-profile.json').read_text(encoding='utf8'))
+        best,_=choose_payloads(folder,profile['source']['sha256'])
+        self.assertEqual(best['selected_candidate'],'3')
+        self.assertTrue(best['validation']['geometry_valid']);self.assertFalse(best['validation']['complete'])
+
+    def test_hard_timeout_retains_the_previous_atomic_safe_draft(self):
+        from integrations.auto_canvas_huyangc.drafts import choose_payloads
+        from integrations.auto_canvas_huyangc.runtime import run_bounded
+        _,args,_=self.results['named']
+        folder=self.root/'interrupted-primary-candidates'
+        command=[os.sys.executable,'-X','utf8','-B',str(ADAPTER_ROOT/'tests/failed-candidates.py'),
+            '--engine-root',str(args.out_dir/'private/engine'),
+            '--placement',str(args.out_dir/'engine-result/layout-input-placement.json'),
+            '--profile',str(args.out_dir/'private/adapter-profile.json'),'--out-dir',str(folder),'--interrupt']
+        with (self.root/'interrupted.log').open('w') as log:
+            code=run_bounded(command,seconds=3,stdout=log,stderr=log)
+        self.assertEqual(code,124)
+        profile=json.loads((args.out_dir/'private/adapter-profile.json').read_text(encoding='utf8'))
+        chosen=choose_payloads(folder,profile['source']['sha256'])
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen[0]['selected_candidate'],'2')
+        self.assertFalse((folder/'editable-engine-report.json').exists())
+
+    def test_adaptive_budget_roundtrip_uses_the_opt_in_engine_api(self):
+        project,args,_=self.results['named']
+        arguments=deepcopy(args)
+        arguments.engine_root=REPOSITORY_ROOT
+        arguments.out_dir=self.root/'adaptive-native-result'
+        arguments.layout_budget='adaptive'
+        arguments.result_policy='editable'
+        arguments.total_seconds=60
+        with redirect_stdout(StringIO()):
+            report=run(arguments)
+        self.assertEqual(report['status'],'valid')
+        self.assertTrue(report['validation']['complete'])
+        self.assertTrue(report['validation']['electricalEquivalent'])
+        self.assertEqual(report['layout_budget_policy'],'adaptive')
+        self.assertIn(str(Path('netlist2schematic/common/layout_budget.py')),report['engine_snapshot']['source_sha256'])
+
     def test_missing_signal_route_is_not_hidden_by_logical_net_membership(self):
         project,args,_=self.results['rc']
         plan=json.loads((args.out_dir/'native-plan.json').read_text(encoding='utf8'))

@@ -60,3 +60,13 @@ test('per-Cell refusal remains visible beside another successful Cell',async()=>
   await planWithPython(request,f.options);
   assert.deepEqual(f.messages.at(-1).results,results);
 });
+
+test('an editable draft preserves its warning instead of claiming complete routing',async()=>{
+  const results=request.documentIds.map(documentId=>({documentId,resultKind:'editable_draft',
+    result:{edits:[{kind:'move_instance'}],groups:[],diagnostics:[{severity:'warning',
+      code:'NETLIST2SCHEMATIC_EDITABLE_DRAFT',message:'14 connections remain; finish the flightlines.'}]}}));
+  const f=fixture([{jobId:'draft',status:'succeeded',stage:'draft_ready',runId:9,results}]);
+  await planWithPython(request,f.options);
+  assert.equal(f.messages.at(-1).type,'result');
+  assert.deepEqual(f.messages.at(-1).results,results);
+});

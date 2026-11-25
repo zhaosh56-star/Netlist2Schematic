@@ -140,9 +140,14 @@ def native_routes(net_id, segments, contacts):
     return edits
 
 
-def build_plan(snapshot, profile, wire_plan):
-    if wire_plan.get('validation', {}).get('valid') is not True:
+def build_plan(snapshot, profile, wire_plan, *, allow_draft=False):
+    draft = wire_plan.get('result_kind') == 'editable_draft'
+    draft_safe = (allow_draft and draft and wire_plan.get('validation',{}).get('geometry_valid') is True
+                  and wire_plan['validation'].get('complete') is False)
+    if wire_plan.get('validation', {}).get('valid') is not True and not draft_safe:
         raise ValueError('Cannot export an unverified engine route')
+    if draft and not draft_safe:
+        raise ValueError('Editable drafts require an explicit geometry-checked export policy')
     doc = next(d for d in snapshot['project']['documents'] if d['id'] == snapshot['documentId'])
     instances = {i['id']: i for i in doc['instances']}
     grid = doc['presentation']['grid']
@@ -400,6 +405,8 @@ def build_plan(snapshot, profile, wire_plan):
     if len(edits) > 1024:
         raise ValueError('Native transaction edit limit exceeded')
     return dict(protocolVersion=1, source=deepcopy(profile['source']),
+                resultKind='editable_draft' if draft else 'complete',
+                draft=deepcopy(wire_plan.get('draft')) if draft else None,
                 projectId=profile['project_id'], documentId=doc['id'], expectedRevision=doc['revision'],
                 transactionId=stable_id('transaction', [profile['source']['sha256'], edits]),
                 edits=edits, expectedPins=expected_pins, engineMetrics=wire_plan['metrics'],
