@@ -31,6 +31,14 @@ def snapshot():
     resistor = symbol('resistor', [('1',-20,'north'),('2',20,'south')])
     ground = symbol('ground', [('0',-10,'north')])
     vdd = symbol('vdd-port', [('P',20,'south')])
+    ground['primitives']=[
+        {'kind':'line','from':dict(x=0,y=-10),'to':dict(x=0,y=0)},
+        {'kind':'line','from':dict(x=-6,y=0),'to':dict(x=6,y=0)},
+        {'kind':'line','from':dict(x=-4,y=6),'to':dict(x=4,y=6)},
+        {'kind':'line','from':dict(x=-2,y=11),'to':dict(x=2,y=11)}]
+    vdd['primitives']=[{'kind':'line','from':dict(x=0,y=20),'to':dict(x=0,y=2)},
+        dict(kind='polygon',points=[dict(x=-10,y=-1),dict(x=10,y=-1),
+                                   dict(x=10,y=2),dict(x=-10,y=2)])]
     def resolved(definition):
         return dict(definition=definition,variant=None,pins=[dict(p,landing=deepcopy(p['at']))
                     for p in definition['pins']])

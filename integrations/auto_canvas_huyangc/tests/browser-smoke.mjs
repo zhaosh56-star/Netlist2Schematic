@@ -125,6 +125,17 @@ try {
   const after=await save('after');
   assert.notDeepEqual(content(after),content(before));
   steps.push({step:'real-button-python-result',status:'passed',jobId:newJob,message:final});
+  if(flags.get('--expect-supply-glyphs')==='true') {
+    const expected=job.results.flatMap(r=>r.result.edits).filter(e=>e.kind==='upsert_drafting_object' &&
+      /^n2s-supply-ink-/u.test(e.object.id)).map(e=>e.object.id);
+    assert.ok(expected.length>0,'The actual button result must contain supply artwork');
+    const saved=new Set(after.documents.flatMap(d=>d.drafting?.objects ?? []).map(o=>o.id));
+    assert.ok(expected.every(id=>saved.has(id)),'Supply artwork must survive native project export');
+    const visible=await cdp.evaluate(`([...document.querySelectorAll('[data-object-id^="n2s-supply-ink-"]')].map(e=>({id:e.getAttribute('data-object-id'),width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height})))`);
+    assert.ok(expected.every(id=>visible.some(v=>v.id===id && (v.width>0 || v.height>0))),
+      'Supply artwork must be drawn on the actual editor canvas');
+    steps.push({step:'supply-artwork-visible-and-saved',status:'passed',strokes:expected.length});
+  }
 
   const undoSelector=await cdp.evaluate(`document.querySelector('[data-testid="draw-tool-undo"]')?'[data-testid="draw-tool-undo"]':'button[aria-label="Undo"]'`);
   const redoSelector=await cdp.evaluate(`document.querySelector('[data-testid="draw-tool-redo"]')?'[data-testid="draw-tool-redo"]':'button[aria-label="Redo"]'`);

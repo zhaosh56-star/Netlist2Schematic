@@ -37,6 +37,7 @@ class NativeIntegrationTests(unittest.TestCase):
             'ports':ADAPTER_ROOT/'tests/fixtures/multi-cell.spi',
             'ordered':ADAPTER_ROOT/'tests/fixtures/ordered-supply-ports.spi',
             'named':ADAPTER_ROOT/'tests/fixtures/named-supplies.spi',
+            'glyphs':ADAPTER_ROOT/'tests/fixtures/formal-supplies.spi',
         }
         for name,source in sources.items():
             project=cls.root/(name+'.icproj.json')
@@ -160,6 +161,61 @@ class NativeIntegrationTests(unittest.TestCase):
                 else:
                     self.assertRegex(result.stderr,'NATIVE_(SUPPLY_|ELECTRICAL_EQUIVALENCE_FAILED|ROUTE_AUDIT_FAILED)')
                 self.assertFalse(output.exists())
+
+    def test_formal_supply_glyphs_survive_native_save_and_preserve_all_port_domains(self):
+        _,args,report=self.results['glyphs']
+        snapshot=json.loads((args.out_dir/'private/native-snapshot.json').read_text(encoding='utf8'))
+        before=next(d for d in snapshot['project']['documents'] if d['id']==snapshot['documentId'])
+        project=json.loads(Path(report['native_project']).read_text(encoding='utf8'))
+        after=next(d for d in project['documents'] if d['id']==before['id'])
+        self.assertEqual(before['netlist']['terminals'],after['netlist']['terminals'])
+        plan=json.loads((args.out_dir/'native-plan.json').read_text(encoding='utf8'))
+        glyphs=plan['powerPresentation']['glyphs']
+        self.assertEqual({g['style'] for g in glyphs},{'positive-cap','negative-cap','ground'})
+        self.assertTrue(report['validation']['visibleSupplies']['presentation']['checked'])
+        self.assertEqual(report['validation']['visibleSupplies']['presentation']['glyphs'],len(glyphs))
+        svg=Path(report['native_svg']).read_text(encoding='utf8')
+        ids={s['objectId'] for g in glyphs for s in g['strokes']}
+        self.assertEqual(ids,{o['id'] for o in after['drafting']['objects']})
+        self.assertTrue(all(ident in svg for ident in ids))
+        self.assertFalse(any(e['kind']=='upsert_connectivity_evidence' and
+            'powerDomain' in e['evidence'] for e in plan['edits']))
+
+    def test_missing_or_detached_supply_glyph_is_rejected_before_output(self):
+        project,args,_=self.results['glyphs']
+        original=json.loads((args.out_dir/'native-plan.json').read_text(encoding='utf8'))
+        for failure in ('missing','detached'):
+            plan=deepcopy(original)
+            stroke=plan['powerPresentation']['glyphs'][0]['strokes'][0]['objectId']
+            edit=next(e for e in plan['edits'] if e['kind']=='upsert_drafting_object' and e['object']['id']==stroke)
+            if failure=='missing':plan['edits'].remove(edit)
+            else:edit['object']['from']['localOffset']['x']+=2
+            path=self.root/('glyph-'+failure+'.json');path.write_text(json.dumps(plan),encoding='utf8')
+            output=self.root/('glyph-'+failure+'.icproj.json')
+            with self.subTest(failure=failure):
+                refused=self.native('apply',project,output,['--plan',path],expected=1)
+                self.assertIn('NATIVE_SUPPLY_ARTWORK_',refused.stderr)
+                self.assertFalse(output.exists())
+
+    def test_supply_glyph_conversion_can_repeat_without_accumulating_labels_or_artwork(self):
+        from integrations.auto_canvas_huyangc.native_plan import build_plan
+        from integrations.auto_canvas_huyangc.profile import compile_snapshot
+        _,args,report=self.results['named']
+        current=Path(report['native_project'])
+        snapshot_path=self.root/'repeat-supplies-snapshot.json'
+        self.native('snapshot',current,snapshot_path)
+        snapshot=json.loads(snapshot_path.read_text(encoding='utf8'))
+        profile=compile_snapshot(snapshot)
+        wire=json.loads((args.out_dir/'private/engine-wire-plan.json').read_text(encoding='utf8'))
+        plan=build_plan(snapshot,profile,wire);plan['nativeModelVersion']=snapshot['nativeModelVersion']
+        path=self.root/'repeat-supplies-plan.json';path.write_text(json.dumps(plan),encoding='utf8')
+        output=self.root/'repeat-supplies.icproj.json'
+        self.native('apply',current,output,['--plan',path])
+        before=json.loads(current.read_text(encoding='utf8'))['documents'][0]
+        after=json.loads(output.read_text(encoding='utf8'))['documents'][0]
+        self.assertEqual(before['netlist']['terminals'],after['netlist']['terminals'])
+        self.assertEqual(len(before['drafting']['objects']),len(after['drafting']['objects']))
+        self.assertEqual(len(before['annotations']),len(after['annotations']))
 
     def test_source_revision_and_model_version_tampering_are_refused(self):
         project,args,_=self.results['rc']

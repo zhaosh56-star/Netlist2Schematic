@@ -158,8 +158,14 @@ def build_plan(snapshot, profile, wire_plan, *, allow_draft=False):
         for coordinate in point(p):
             grid = gcd(grid, coordinate)
     edits = [dict(kind='set_document_grid', grid=grid)] if doc['presentation']['grid'] != grid else []
+    from .supply_glyphs import SupplyGlyphs
+    supply_glyphs = SupplyGlyphs(snapshot,doc,edits,stable_id,
+        {net_id for net_id,alias in profile['net_names'].items()
+         if alias in {p['net'] for p in wire_plan['power']}})
     removed = {r['id'] for r in doc['routes']} | {j['id'] for j in doc['junctions']}
     for annotation in doc['annotations']:
+        if annotation['id'] in supply_glyphs.removed_labels:
+            continue
         anchor = annotation.get('anchor', {})
         if any(anchor.get(k) in removed for k in ('routeId', 'junctionId', 'objectId')):
             fallback = anchor.get('fallbackPosition')
@@ -249,12 +255,15 @@ def build_plan(snapshot, profile, wire_plan, *, allow_draft=False):
                 rotation = next(r for r in (0,90,180,270)
                                 if transform(vectors[pin['direction']],r,'none')==direction)
                 local = transform((pin['at']['x'],pin['at']['y']),rotation,'none')
-                place(ident,dict(x=p[0]-local[0],y=p[1]-local[1]),rotation,'none')
+                position = dict(x=p[0]-local[0],y=p[1]-local[1])
+                place(ident,position,rotation,'none')
                 endpoint = dict(kind='terminal',instanceId=ident,pinName=pin['name'])
                 contacts[item['net']][p].append(endpoint)
                 expected_pins.append(dict(endpoint=endpoint,position=dict(x=p[0],y=p[1])))
                 power_markers.append(dict(instanceId=ident,pinName=pin['name'],netId=net_id,
                                           style='formal-power-port'))
+                label_position = supply_glyphs.add(item,net_id,endpoint,position)
+                supply_glyphs.move_formal_label(ident,net_id,position,label_position)
             else:
                 # The original Base Net already carries electrical identity.
                 # Register this visible local owner as well as its text. A
@@ -263,11 +272,14 @@ def build_plan(snapshot, profile, wire_plan, *, allow_draft=False):
                 # is added: classification and formal pin order stay intact.
                 junction = stable_id('junction',[net_id,p])
                 label_id = stable_id('label',[junction,'net-label'])
+                label_position = supply_glyphs.add(item,net_id,
+                    dict(kind='junction',junctionId=junction),dict(zip(('x','y'),p)))
                 deferred_labels.append(dict(kind='upsert_schematic_annotation',annotation=dict(
                     id=label_id,kind='net-label',netId=net_id,
                     binding=dict(kind='net-name',netId=net_id),
-                    anchor=dict(kind='object',objectId=junction,localOffset=dict(x=12,y=-8),
-                                fallbackPosition=dict(x=p[0]+12,y=p[1]-8)),
+                    anchor=dict(kind='object',objectId=junction,
+                                localOffset=dict(x=label_position['x']-p[0],y=label_position['y']-p[1]),
+                                fallbackPosition=label_position),
                     alignment='start',rotation=0,locked=False)))
                 group = logical_groups.get(net_id,{})
                 name = group.get('name') or next(t['name'] for t in doc['netlist']['terminals']
@@ -411,6 +423,7 @@ def build_plan(snapshot, profile, wire_plan, *, allow_draft=False):
                 transactionId=stable_id('transaction', [profile['source']['sha256'], edits]),
                 edits=edits, expectedPins=expected_pins, engineMetrics=wire_plan['metrics'],
                 powerMarkers=power_markers,symbolOverrides=symbol_overrides,
+                powerPresentation=supply_glyphs.report(),
                 pinEscapes=pin_escapes,signalGeometry={native_nets[alias]:dict(
                     coreSegments=deepcopy(segments),
                     terminals=[endpoint for members in contacts[alias].values() for endpoint in members])

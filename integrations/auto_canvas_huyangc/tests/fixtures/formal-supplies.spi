@@ -1,0 +1,8 @@
+* Named formal rails keep their original Cell contract; glyphs are visual only.
+.subckt rails VDD VEE GND inp out
+R1 VDD out 10k
+R2 out VEE 20k
+R3 inp GND 30k
+R4 VDD GND 40k
+R5 VEE GND 50k
+.ends rails
