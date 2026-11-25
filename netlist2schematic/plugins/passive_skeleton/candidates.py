@@ -94,7 +94,8 @@ def _control_sources(par,core, comps, index, plan):
 
 
 def create_candidate(devices, comps, nets, index, levels, att, structs, seed, variant,
-                     plan, options, *, iterations=0, deadline=None, columns=True, branch_layout='off', packing_failures=None):
+                     plan, options, *, iterations=0, deadline=None, columns=True, branch_layout='off', packing_failures=None,
+                     layout_budget=None):
     """Return a complete static-legal layout or an explicit fallback report.
 
     Only the geometric estimator sees the auxiliary edges. Exported components,
@@ -107,6 +108,9 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     from netlist2schematic.plugins.columns.column_layout import build_column_plan,refine_columns
     from netlist2schematic.layout.series_alignment import refine_series_alignment
     from netlist2schematic.layout.structure_hierarchy import hierarchy_report
+    from netlist2schematic.common.layout_budget import layout_budget as resolve_budget
+    budget_policy=resolve_budget(layout_budget)
+    budget_limits=budget_policy.for_plan(plan) if budget_policy.adaptive else None
     started=perf_counter()
     guest_ids=set(plan.get('guest_ids', (n for n,d in devices.items() if d['cls']=='PASSIVE')))
     core_devices={n:deepcopy(d) for n,d in devices.items() if n not in guest_ids}
@@ -208,8 +212,13 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
     else:
         packed,report=pack(sp.par,core,comps,nets,index,plan,options,deadline=until,
             seconds=max(0,until-perf_counter()),max_trials=max(0,128-used))
-    recovery=report.get('packing_recovery',{})
-    initial_trials=recovery.get('initial_trials',report['trials'])
+    legacy_report=report
+    if packed is None and budget_policy.adaptive:
+        from netlist2schematic.plugins.passive_skeleton.packing_budget import supplement
+        packed,report=supplement(sp.par,core,comps,nets,index,plan,options,
+            report,budget_limits,deadline=deadline)
+    recovery=legacy_report.get('packing_recovery',{})
+    initial_trials=recovery.get('initial_trials',legacy_report['trials'])
     report['shared_local_budget']=dict(seconds_limit=1.,max_trials=128,active_trials=used-row_trials,
         row_estimate_seconds=row_seconds,row_estimate_trials=row_trials,
         packing_trials=initial_trials,completed_trials=used+initial_trials)
@@ -237,6 +246,10 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
             layout_hierarchy=hierarchy_report(core),passive_skeleton=report,
             passive_layout_policy='skeleton',passive_layout=dict(version=plan['version'],policy='skeleton',
                 core_only_sa=True,post_sa_local_coordinates=True))
+        if budget_policy.adaptive:
+            metadata['layout_budget']=dict(budget_limits,
+                normal=deepcopy(report.get('normal_packing_budget',dict(attempted=False,stop_reason='fast_path_completed'))),
+                recovery=deepcopy(report.get('recovery_packing_budget')))
         if branch_rows is not None:
             metadata['layout_branch_rows']=deepcopy(branch_rows)
         if branch_report is not None:
@@ -265,6 +278,13 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
             def resume(until):
                 from netlist2schematic.routing.orthogonal_router import RoutingFailure
                 saved,cc,nn,ii,pp,oo,old=deepcopy(snapshot)
+                if budget_policy.adaptive:
+                    from netlist2schematic.plugins.passive_skeleton.packing_budget import resume as resume_packing
+                    trial,packed,updated=resume_packing(sp.par,saved,cc,nn,ii,pp,oo,old,
+                        budget_limits,deadline=until)
+                    updated['primary_packing_resume']['source_candidate']=str(variant+1)
+                    result,_=finish(packed,updated,trial,cc,nn,ii)
+                    return result
                 from netlist2schematic.recovery.spacing_retry import _expanded_axis
                 from netlist2schematic.layout.series_alignment import _fixed_ids
                 # The original primary frame remains the recovery anchor.
@@ -289,6 +309,7 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
                 raise RoutingFailure('Primary module insertion recovery did not complete',
                     dict(reason='primary_packing_incomplete',candidate_id=str(variant+1)))
             packing_failures.append(dict(kind='packing',candidate_id=str(variant+1),
-                resume=resume,options=deepcopy(options),context=None,checkpoint=None,attempt_index=0))
+                resume=resume,options=deepcopy(options),context=None,checkpoint=None,attempt_index=0,
+                **({'packing_budget':deepcopy(budget_limits)} if budget_policy.adaptive else {})))
         return None,report
     return finish(packed,report)

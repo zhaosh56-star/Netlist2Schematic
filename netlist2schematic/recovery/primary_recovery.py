@@ -37,10 +37,12 @@ def _spacing_allowed(context, options, scale):
     return all(trial.pos_of(i)==placement.pos_of(i) for i in fixed)
 
 
-def repair(candidates, *, deadline, candidate_ids=('2', '3'), budget_source='unused_normal_budget'):
+def repair(candidates, *, deadline, candidate_ids=('2', '3'), budget_source='unused_normal_budget', layout_budget=None):
     """Resume real runtime checkpoints; never read a historical result or rerun SA."""
     from netlist2schematic.flow.run_flow import _try_local_rescue
     from netlist2schematic.recovery.spacing_retry import retry_spacing
+    from netlist2schematic.common.layout_budget import layout_budget as resolve_budget
+    adaptive=resolve_budget(layout_budget).adaptive
     started=perf_counter()
     report=dict(version=VERSION,status='failed',budget_seconds=max(0.,deadline-started),
         candidate_order=[],attempts=[],source=budget_source,reference_enabled=False)
@@ -65,7 +67,12 @@ def repair(candidates, *, deadline, candidate_ids=('2', '3'), budget_source='unu
             item=dict(candidate_id=ident,action='resume_module_insertion',status='failed')
             report['attempts'].append(item)
             try:
-                context=row['resume'](min(stop,perf_counter()+min(6.,max(0.,stop-perf_counter())*.35)))
+                if adaptive and row.get('packing_budget'):
+                    allowance=min(row['packing_budget']['recovery_seconds'],max(0.,stop-perf_counter())*.6)
+                    item['packing_allocated_seconds']=allowance
+                    context=row['resume'](min(stop,perf_counter()+allowance))
+                else:
+                    context=row['resume'](min(stop,perf_counter()+min(6.,max(0.,stop-perf_counter())*.35)))
                 options=deepcopy(row['options'])
                 item['status']='prepared'
                 runtime.append(dict(candidate_id=ident,context=deepcopy(context),checkpoint=None,
@@ -73,6 +80,8 @@ def repair(candidates, *, deadline, candidate_ids=('2', '3'), budget_source='unu
             except (RoutingFailure,RoutingValidationError) as exc:
                 if exc.diagnostics.get('reason')=='power_connections':raise
                 item.update(reason=exc.diagnostics.get('reason'),message=str(exc))
+                if exc.diagnostics.get('layout_budget') is not None:
+                    item['layout_budget']=deepcopy(exc.diagnostics['layout_budget'])
                 continue
         if context is None:continue
         if row.get('checkpoint') is not None:

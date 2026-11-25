@@ -419,7 +419,7 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                    readability_layout='off', readability_phase=5, route_tradeoff='strict',
                    attachment_layout='off', column_layout='off', passive_skeleton='off',
                     simplify_policy='safe', simplify_seconds=5, branch_layout='off',
-                    capture_failed_candidate=False):
+                    capture_failed_candidate=False, layout_budget=None):
     if mode == 'layered' and layout_style == 'structured':
         from netlist2schematic.flow.aesthetic_flow import select_layout
         return select_layout(source, cell=cell, iterations=iterations, seed=seed,
@@ -430,6 +430,7 @@ def _normal_result(source, par, mode, layout_style, cell, iterations, seed,
                              port_preflight=port_preflight, region_layout=region_layout,
                              readability_layout=readability_layout, readability_phase=readability_phase,
                              route_tradeoff=route_tradeoff,
+                             **({'layout_budget':layout_budget} if layout_budget is not None else {}),
                               **({'branch_layout':branch_layout} if branch_layout=='auto' else {}),
                              **({'attachment_layout': attachment_layout} if attachment_layout != 'off' else {}),
                              **({'passive_skeleton':passive_skeleton} if passive_skeleton=='auto' else {}),
