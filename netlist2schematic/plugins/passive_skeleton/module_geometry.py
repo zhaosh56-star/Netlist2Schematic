@@ -151,5 +151,7 @@ def template(par, pl, comps, index, tree, direction, options, *, extra_keepout=0
         return None
     layout.update(axis=axis,envelope=envelope(layout),ports=[xy(0),xy(layout['extent'])],
         spacing=dict(version=SPACING_VERSION,policy=spacing,changed=bool(actions),actions=actions))
+    if extra_keepout:
+        layout['spacing']['extra_keepout']=extra_keepout
     layout['wires']={net:[s for s in segments if s[0]!=s[1]] for net,segments in layout['wires'].items()}
     return layout

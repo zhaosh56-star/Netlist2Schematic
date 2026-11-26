@@ -1,4 +1,4 @@
-"""Additional necessary packing only; use existing slots and geometry rules."""
+"""Shared supplementary packing limits, including bounded failure searches."""
 from copy import deepcopy
 
 from netlist2schematic.common.layout_budget import PackingBudget
@@ -30,6 +30,9 @@ def supplement(par, core, comps, nets, index, plan, options, previous, limits, *
     info.update(ledger.snapshot(ledger.stop_reason(attempt)), attempted=True)
     report = {**report, **attempt, 'normal_packing_budget': info,
               'legacy_packing_attempt': previous}
+    from .placement import PackingReport
+    report = PackingReport(report)
+    report.checkpoint = getattr(attempt, 'checkpoint', None)
     return packed, report
 
 
@@ -58,6 +61,17 @@ def resume(par, core, comps, nets, index, plan, options, previous, limits, *, de
         ledger.charge(attempt)
         ledger.attempts.append(dict(scale=scale, allocated_seconds=seconds,
             allocated_trials=trials, trials=attempt['trials'], stop_reason=attempt['stop_reason']))
+        if packed is None:
+            from .packing_search import resume_failed
+            extra_seconds, extra_trials = ledger.allocate(2-number)
+            packed, search = resume_failed(par, trial, comps, nets, index, plan, options,
+                attempt, deadline=ledger.deadline, seconds=extra_seconds, max_trials=extra_trials)
+            if search is not attempt:
+                ledger.charge(search)
+                ledger.attempts.append(dict(scale=scale, action='two_dimensional_insertion',
+                    allocated_seconds=extra_seconds, allocated_trials=extra_trials,
+                    trials=search['trials'], stop_reason=search['stop_reason']))
+                attempt = search
         report = {**previous, **attempt}
         if packed is not None:
             report['recovery_packing_budget'] = dict(limits, **ledger.snapshot('completed'))

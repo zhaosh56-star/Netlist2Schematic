@@ -20,6 +20,11 @@ from netlist2schematic.routing.routing_rules import _escape, _inflate
 EPS = 1e-8
 
 
+class PackingReport(dict):
+    """Serializable diagnostics with a private, in-memory insertion checkpoint."""
+    checkpoint = None
+
+
 def snap(value, step):
     return round(value/step)*step
 
@@ -142,7 +147,8 @@ def _geometry(par, pl, comps, index, group, vector, options):
     if group.get('mirror_bank') and tree['kind']=='parallel':
         tree['children'].reverse()
     policy=group.get('spacing_policy',getattr(pl,'passive_spacing_policy','compact'))
-    geo=template(par,pl,comps,index,tree,vector,options,spacing=policy)
+    geo=template(par,pl,comps,index,tree,vector,options,spacing=policy,
+                 extra_keepout=group.get('extra_keepout',0))
     if geo is None:
         raise ValueError('A passive module has no compatible legal orientation')
     space=2*options.halo+max(options.center_spacing,options.cross_clearance)
@@ -462,25 +468,31 @@ def comps_to_nets(comps):
     return dict(nets)
 
 
-def _guest_guards(par, trial, comps, index, groups):
-    """Only an attachment of that leaf may enter its same-row interior."""
+def _guest_forbidden_strips(par, trial, comps, index, group):
+    """The existing same-row leaf interiors forbidden to this attachment."""
     for block in trial.blocks+getattr(trial,'hierarchy_guards',[]):
         members=set(block);rows=defaultdict(list)
         for i in block:
             if comps[i]['symbol'] in ACTIVE:rows[trial.cell_of[i][0]].append(i)
-        for g in groups:
-            guests={index[n] for n in g['members']}
-            related=any(ts and {index[n] for n,p in ts}<=members for ts in g['anchors'].values())
-            if related:continue
-            for line in rows.values():
-                ordered=sorted(line,key=lambda i:trial.pos_of(i)[0])
-                for a,b in zip(ordered,ordered[1:]):
-                    aa,bb=body_rect(par,trial,a),body_rect(par,trial,b)
-                    strip=aa[2],max(aa[1],bb[1]),bb[0],min(aa[3],bb[3])
-                    for i in guests:
-                        box=body_rect(par,trial,i)
-                        if max(box[0],strip[0])<min(box[2],strip[2])-EPS and max(box[1],strip[1])<min(box[3],strip[3])-EPS:
-                            return False
+        related=any(ts and {index[n] for n,p in ts}<=members for ts in group['anchors'].values())
+        if related:continue
+        for line in rows.values():
+            ordered=sorted(line,key=lambda i:trial.pos_of(i)[0])
+            for a,b in zip(ordered,ordered[1:]):
+                aa,bb=body_rect(par,trial,a),body_rect(par,trial,b)
+                strip=aa[2],max(aa[1],bb[1]),bb[0],min(aa[3],bb[3])
+                if strip[0]<strip[2] and strip[1]<strip[3]:
+                    yield strip
+
+
+def _guest_guards(par, trial, comps, index, groups):
+    """Only an attachment of that leaf may enter its same-row interior."""
+    for g in groups:
+        for strip in _guest_forbidden_strips(par,trial,comps,index,g):
+            for name in g['members']:
+                box=body_rect(par,trial,index[name])
+                if max(box[0],strip[0])<min(box[2],strip[2])-EPS and max(box[1],strip[1])<min(box[3],strip[3])-EPS:
+                    return False
     return True
 
 
@@ -528,7 +540,8 @@ def pack(par, core, comps, nets, index, plan, options, *, deadline=None, seconds
 
 
 def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, seconds=1., max_trials=128,
-               skip_rejected_geometry=False,_rejected_geometry=None, refine_terminal_placements=True):
+               skip_rejected_geometry=False,_rejected_geometry=None, refine_terminal_placements=True,
+               _resume=None, _spatial_search=False):
     """Atomic family packing with a single finite local budget."""
     from netlist2schematic.plugins.preflight.placement_preflight import _static_faults
     from netlist2schematic.routing.orthogonal_router import RoutingFailure
@@ -541,15 +554,20 @@ def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, s
     plan=deepcopy(plan)
     plan['geometry_parameters']=asdict(options)
     started=perf_counter();stop=min(deadline,started+seconds) if deadline is not None else started+seconds
-    report=dict(version=plan['version'],applied=False,trials=0,actions=[],plan=deepcopy(plan),
+    report=PackingReport(version=plan['version'],applied=False,trials=0,actions=[],plan=deepcopy(plan),
         seconds_limit=seconds,max_trials=max_trials,active_grid_before=dict(column_x=list(core.column_x),row_y=list(core.row_y)))
     report['core_checkpoint']={c['id']:dict(cell=list(core.cell_of[i]),orient=core.orient[i],
         point=list(core.pos_of(i))) for i,c in enumerate(core.comps)}
     report['fallback_policy']='retain_verified_incumbent_no_mixed_restart'
     frame=make_frame(par,core,comps,index,options)
+    checkpoint=None
     fixed={i for i,c in enumerate(comps) if i in frame.fixed or c['id'] in frame.fixed or i in frame.fixed_cells}
     def finish(reason,pl=None):
         report.update(stop_reason=reason,elapsed_seconds=round(perf_counter()-started,6))
+        if pl is None and checkpoint is not None:
+            report.checkpoint=deepcopy(checkpoint)
+        if pl is None and 'insertion_search' in report:
+            report['insertion_search']['applied']=False
         if pl is not None:
             report.update(applied=True,current=measure(pl,comps,index,plan),
                 active_grid_after=dict(column_x=list(pl.column_x),row_y=list(pl.row_y)))
@@ -557,7 +575,12 @@ def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, s
     if seconds<=0 or max_trials<=0 or perf_counter()>=stop:return finish('budget_exhausted')
     if any(index[name] not in frame.layout_guest_ids for g in plan['groups'] for name in g['members']):
         return finish('guest_is_fixed_core_member')
-    groups,expansions=reserve(par,frame,comps,index,plan,options,fixed)
+    if _resume is None:
+        groups,expansions=reserve(par,frame,comps,index,plan,options,fixed)
+    else:
+        frame=deepcopy(_resume['frame'])
+        groups=deepcopy(_resume['groups'])
+        expansions=deepcopy(_resume['expansions'])
     report['expansions']=expansions
     report['core_positions']={c['id']:dict(point=list(frame.pos_of(i)),cell=list(frame.cell_of[i]),orient=frame.orient[i])
                               for i,c in enumerate(comps) if i not in frame.layout_guest_ids}
@@ -568,6 +591,14 @@ def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, s
     singles=sorted((g for g in groups if g['id'] not in used),key=lambda g:(g['role'] not in INLINE_ROLES,g['role']=='rail_attachment',-len(g['members'])))
     batches.extend([g] for g in singles)
     placed=[]
+    if _resume is not None:
+        placed=deepcopy(_resume['placed'])
+        batches=deepcopy(_resume['pending'])
+        report['actions']=deepcopy(_resume['actions'])
+    search=None
+    if _spatial_search:
+        from .packing_search import LocalPackingSearch
+        search=LocalPackingSearch(par,comps,nets,index,plan,options,stop,max_trials,report)
     rejected_geometry=set() if _rejected_geometry is None else _rejected_geometry
     report['repeated_static_rejections_skipped']=0
     def batch_trials(state,batch,position=0):
@@ -581,9 +612,11 @@ def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, s
                 return
             yield from batch_trials(trial,batch,position+1)
     try:
-        for batch in batches:
+        for batch_number,batch in enumerate(batches):
+            checkpoint=dict(frame=frame,groups=groups,placed=placed,pending=batches[batch_number:],
+                            expansions=expansions,actions=report['actions'])
             chosen=None
-            for candidate in batch_trials(frame,batch):
+            for candidate in (() if search is not None else batch_trials(frame,batch)):
                 if perf_counter()>=stop or report['trials']>=max_trials:return finish('local_budget')
                 geometry_key=None
                 if skip_rejected_geometry:
@@ -606,8 +639,12 @@ def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, s
                     groups=[g['id'] for g in batch],proposed_positions={n:dict(point=list(candidate.pos_of(index[n])),orient=candidate.orient[index[n]]) for g in batch for n in g['members']})
                 report.setdefault('trial_rejections',[])
                 if len(report['trial_rejections'])<8:report['trial_rejections'].append(deepcopy(report['last_rejection']))
+            if chosen is None and search is not None:
+                search.details['failed_batch']=[g['id'] for g in batch]
+                chosen=search.find(frame,batch,placed)
             if chosen is None:
-                return finish('local_budget' if perf_counter()>=stop else 'no_legal_slot')
+                exhausted=perf_counter()>=stop or report['trials']>=max_trials
+                return finish('local_budget' if exhausted else 'no_legal_slot')
             for g in batch:
                 report['actions'].append(dict(group=g['id'],role=g['role'],members=g['members'],
                     positions={n:dict(point=list(chosen.pos_of(index[n])),orientation=chosen.orient[index[n]]) for n in g['members']}))
@@ -645,4 +682,6 @@ def _pack_once(par, core, comps, nets, index, plan, options, *, deadline=None, s
         report['column_contract_preserved'] = True
     report['active_core_preserved']=True
     report['module_connections']=deepcopy(frame.passive_module_guides)
+    if search is not None:
+        search.record_profiles(frame,report)
     return finish('packed',frame)

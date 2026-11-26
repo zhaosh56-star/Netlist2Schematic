@@ -179,6 +179,15 @@ def _route_local_net(scene, net, occupied, margin, statistics, deadline, report,
     else:
         root, remaining = pins[0], list(pins[1:])
         tree = [root.stub] if root.point != root.escape else [(root.point, root.point)]
+    # This function is entered only after ordinary routing fails. Module
+    # boundaries can have simple safe access even when graph search stalls.
+    # Keep this independent of region recognition and share its deadline.
+    if net in getattr(scene, 'module_port_nets', ()):
+        from netlist2schematic.plugins.passive_skeleton.module_access import connect_tree
+        simple, access = connect_tree(scene, net, tree, remaining, occupied, deadline=deadline)
+        report.setdefault('module_access_patterns', []).append(access)
+        if simple is not None:
+            return simple, Counter(), Counter(), None
     prepared = scene.prepare_occupied(occupied)
     blockers, direct = Counter(), Counter()
     checks = {'free': {}, 'edge': {}, 'turn': {}}
@@ -334,6 +343,9 @@ def rescue_routing(context, checkpoint, *, routing_options=None, seconds=60):
     if getattr(checkpoint['scene'],'branch_routing',None):
         scene.branch_routing=deepcopy(checkpoint['scene'].branch_routing)
         scene.component_names=deepcopy(checkpoint['scene'].component_names)
+    if getattr(placement, 'passive_module_guides', None):
+        scene.module_port_nets = {net for guide in placement.passive_module_guides.values()
+                                  for net in guide['routes'] if net in scene.pins}
     names = set(scene.pins)
     frozen = deepcopy(checkpoint.get('completed', {}))
     failed = checkpoint.get('failed_net')

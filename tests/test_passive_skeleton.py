@@ -265,6 +265,8 @@ L2 vdd y 1n
             def anneal(pl,*args,**kw):
                 observed.append([c['symbol'] for c in pl.comps]);return actual(pl,*args,**kw)
             with patch('netlist2schematic.plugins.passive_skeleton.candidates.pack',return_value=(None,dict(applied=False,trials=0,stop_reason='local_budget'))), \
+                 patch('netlist2schematic.plugins.passive_skeleton.packing_search.resume_failed',
+                       side_effect=lambda *args,**kwargs:(None,args[7])), \
                  patch.object(sp,'_anneal',side_effect=anneal):
                 new=list(sp.create_candidates(path,iterations=0,passive_skeleton='auto'))
             self.assertEqual(old[0][0].cell_of,new[0][0].cell_of)
