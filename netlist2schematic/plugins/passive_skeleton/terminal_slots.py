@@ -1,7 +1,8 @@
 """Refine one-ended RLC/V/I modules around real ports in two dimensions.
 
-This runs only after ordinary packing has produced a complete static-legal
-incumbent. Templates remain rigid, active cells/axes stay fixed, and every
+The refinement entry runs after packing has produced a complete static-legal
+incumbent. Its bounded target generator also serves failure-only insertion.
+Templates remain rigid, active cells/axes stay fixed, and every
 accepted move passes the original static and internal-wire checks. Straight
 core exit channels are a soft estimate, never new routing keepouts.
 """
@@ -125,7 +126,8 @@ def _rigid_move(before, after, own):
                                    for i in range(len(before.comps)) if i not in own))
 
 
-def _targets(par, frame, comps, index, group, geometry, anchor, live, scene, channels, options, deadline):
+def _targets(par, frame, comps, index, group, geometry, anchor, live, scene, channels, options, deadline,
+             *, ignored=(), forbidden=(), max_states=128):
     from netlist2schematic.plugins.passive_skeleton.placement import slot_trials, _point_exit, snap
     check_deadline(deadline, 'terminal_targets')
     first = next(slot_trials(par, frame, comps, index, group, options), None)
@@ -136,11 +138,12 @@ def _targets(par, frame, comps, index, group, geometry, anchor, live, scene, cha
     end = group['ends'].index(live)
     port = geometry[6]['ports'][end]
     exit_point = _point_exit(par, frame, index, anchor, options)
-    own = {index[n] for n in group['members']}
+    own = {index[n] for n in group['members']} | set(ignored)
     bodies, markers, stubs = _local_shapes(par, comps, geometry, options)
     obstacles = [r for i,r in scene.body_rects if i not in own]
     obstacles += [r for k,(_,r) in enumerate(scene.marker_rects)
                   if scene.marker_components[k] not in own]
+    obstacles += list(forbidden)
     pitch = median([b-a for values in (frame.column_x, frame.row_y)
                     for a,b in zip(values, values[1:])]) if len(frame.column_x)+len(frame.row_y)>2 else 120.
     radius = 2*max(pitch, geometry[3]+2*options.halo)
@@ -159,7 +162,7 @@ def _targets(par, frame, comps, index, group, geometry, anchor, live, scene, cha
     aligned=tuple(exit_point[k]-port[k] for k in (0,1))
     add(base);add(aligned);add((aligned[0],base[1]));add((base[0],aligned[1]))
     visited=0
-    while queue and visited < 128:
+    while queue and visited < max_states:
         check_deadline(deadline, 'terminal_targets')
         distance,raw=heappop(queue);visited+=1
         shifted = [_shift_rect(r,raw) for r in bodies]

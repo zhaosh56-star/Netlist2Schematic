@@ -104,7 +104,8 @@ class InlinePassiveEvidenceTests(unittest.TestCase):
         group=model(devices)[3]['groups'][0]
         self.assertEqual('rail_attachment',group['role'])
         self.assertNotIn('conduction',group)
-        self.assertEqual(dict(net='bottom',terminal=['lower','D']),group['owner_port'])
+        self.assertEqual(dict(net='bottom',terminal=['lower','D'],
+                              evidence='unique_conduction_port'),group['owner_port'])
 
     def test_shared_sink_branch_reuses_active_tiers_instead_of_passive_gaps(self):
         from netlist2schematic.layout import structured_placement as structured

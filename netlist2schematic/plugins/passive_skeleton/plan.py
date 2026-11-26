@@ -142,7 +142,8 @@ def compile_plan(par, devices, comps, nets, structs, *, include_sources=True):
             net=live[0]
             conductive=[t for t in group['anchors'][net] if t[1] in CHANNELS.get(parts[t[0]]['symbol'],())]
             if len(conductive)==1:
-                group['owner_port']=dict(net=net,terminal=list(conductive[0]))
+                group['owner_port']=dict(net=net,terminal=list(conductive[0]),
+                    evidence='unique_conduction_port')
             if (any(parts[n]['symbol'] in SOURCES for n in group['members']) and conductive
                     and len(conductive)==len(group['anchors'][net])
                     and all(t[1] in ('S','E') for t in conductive)):
@@ -232,8 +233,10 @@ def measure(pl, comps, index, plan):
             spacing=(saved.get('spacing',{}).get('policy','standard') if saved is not None else
                      plan.get('spacing_policy','compact'))
             if spacing=='auto':spacing='compact'
+            extra=(saved.get('spacing',{}).get('extra_keepout',0) if saved is not None else
+                   g.get('extra_keepout',options.cross_clearance if plan.get('version','').endswith('v2') else 0))
             geo=template(par,pl,comps,index,g['module'],direction,options,spacing=spacing,
-                         extra_keepout=options.cross_clearance if plan.get('version','').endswith('v2') else 0)
+                         extra_keepout=extra)
             if geo is None:
                 continue
             offsets=[tuple(pl.pos_of(i)[k]-p[k] for k in (0,1)) for i,p in geo['positions'].items()]

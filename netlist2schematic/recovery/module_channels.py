@@ -9,14 +9,15 @@ from time import perf_counter
 
 from netlist2schematic.common.sa_common import load_local
 from netlist2schematic.layout.series_alignment import _fixed_ids
-from netlist2schematic.plugins.passive_skeleton.placement import slot_trials, _guest_guards
+from netlist2schematic.plugins.passive_skeleton.placement import _guest_guards
+from netlist2schematic.plugins.passive_skeleton.packing_search import placement_trials
 from netlist2schematic.plugins.passive_skeleton.module_connections import check_guides, complete_routes
 from netlist2schematic.plugins.preflight.placement_preflight import _static_faults
 from netlist2schematic.routing.routing_rules import build_scene, analyze_routes, check_deadline
 from netlist2schematic.routing.orthogonal_router import RoutingFailure, _priority
 from netlist2schematic.routing.sa_routing import RoutingValidationError, routing_errors
 
-VERSION = 'module-channel-recovery-v1'
+VERSION = 'module-channel-recovery-v2'
 
 
 def eligible(context, checkpoint):
@@ -92,6 +93,7 @@ def rescue(context, checkpoint, options, *, deadline, max_trials=16, max_routes=
     before, comps, nets, index, metadata = deepcopy(context)
     plan = metadata['passive_skeleton']['plan']
     groups = plan['groups']
+    coupled = {gid for family in plan.get('families', ()) for gid in family['groups']}
     fixed = _fixed_ids(before, comps)
     branch = checkpoint.get('branch') or {}
     failed = checkpoint['failed_net']
@@ -108,6 +110,15 @@ def rescue(context, checkpoint, options, *, deadline, max_trials=16, max_routes=
         report['rejections'][reason]=report['rejections'].get(reason,0)+1
     try:
         for group in related:
+            group = deepcopy(group)
+            if group['id'] in coupled:
+                # A paired bank needs an atomic family move; this recovery
+                # stage only repositions one module at a time.
+                rejected('coupled_family')
+                continue
+            profile = before.passive_module_guides[group['id']].get('spacing', {})
+            group['spacing_policy'] = profile.get('policy', group.get('spacing_policy', 'compact'))
+            group['extra_keepout'] = profile.get('extra_keepout', 0)
             members = {index[name] for name in group['members']}
             if members & fixed:
                 continue
@@ -120,7 +131,7 @@ def rescue(context, checkpoint, options, *, deadline, max_trials=16, max_routes=
                 x, y = base.pos_of(i)
                 base.passive_local_offsets[i][0] += far_x+number*220-x
                 base.passive_local_offsets[i][1] += far_y-y
-            for trial in slot_trials(par, base, comps, index, group, options):
+            for trial in placement_trials(par, base, comps, nets, index, group, options, deadline=deadline):
                 check_deadline(deadline, 'module_channel_candidates')
                 identity = tuple((i, trial.pos_of(i), trial.orient[i]) for i in sorted(members))
                 if identity in seen or all(trial.pos_of(i) == before.pos_of(i)
@@ -152,6 +163,7 @@ def rescue(context, checkpoint, options, *, deadline, max_trials=16, max_routes=
                     break
                 report['route_attempts'] += 1
                 action = dict(group=group['id'], members=list(group['members']),
+                    spacing=deepcopy(trial.passive_module_guides[group['id']]['spacing']),
                     before={comps[i]['id']: list(before.pos_of(i)) for i in members},
                     after={comps[i]['id']: list(trial.pos_of(i)) for i in members},
                     preserved_nets=sorted(net for net in checkpoint['completed']
@@ -178,6 +190,10 @@ def rescue(context, checkpoint, options, *, deadline, max_trials=16, max_routes=
                     fixed_port_geometry_preserved=False, original_fixed_devices_preserved=True,
                     module_channels=deepcopy(report))
                 current['passive_skeleton']['module_connections'] = deepcopy(trial.passive_module_guides)
+                for saved_group in current['passive_skeleton']['plan']['groups']:
+                    if saved_group['id'] == group['id']:
+                        saved_group['spacing_policy'] = action['spacing']['policy']
+                        saved_group['extra_keepout'] = action['spacing'].get('extra_keepout', 0)
                 for old_action in current['passive_skeleton'].get('actions', []):
                     if old_action['group'] == group['id']:
                         old_action['positions'] = {name: dict(point=list(trial.pos_of(index[name])),

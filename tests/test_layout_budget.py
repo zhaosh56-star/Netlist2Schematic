@@ -131,7 +131,9 @@ class PackingSupplementTests(unittest.TestCase):
     def test_resume_respects_fixed_coordinates(self):
         fixed=next(iter(range(len(self.core.comps))))
         self.core.fixed={fixed};self.core.fixed_cells={fixed:self.core.cell_of[fixed]}
-        with patch.object(placement,'pack',return_value=(None,result())) as pack:
+        with patch.object(placement,'pack',return_value=(None,result())) as pack, \
+                patch('netlist2schematic.plugins.passive_skeleton.packing_search.resume_failed',
+                      side_effect=lambda *args,**kwargs:(None,args[7])):
             with self.assertRaises(RoutingFailure):
                 packing_budget.resume(PAR,self.core,self.comps,self.nets,self.index,self.plan,
                     self.options,result(),self.limits,deadline=perf_counter()+3)

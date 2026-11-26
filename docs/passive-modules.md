@@ -222,3 +222,97 @@ C07是此前保存合法图的成品对照，线长少96，但多1折角，不�
 `common/layout_budget.py`负责通用额度及共享账本，`plugins/passive_skeleton/packing_budget.py`负责调用原插入和恢复方法。`normal_packing_budget`、`recovery_packing_budget`记录目标额度、实际分配、消耗、剩余及停止原因，区分时间耗尽、次数耗尽和位置枚举完毕。
 
 本次在`main`工作区通过151项相关测试，覆盖新预算及原模块插入、紧凑间距、源器件、候选流水线和恢复。快速成功用例的坐标、朝向和内部线路与旧策略逐项相同；不代表完整项目回归或整批真实网表验证。此前在适配分支的同参实测中，1874和C23完整出图且位置、线路保持原样；BJT637虽然获得额外尝试，仍因现有可选位置耗尽而失败，不能把追加预算当作新增找位能力。
+
+## 失败插入阶段的二维搜索
+
+2026-11-25新增`failed-module-2d-v1`，接入主flow的骨架候选2、3。原插入失败后，围绕真实端口搜索新的二维位置。原插入成功时继续使用原结果。上述可选预算接口仍负责原位置枚举的额度，新的二维搜索独立处理`no_legal_slot`、局部时间耗尽和次数耗尽。
+
+执行顺序如下。
+
+```text
+有源骨架与原空间预留
+→ 原模块插入及已有补试
+→ 插入失败时，从本次运行的部分布局继续二维搜索
+→ 必要时联合重放失败模块和最多两个直接受阻附件
+→ 全部附件完成静态及内部连线检查
+→ 最终A*与完整验收
+```
+
+`placement.py`保存私有内存检查点，包含已放模块、当前失败模块、后续队列、原结构保护和实际物理坐标。JSON只写诊断。下一次二维尝试通过深拷贝读取检查点，每个失败事务完整撤销。没有检查点时，从当前有源骨架执行原空间预留，再进行必要插入。
+
+`packing_search.py`复用`terminal_slots.py`的障碍边界搜索，同时考虑同行叶块禁止插入的区域。每个间距方案最多展开512个轻量状态，保留32个二维位置。单次模块搜索最多完整检查48个试案，并在最多4个静态合法位置中比较接口余量、直连通道风险和原线长/折角/交叉估价。整个搜索受共享截止时间和完整检查次数约束。
+
+独立端部模块可以上下、左右平移。串联、并联及嵌套模块整体移动。两宿主之间的模块继续使用原类型对应的通道。已确认的成对负载族使用原联合搜索，固定器件参与原约束检查。
+
+单个模块无法安放时，根据实际几何阻挡及共同非电源服务节点选择最多两个已放附件，尝试两种有限插入顺序。最多四次事务共享搜索预算。组外器件维持原位置，有源逻辑行列、方向以及本次已预留的物理轴参与最终一致性检查。
+
+搜索交替检查原间距、标准间距及加宽方案。加宽方案复用模板的`extra_keepout`，默认取现有`center_spacing`，即10单位，保留真实符号尺寸和固定出线几何。多端节点接口余量作为排序依据，全部位置仍须通过原几何检查。实际模板记录在各模块的`spacing_policy`和`extra_keepout`中，保存重绘读取最终坐标。
+
+新失败搜索复用复杂度分档，K≤2最多3秒/512次，K=3～5最多6秒/1536次，K≥6最多10秒/3072次。所有模块和间距方案共用一次额度，并受候选正常阶段的截止时间限制。原候选修复阶段使用其剩余额度。`passive_skeleton.insertion_search`记录实际消耗、检查点来源、局部事务、实际间距和停止原因。
+
+最终布线失败后的`module-channel-recovery-v2`也使用这组二维位置及间距方案。它沿用原恢复阶段的时间、最多16个位置试案和最多2次局部布线，重新布置被移动端子涉及的网络，并复验保留线路。
+
+当前小批验证在`output/attachment-2d-recovery/index.html`。C07及C23候选3通过最终连接与几何独立复验。C07还验证了快速成功路径，位置、线路和指标与禁止调用新搜索的对照逐项相同。BJT637两候选均能完成附件插入，最终布线结果单独列在对照页。布局预览只表示静态检查通过。
+
+复现命令如下。
+
+```powershell
+# 默认骨架流程在附件插入失败时自动调用新搜索
+.\.venv\Scripts\python.exe -X utf8 -B .\run_flow.py .\test_data2\analoggenie-637-bipolar-op-amp-with-input-bias-current-cancellation.spi --cell dut --out-dir .\output\637-2d
+
+# 小型紧凑模块回归
+.\.venv\Scripts\python.exe -X utf8 -B .\run_flow.py .\test_data\1-10\redrawing.cir --cell main --out-dir .\output\redrawing-2d
+
+# 仅验证C23的候选3，正常阶段110秒，外部总截止120秒
+.\.venv\Scripts\python.exe -X utf8 -B .\run_flow.py '.\test_data\16+\operational-amplifier.cir' --cell dut --candidate-id 3 --quality-seconds 110 --time-seconds 120 --fallback off --local-rescue off --out-dir .\output\c23-2d
+
+.\.venv\Scripts\python.exe -X utf8 -B -m unittest tests.test_failed_module_search
+```
+
+## 共享节点的接入选择与失败后的短路径接线
+
+2026-11-26的Goal验证进一步定位到两个不同问题，不能都归因于“间距太小”。
+
+1. **可用的宿主被过早锁定。** 一个节点可能同时连接上方管的S/E端与另一只管的G/B端。只有一个导通端，并不表示附件只能靠近这个端口。`owner_port`现在记录`unique_conduction_port`证据；原位置仍先尝试，失败二维搜索可改从同一节点的其他真实端口侧接入，最多四个。明确锁定的归属、公共尾源中点和成对附件族保留原约束，原网络和全部宿主端子都保留。
+2. **放得下不等于限定时间内一定能布通。** 失败救援现在对模块接入网先检查一小组直线/L形路径。每次从真实固定出口连接到已有同网树，短路径检查失败才继续原A*救援。该入口不依赖区域识别是否成功，也不修改原始逃逸长度、halo、引脚或交叉净区。
+
+第二项位于`recovery/local_rescue.py`的共用失败入口，实际实现为`plugins/passive_skeleton/module_access.py`。普通首次A*已经成功时不会调用。每个分支最多检查最近8个树接点的两种L形；只有整个网络连通、相关几何检查全部通过才返回，整张图仍需原完整验收。它不是新一轮全局搜索，使用现有救援截止时间。独立重绘继续只读取和复验保存路线。
+
+本轮也修正了规整指标：模块选择加宽模板后，用其实际`extra_keepout`评价形状，不再拿紧凑模板把合法加宽误计为内部错位。
+
+一个未保留的实验是“任何插入成功的附件布局都提前触发模块移动救援”。它会挤占在原位置继续接线的时间。本轮维持原模块移动触发条件和恢复时间分配，只增加失败接线能力。
+
+### 本轮验证如何看
+
+- 总入口：`output/passive-robustness-goal/index.html`。输入来自当前`test_data`和`test_data2`，共47份，其中33份包含R/L/C/D或V/I。编号按本轮目录排序，须以文件名为准，不能直接套用历史C编号。
+- 基线是本轮开始时的完整工作区快照，包含上一轮失败二维插入补丁，位于`.cache/passive-robustness-baseline`。它不等于单独的Git提交`e4f7263`。
+- 整批快速协议：每候选正常40秒、三个恢复阶段各5秒、整图保护上限120秒、20,000次SA、种子20261029、缩线5秒。这是验证参数，未更改主flow的默认120/30/30/30秒候选预算。
+- BJT637另做同参数困难样例对照：正常25秒、恢复各20秒、整图上限120秒。它与整批协议分开统计，位于`output/passive-robustness-goal/recovery-budget/index.html`。旧版失败，新版候选2在约59秒取得完整合法结果，继续尝试候选3后整次约118秒交付。指标为线长6230、交叉11、折角34，无总线后备，有源坐标、行列和朝向保持。
+- `probes/bjt637-complete/preview.html`展示GT与这份完整结果。`probes/interface-c27-2/`是早期局部诊断，只证明被捕获局部分支有可行连接，不能作为整图成功记录。
+
+两版都从原网表重新生成，不读取GT坐标，也不从历史成品借用布局或线路。每份成功输出从JSON独立重建场景、复验电气和几何，再检查彩色、黑白、独立重绘的几何一致性。网表和符号资源按哈希冻结。总线降级、失败及不同预算单独记录。
+
+整批33份已经完成：快速协议两版均为32份正常成功、1份失败、0份总线降级；32份共同成功的器件位置、物理轴、线路逐项相同，合计线长54184、交叉43、折角314。未新增失败，也没有把本轮描述为“所有图都缩线了”。困难样例的同参恢复验证则为旧版0/1、新版1/1，收益是新增一种保住原有有源框架的可行恢复路径。恢复仅5秒时该难例仍失败，不能承诺陌生网表全部成功。
+
+视觉上，BJT637的R1/Vin已能够从真实输入端附近接入，但R2仍偏向上方Q17，共享节点两端的组织仍有优化余地。GT并非坐标模板，本轮也没有为了模仿GT而重排有源核心；完整布通与达到GT的视觉质量是两个结论。
+
+重复运行该困难样例，两次均通过完整验收，位置、物理轴、路线、指标完全一致；整次耗时分别117.82秒和117.74秒。记录在`output/passive-robustness-goal/reproducibility/check.json`。可直接从网表复现：
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -B .\run_flow.py .\test_data2\analoggenie-637-bipolar-op-amp-with-input-bias-current-cancellation.spi --cell dut --seed 20261029 --iterations 20000 --quality-seconds 25 --repair-seconds 20 --rescue-seconds 20 --spacing-seconds 20 --fallback-seconds 20 --time-seconds 120 --simplify-seconds 5 --out-dir .\output\637-passive-goal
+```
+
+最终完整回归2631项全部通过，零失败、错误、跳过，约200秒；日志为`output/passive-robustness-goal/final-tests.log`。新增覆盖共享端口证据、二维找位及加宽模板、固定和成对结构保护、事务回滚、直线/L形安全接线、无区域识别的失败入口、正常成功不调用救援、改名/平移/镜像、比较预算和子电路一致性。47份输入及GT、全部冻结符号资源均未修改。本轮到此收尾，不继续扩大布局或路由策略。
+
+`tools/evaluate_passive_robustness.py`提供可复用的冻结、串行运行与统计工具。例如下次修改前可以：
+
+```powershell
+# 新建目录，冻结当前代码和两套输入清单；不运行布局布线
+.\.venv\Scripts\python.exe -X utf8 -B .\tools\evaluate_passive_robustness.py --prepare --out-dir .\output\next-passive-comparison
+
+# 运行冻结版；完成代码修改后再运行当前版，参数必须相同
+.\.venv\Scripts\python.exe -X utf8 -B .\tools\evaluate_passive_robustness.py --policy baseline --engine-root .\output\next-passive-comparison\frozen-engine --out-dir .\output\next-passive-comparison
+.\.venv\Scripts\python.exe -X utf8 -B .\tools\evaluate_passive_robustness.py --policy improved --out-dir .\output\next-passive-comparison
+```
+
+工具复用的是相同指纹下已经完成的**测试记录**，不会把旧成品喂给算法。`--prepare`拒绝覆盖已有证据；运行中断留下的未完成记录须先检查所属进程。换网表、种子、参数或算法代码会产生独立运行目录。

@@ -45,6 +45,13 @@ def move_group(placement,group,index,dy=-400):
 
 
 class ModuleChannelRecoveryTests(unittest.TestCase):
+    def test_unchanged_frame_keeps_original_rescue_budget(self):
+        context,checkpoint,_,_=case()
+        context[4].pop('layout_branches')
+        self.assertFalse(module_channels.eligible(context,checkpoint))
+        context[4]['passive_skeleton']['applied']=False
+        self.assertFalse(module_channels.eligible(context,checkpoint))
+
     def test_moved_module_can_finish_real_routing_and_pass_independent_validation(self):
         context,checkpoint,options,_=case()
         before=deepcopy(context)
@@ -103,7 +110,7 @@ class ModuleChannelRecoveryTests(unittest.TestCase):
         context,checkpoint,options,_=case()
         group=context[4]['passive_skeleton']['plan']['groups'][0]
         context[0].fixed.add(context[3][group['members'][0]])
-        with patch.object(module_channels,'slot_trials',side_effect=AssertionError('fixed guest moved')):
+        with patch.object(module_channels,'placement_trials',side_effect=AssertionError('fixed guest moved')):
             result,_=module_channels.rescue(context,checkpoint,options,deadline=perf_counter()+3)
         self.assertIsNone(result)
 

@@ -217,6 +217,9 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
         from netlist2schematic.plugins.passive_skeleton.packing_budget import supplement
         packed,report=supplement(sp.par,core,comps,nets,index,plan,options,
             report,budget_limits,deadline=deadline)
+    if packed is None:
+        from netlist2schematic.plugins.passive_skeleton.packing_search import resume_failed
+        packed,report=resume_failed(sp.par,core,comps,nets,index,plan,options,report,deadline=deadline)
     recovery=legacy_report.get('packing_recovery',{})
     initial_trials=recovery.get('initial_trials',legacy_report['trials'])
     report['shared_local_budget']=dict(seconds_limit=1.,max_trials=128,active_trials=used-row_trials,
@@ -301,6 +304,10 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
                     stop=min(until,perf_counter()+3.)
                     packed,retried=pack(sp.par,trial,cc,nn,ii,pp,oo,deadline=stop,
                         seconds=max(0.,stop-perf_counter()),max_trials=512,skip_rejected_geometry=True)
+                    if packed is None:
+                        from netlist2schematic.plugins.passive_skeleton.packing_search import resume_failed
+                        packed,retried=resume_failed(sp.par,trial,cc,nn,ii,pp,oo,retried,
+                            deadline=until,seconds=max(0.,until-perf_counter()),max_trials=512)
                     if packed is not None:
                         updated={**old,**retried,'primary_packing_resume':dict(scale=scale,
                             source_candidate=str(variant+1),no_sa_restart=True)}

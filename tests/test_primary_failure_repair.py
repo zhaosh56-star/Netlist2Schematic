@@ -41,7 +41,9 @@ class PrimaryRepairTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path=Path(temporary)/'circuit.cir'
             path.write_text('.model N NMOS\nM1 out inp 0 0 N\nR1 vdd out 1k\n.end\n',encoding='utf8')
-            with patch.object(candidates,'pack',side_effect=fail_once):
+            with patch.object(candidates,'pack',side_effect=fail_once), \
+                    patch('netlist2schematic.plugins.passive_skeleton.packing_search.resume_failed',
+                          side_effect=lambda *args,**kwargs:(None,args[7])):
                 generated=list(sp.create_candidates(path,iterations=0,candidate_ids=(2,),
                     passive_skeleton='auto',packing_failures=failures))
             self.assertIsNone(generated[0][0]);self.assertEqual(len(failures),1)
