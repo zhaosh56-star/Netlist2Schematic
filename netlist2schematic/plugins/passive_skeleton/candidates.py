@@ -319,4 +319,15 @@ def create_candidate(devices, comps, nets, index, levels, att, structs, seed, va
                 resume=resume,options=deepcopy(options),context=None,checkpoint=None,attempt_index=0,
                 **({'packing_budget':deepcopy(budget_limits)} if budget_policy.adaptive else {})))
         return None,report
+    # Preserve the complete legal packing before spending a small normal-stage
+    # window on nearby alternatives. Recovery closures above retain their own
+    # quotas; saved-layout operations never enter candidate generation.
+    from netlist2schematic.plugins.passive_skeleton.normal_choice import refine_modules
+    packed,report['normal_choice']=refine_modules(sp.par,packed,comps,nets,index,
+        report['plan'],options,deadline=deadline)
+    report['generation_seconds']=round(perf_counter()-started,6)
+    for action in report['actions']:
+        action['positions']={n:dict(point=list(packed.pos_of(index[n])),orientation=packed.orient[index[n]])
+                             for n in action['members']}
+    report['module_connections']=deepcopy(packed.passive_module_guides)
     return finish(packed,report)

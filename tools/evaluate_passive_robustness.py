@@ -78,7 +78,7 @@ def verify(path):
     data = json.loads(path.read_text(encoding='utf8'))
     skeleton = data.get('passive_skeleton', {})
     record['packing'] = {key: skeleton.get(key) for key in
-        ('applied', 'stop_reason', 'insertion_search', 'terminal_search', 'current')}
+        ('applied', 'stop_reason', 'insertion_search', 'terminal_search', 'normal_choice', 'current')}
     record['candidate'] = data.get('candidate_id') or record['selected_candidate']
     from netlist2schematic.common.sa_saved import load_placement
     _, _, _, placement, comps, _, index = load_placement(path)
@@ -105,6 +105,14 @@ def summarize(lookup):
             bus_fallback=sum(r['verified'].get('routing_stage')=='bus_fallback' for r in valid),
             candidates=dict(Counter(str(r.get('verified',{}).get('candidate')) for r in valid)),
             median_seconds=median(r['seconds'] for r in subset if 'seconds' in r) if subset else None)
+        choices = [r.get('verified',{}).get('packing',{}).get('normal_choice') or {} for r in valid]
+        summary[policy]['normal_choices'] = dict(
+            eligible=sum(bool(r.get('eligible_count')) for r in choices),
+            attempted=sum(bool(r.get('trials')) for r in choices),
+            applied=sum(bool(r.get('applied')) for r in choices),
+            moved_modules=sum(bool(a.get('position_changed')) for r in choices for a in r.get('actions',[])),
+            trials=sum(r.get('trials',0) for r in choices),
+            seconds=sum(r.get('elapsed_seconds',0) for r in choices))
     pairs=[]
     def selected_cell(record):
         if 'cell' in record['signature']:return record['signature']['cell']
@@ -155,6 +163,8 @@ def publish(directory, inventory):
         data = base64.b64encode(Path(path).read_bytes()).decode()
         return '<a href="#embedded-image-viewer" data-svg-preview><img loading="lazy" src="data:image/svg+xml;base64,'+data+'"></a>'
     summary,pairs = summarize(lookup)
+    relevant = {r['tag'] for r in inventory if r.get('included')}
+    attachment_summary, _ = summarize({key:r for key,r in lookup.items() if key[0] in relevant})
     body = ['<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>无源附件鲁棒性对照</title>',
         '<style>body{font:15px/1.6 system-ui;margin:24px;background:#f4f6fa;color:#23324a}section{background:white;padding:20px;margin:24px 0}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}img{width:100%;height:540px;object-fit:contain}pre{white-space:pre-wrap}h2{overflow-wrap:anywhere}@media(max-width:900px){.grid{grid-template-columns:1fr}}</style>',
         '<h1>无源与源器件布局：GT / 本轮开始前 / 改进版</h1>',
@@ -173,9 +183,42 @@ def publish(directory, inventory):
             for key,label in (('baseline','本轮基线'),('improved','改进版')))+'</table>',
         '<details><summary>统计详情：线长、交叉、折角及比较范围</summary><pre>'+
         escape(json.dumps(summary, ensure_ascii=False, indent=2))+'</pre></details>']
+    body.append('<details><summary>仅含无源或源器件的输入：单独统计</summary><pre>'+
+        escape(json.dumps(attachment_summary,ensure_ascii=False,indent=2))+'</pre></details>')
+    notes_file=directory/'review-notes.json'
+    if notes_file.is_file():
+        body.append('<aside style="padding:16px;background:#fff6df"><b>本轮观察与限制</b><ul>')
+        for note in json.loads(notes_file.read_text(encoding='utf8')):
+            target=note.get('case')
+            label='<a href="#'+escape(target)+'">'+escape(target)+'</a>：' if target else ''
+            body.append('<li>'+label+escape(note['text'])+'</li>')
+        body.append('</ul></aside>')
+    body.append('<h2>逐图概览</h2><p>指标顺序为线长 / 交叉 / 折角。二维择优记录来自最终选中成品；'
+                '“接入建议”表示器件坐标未变。“保留原位”表示没有接受更好的位置。'
+                '每个候选内有源位置保持；最终选中候选改变时，两版的有源摆法可能不同。</p>'
+                '<table style="border-spacing:16px 5px;text-align:left"><tr><th>电路</th>'
+                '<th>旧版</th><th>新版</th><th>新版二维择优</th></tr>')
     for row in inventory:
         records = [lookup.get((row['tag'], key)) for key in ('baseline','improved')]
         if not any(records):
+            continue
+        numbers=[]
+        for record in records:
+            if record is None:numbers.append('待运行')
+            elif record['status']!='valid':numbers.append(record['status'])
+            else:
+                m=record['verified']['metrics']
+                numbers.append(' / '.join(str(m[k]) for k in ('wirelength','crossings','bends')))
+        selection=(records[1] or {}).get('verified',{}).get('packing',{}).get('normal_choice') or {}
+        moved=sum(bool(a.get('position_changed')) for a in selection.get('actions',[]))
+        label=('移动 '+str(moved)+' 组' if moved else '接入建议' if selection.get('applied') else
+               '保留原位' if selection.get('trials') else '未执行' if selection.get('eligible_count') else '不适用')
+        body.append('<tr><td><a href="#'+row['tag']+'">'+escape(row['tag']+' '+Path(row['source']).stem)+
+                    '</a></td>'+''.join('<td>'+escape(v)+'</td>' for v in numbers)+'<td>'+label+'</td></tr>')
+    body.append('</table>')
+    for row in inventory:
+        records = [lookup.get((row['tag'], key)) for key in ('baseline','improved')]
+        if not any(records) and row.get('status') != 'input_error':
             continue
         body.append('<section id="'+row['tag']+'"><h2>'+escape(row['tag']+' '+Path(row['source']).stem)+'</h2><div class="grid"><div><b>GT</b>'+picture(row.get('ground_truth'))+'</div>')
         for key, record in zip(('本轮基线', '改进版'), records):
@@ -189,8 +232,11 @@ def publish(directory, inventory):
                     candidate=v.get('candidate'), stage=v.get('routing_stage'), seconds=record.get('seconds'),
                     budget=record['signature']['parameters']),
                     ensure_ascii=False, indent=2))+'</pre>')
+                if v.get('packing',{}).get('normal_choice'):
+                    body.append('<details><summary>二维择优诊断</summary><pre>'+escape(json.dumps(
+                        v['packing']['normal_choice'],ensure_ascii=False,indent=2))+'</pre></details>')
             else:
-                body.append('<p>待验证</p>')
+                body.append('<p>'+escape(row.get('message','待验证'))+'</p>')
             body.append('</div>')
         body.append('</div></section>')
     followup=directory/'recovery-budget/comparison.json'
@@ -221,7 +267,8 @@ def publish(directory, inventory):
     body.append('</html>')
     from tools.compare_power_rails import _image_viewer
     temp=directory/'index.html.tmp'; temp.write_text(_image_viewer(''.join(body)), encoding='utf8'); temp.replace(directory/'index.html')
-    write(directory/'comparison.json', dict(summary=summary, pairs=pairs, results=results))
+    write(directory/'comparison.json', dict(summary=summary, attachment_summary=attachment_summary,
+        pairs=pairs, results=results))
 
 
 def main(argv=None):
@@ -232,6 +279,8 @@ def main(argv=None):
     p.add_argument('--prepare', action='store_true',help='Freeze current code and inventory into a new output directory')
     p.add_argument('--input-dirs', nargs='+',type=Path,default=[ROOT/'test_data',ROOT/'test_data2'])
     p.add_argument('--cases', nargs='*')
+    p.add_argument('--all-inputs', action='store_true',
+                   help='Also run active-only inputs as compatibility controls')
     p.add_argument('--normal-seconds', type=float, default=40)
     p.add_argument('--recovery-seconds', type=float, default=5)
     p.add_argument('--wall-seconds', type=float, default=120)
@@ -253,7 +302,9 @@ def main(argv=None):
     hashes={str(path.relative_to(engine)):digest(path) for path in engine_source_files(engine)}
     parameters={k:getattr(args,k) for k in ('normal_seconds','recovery_seconds','wall_seconds','seed','iterations','candidate_id')}
     for row in inventory:
-        if not row.get('included') or args.cases and row['tag'] not in args.cases:
+        if (row.get('status') == 'input_error'
+                or not (row.get('included') or args.all_inputs)
+                or args.cases and row['tag'] not in args.cases):
             continue
         signature=dict(engine=hashes, source=row['source_sha256'], cell=row.get('cell'),
             resources=freeze['resource_hashes'], parameters=parameters)

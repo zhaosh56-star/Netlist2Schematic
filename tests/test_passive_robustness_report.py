@@ -58,5 +58,13 @@ class PassiveComparisonTests(unittest.TestCase):
         self.assertEqual(summary['improved']['bus_fallback'],1)
         self.assertEqual(summary['improved']['status'],dict(valid=2,failed=1))
 
+    def test_normal_choices_separate_actual_moves_from_guide_only_changes(self):
+        record=self.receipt('improved','unused')
+        record['verified']['packing']=dict(normal_choice=dict(eligible_count=2,trials=9,
+            elapsed_seconds=.2,applied=True,actions=[dict(position_changed=True),dict(position_changed=False)]))
+        summary,_=summarize({('a','improved'):record})
+        self.assertEqual(summary['improved']['normal_choices'],dict(eligible=1,attempted=1,
+            applied=1,moved_modules=1,trials=9,seconds=.2))
+
 
 if __name__=='__main__':unittest.main()
