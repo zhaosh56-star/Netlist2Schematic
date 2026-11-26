@@ -153,11 +153,36 @@ class WebTests(unittest.TestCase):
         for path in ('/../../private.txt','/assets/missing.js','/api/no-such-api'):
             with self.subTest(path=path),self.assertRaises(FileNotFoundError):a.read(path)
 
+    def test_import_wrapper_uses_public_export_and_keeps_native_module_read_only(self):
+        root=self._assets()
+        original=root/'assets/convert-import-sources-original.js'
+        before=original.read_bytes()
+        a=EditorAssets(root,'token')
+        self.assertIn('python-convert-import-sources.js',a._rewrite(
+            'import {t} from "./convert-import-sources-original.js";'))
+        wrapper,_,cache=a.read(a.prefix+'assets/python-convert-import-sources.js')
+        self.assertIn(b'export function t(sources)',wrapper)
+        self.assertNotIn(b'__N2S_PREPARE_EXPORT__',wrapper)
+        self.assertEqual(cache,'no-store')
+        native,_,_=a.read(a.prefix+'assets/native-convert-import-sources.js')
+        self.assertEqual(native,before)
+        helper,_,_=a.read(a.prefix+'assets/spice-compat.mjs')
+        self.assertIn(b'prepareSpiceCompatibility',helper)
+        self.assertEqual(original.read_bytes(),before)
+
+    def test_unknown_native_import_exports_fail_explicitly(self):
+        root=self._assets()
+        (root/'assets/convert-import-sources-original.js').write_text('export const a=1;',encoding='utf8')
+        with self.assertRaisesRegex(ValueError,'source-preparation exports'):
+            EditorAssets(root,'token')
+
     def _assets(self):
         web=self.root/'web';(web/'assets').mkdir(parents=True,exist_ok=True)
         (web/'index.html').write_text('<title>Auto Canvas</title><script src="/assets/index.js"></script>',encoding='utf8')
         (web/'assets/index.js').write_text('new Worker(new URL("/assets/auto-layout.worker-original.js",import.meta.url));',encoding='utf8')
         (web/'assets/auto-layout.worker-original.js').write_text('original',encoding='utf8')
+        (web/'assets/convert-import-sources-original.js').write_text(
+            'function prepare(s){return {inputs:s,builtInBodies:[]}}export{prepare as t};',encoding='utf8')
         return web
 
 

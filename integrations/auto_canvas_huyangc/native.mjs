@@ -7,6 +7,7 @@ import { registerProjectSources } from './source-loader.mjs';
 import { markerSeats } from './native-marker-seats.mjs';
 import { verifyVisibleRouting } from './visible-routing.mjs';
 import { verifyVisibleSupplies } from './visible-supplies.mjs';
+import { prepareCompatibleSources } from './spice-compat.mjs';
 
 const [operation, ...args] = process.argv.slice(2);
 const flags = new Map();
@@ -30,13 +31,21 @@ const source = readFileSync(input);
 const sourceSha256 = createHash('sha256').update(source).digest('hex');
 if (operation === 'import-spice') {
   const { importSpiceSources } = await import('@icm/spice');
+  const { prepareImportSources } = await import(pathToFileURL(resolve(flags.get('--project-root'),
+    'apps/editor/src/features/netlist-export/convert-import-sources.ts')).href);
   const name = basename(input);
-  const imported = await importSpiceSources([{path:name,bytes:new Uint8Array(source)}],name,{});
+  const sources = [{path:name,bytes:new Uint8Array(source)}];
+  const prepared = prepareCompatibleSources(prepareImportSources, sources);
+  const imported = await importSpiceSources(prepared.inputs,name,{},
+    {originalSources:sources,builtInBodies:prepared.builtInBodies});
   if (!imported.successful || !imported.project)
     throw new Error('NATIVE_SPICE_IMPORT_FAILED: '+JSON.stringify(imported.diagnostics));
   mkdirSync(dirname(output),{recursive:true});
   writeFileSync(output,protocol.serializeProject(imported.project));
-  console.log(JSON.stringify({status:'valid',output,documents:imported.project.documents.length}));
+  const report = {status:'valid',output,documents:imported.project.documents.length,
+    compatibility:prepared.compatibility,diagnostics:imported.diagnostics};
+  if(flags.has('--report'))writeFileSync(resolve(flags.get('--report')),JSON.stringify(report,null,2)+'\n');
+  console.log(JSON.stringify(report));
   process.exit(0);
 }
 const project = protocol.parseProject(source.toString('utf8'));
@@ -51,6 +60,7 @@ const resolver = symbols.createProjectSymbolResolver(project, symbols.builtInSym
 const { classifyNets } = await import(pathToFileURL(resolve(flags.get('--project-root'),
   'packages/auto-layout/src/net-roles.ts')).href);
 const netRoles=classifyNets(document,resolver).byNet;
+const { subcircuitDescriptor, hasBuiltInSubcircuitInterface } = await import('@icm/devices');
 
 function symbolSnapshot(instance) {
   const found = resolver.resolve(instance.symbolId, instance.symbolVariantId);
@@ -68,7 +78,11 @@ function symbolSnapshot(instance) {
     if (!direction) throw new Error(`Nonorthogonal pin ${instance.id}.${name}`);
     return [{ name, at: geometry.contactPoint, landing: geometry.gridLanding, direction }];
   });
-  return { definition: found.definition, variant: found.variant || null, pins };
+  const localDefinition = project.componentDefinitions.find(d=>d.symbol.id===instance.symbolId);
+  const builtInSubcircuit = !localDefinition || hasBuiltInSubcircuitInterface(localDefinition)
+    ? subcircuitDescriptor(instance.symbolId, project) : null;
+  return { definition: found.definition, variant: found.variant || null, pins,
+    ...(builtInSubcircuit ? {builtInSubcircuit} : {}) };
 }
 
 if (operation === 'snapshot') {

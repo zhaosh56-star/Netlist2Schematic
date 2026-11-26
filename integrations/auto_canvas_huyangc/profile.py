@@ -168,6 +168,12 @@ def compile_snapshot(snapshot):
         electrical = next((d.get('electrical', {}) for d in project.get('componentDefinitions', [])
                            if d['symbol']['id'] == symbol_id), {})
         kind = binding.get('deviceClass') or electrical.get('deviceClass')
+        descriptor = resolved.get('builtInSubcircuit', {})
+        native_opamp = (binding.get('kind') == 'unresolved-subcircuit' and
+            binding.get('name', '').casefold() == 'opamp' and descriptor.get('target') == 'opamp' and
+            descriptor.get('symbolId') == symbol_id and
+            {(p.get('pinName') or p.get('supply')) for p in descriptor.get('ports', [])} ==
+            {'IN+', 'IN-', 'OUT', 'VDD', 'VSS'})
         if not binding or electrical.get('targetPolicy') == 'child-cell':
             raise ValueError(f'Unsupported native instance binding: {instance["id"]}')
         if kind == 'mos':
@@ -181,7 +187,7 @@ def compile_snapshot(snapshot):
             if polarity not in ('npn', 'pnp'):
                 raise ValueError('BJT polarity must be declared by its native symbol/model')
             prefix, canonical, pins = 'Q', polarity, ('C', 'B', 'E')
-        elif kind == 'vcvs' and {p['name'] for p in resolved['pins']} == {'OUT', 'IN+', 'IN-'}:
+        elif native_opamp or (kind == 'vcvs' and {p['name'] for p in resolved['pins']} == {'OUT', 'IN+', 'IN-'}):
             prefix, canonical, pins = 'E', 'opamp', ('OUT', 'IN+', 'IN-')
         elif kind in CLASSES:
             prefix, canonical, pins = CLASSES[kind]
@@ -219,8 +225,15 @@ def compile_snapshot(snapshot):
                 models.append('.model '+model_keys[model_key]+' '+model_type)
             tail = model_keys[model_key]
         elif prefix == 'E':
-            nodes = [nodes[0], '0', nodes[1], nodes[2]]
-            tail = '1'
+            if native_opamp:
+                nodes = [nodes[1], nodes[2], nodes[0]]
+                supplies = [terminal_nets.get((instance['id'], p)) for p in ('VDD', 'VSS')]
+                if all(supplies):
+                    nodes = [names[n] for n in supplies] + nodes
+                tail = 'opamp'
+            else:
+                nodes = [nodes[0], '0', nodes[1], nodes[2]]
+                tail = '1'
         else:
             params = instance.get('netlist', {}).get('parameters', {})
             value = params.get('dc' if prefix in ('V','I') else 'value', '1')
@@ -233,6 +246,9 @@ def compile_snapshot(snapshot):
         statements.append(' '.join([engine_id, *nodes, tail, *parameters]))
         components[engine_id] = dict(instance_id=instance['id'], symbol_id=symbol_id,
                                      canonical=canonical, pins=list(pins))
+        if native_opamp:
+            components[engine_id]['hidden_supply_nets'] = {p: terminal_nets.get((instance['id'], p))
+                                                          for p in ('VDD', 'VSS')}
     if not components:
         raise ValueError('No supported electrical devices in the selected Document')
     for canonical, key in (('ground', 'ground'), ('vdd-port', 'vdd-port')):

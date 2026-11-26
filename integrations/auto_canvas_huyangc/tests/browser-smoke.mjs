@@ -72,9 +72,48 @@ try {
   await cdp.call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
   await cdp.call('Page.navigate',{url:origin+'/editor'});
   await until(()=>cdp.evaluate(`!!document.querySelector('[data-testid="schematic-canvas"]')`),30);
+  const importingSpice=flags.get('--import-spice')==='true';
+  const importJobs=new Set(jobIds());
   const dom=await cdp.call('DOM.getDocument');
-  const file=await cdp.call('DOM.querySelector',{nodeId:dom.root.nodeId,selector:'[data-testid="project-file"]'});
+  const file=await cdp.call('DOM.querySelector',{nodeId:dom.root.nodeId,
+    selector:importingSpice?'[data-testid="import-netlist-file"]':'[data-testid="project-file"]'});
   await cdp.call('DOM.setFileInputFiles',{nodeId:file.nodeId,files:[input]});
+  if(importingSpice) {
+    await until(async()=>/Auto Layout (applied|left|could|failed)|import failed|failed to import/iu.test(await status()),
+      Number(flags.get('--wait-seconds') || 360));
+    const final=await status();console.log('SPICE import and automatic layout:',final);
+    await screenshot('after');
+    assert.match(final,/Auto Layout applied/u);
+    const compatibility=await cdp.evaluate('globalThis.__netlist2schematicImportReport');
+    assert.equal(compatibility?.version,'spice-import-v1');
+    const newJob=await until(()=>jobIds().find(id=>!importJobs.has(id)));
+    const job=await until(()=>{const p=join(jobsRoot,newJob,'web-job.json');return existsSync(p)?JSON.parse(readFileSync(p,'utf8')):null;});
+    assert.equal(job.status,'succeeded');
+    assert.ok(job.results.length>0 && job.results.every(r=>r.resultKind!=='editable_draft'));
+    const after=await save('after');
+    const original=JSON.parse(readFileSync(join(jobsRoot,newJob,'source.icproj.json'),'utf8'));
+    const originalIds=new Set(original.documents.flatMap(d=>d.instances).map(i=>i.id));
+    const devices=after.documents.flatMap(d=>d.instances).filter(i=>originalIds.has(i.id));
+    assert.equal(devices.length,originalIds.size);
+    if(flags.has('--expect-devices'))assert.equal(devices.length,Number(flags.get('--expect-devices')));
+    for(const change of compatibility.changes.filter(c=>c.code==='named_opamp'))
+      assert.ok(devices.some(i=>i.id===change.nativeReference));
+    const guidance=await cdp.evaluate(`({visible:document.querySelectorAll('[data-testid="flightline"]').length,total:document.querySelector('[data-testid="editor-test-telemetry"] [data-testid="flightline-count"]')?.textContent ?? null})`);
+    assert.equal(guidance.visible,0);
+    if(guidance.total!==null)assert.equal(Number(guidance.total),0);
+    steps.push({step:'real-spice-import-and-python-layout',status:'passed',jobId:newJob,message:final,
+      devices:devices.length,compatibility,guidance});
+    const undo=await cdp.evaluate(`document.querySelector('[data-testid="draw-tool-undo"]')?'[data-testid="draw-tool-undo"]':'button[aria-label="Undo"]'`);
+    const redo=await cdp.evaluate(`document.querySelector('[data-testid="draw-tool-redo"]')?'[data-testid="draw-tool-redo"]':'button[aria-label="Redo"]'`);
+    await click(undo);await wait(250);
+    const undone=await save('undone');assert.notDeepEqual(content(undone),content(after));
+    await click(redo);await wait(250);
+    const redone=await save('redone');assert.deepEqual(content(redone),content(after));
+    steps.push({step:'imported-project-save-undo-redo',status:'passed'});
+    assert.equal(errors.length,0);
+    writeFileSync(join(out,'report.json'),JSON.stringify({status:'passed',origin,input,steps,errors},null,2));
+    console.log('SPICE BROWSER ACCEPTANCE PASSED',steps.length);
+  } else {
   await until(()=>cdp.evaluate(`!document.querySelector('[data-testid="auto-layout-button"]')?.disabled`));
   const before=await save('before');await screenshot('before');
   const beforeGuidance=flags.get('--expect-no-flightlines')==='true'?
@@ -171,6 +210,7 @@ try {
   }
   writeFileSync(join(out,'report.json'),JSON.stringify({status:'passed',origin,input,steps,errors},null,2));
   console.log('BROWSER ACCEPTANCE PASSED',steps.length);
+  }
   }
 } catch(error) {
   if(cdp){

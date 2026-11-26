@@ -1,0 +1,8 @@
+I1 tail VSS DC 100u
+M1 left p tail VSS NMOS l=150n w=1u
+M2 right n tail VSS NMOS l=150n w=1u
+R1 VDD left 10k
+R2 VDD right 10k
+Efull VDD VSS left right feedback opamp gain=1e5
+Esmall feedback reference output opamp
+.ends

@@ -10,7 +10,7 @@
 
 - 算法主线：`main`，2026-11-26同步到 `2405d49`。
 - 适配分支：`adapt/auto-canvas-huyangc`。
-- 本地适配工作区：`D:\gongzuo\.cache\worktrees\auto-canvas-huyangc`。
+- 当前本地适配工作区：`D:\gongzuo\.cache\worktrees\adapt-algorithm-sync`；下文命令中的工作区路径按实际检出位置替换。
 - 适配实现、测试和说明全部在 `integrations/`；核心 `netlist2schematic/` 没有适配改动。
 - `D:\auto-canvas-huyangc` 作为只读协议、符号和编辑事务提供方，没有修改其网页、依赖、锁文件或 Git 分支。
 
@@ -19,6 +19,28 @@
 2026-11-26本分支合入主线的三个算法提交：`1e01536`（无源模块摆放及失败接线恢复）、`4c1fdb0`（正常阶段的有限二维择优）、`2405d49`（主列规整保护局部晶体管组）。合并后的核心源码与该版本`main`一致；原生JSON转换、网页300秒调度、草稿和供电符号适配继续由`integrations/`负责。主线47张全量验收结果记录在`docs/passive-modules.md`；它不等于相同电路经过原生符号几何及网页预算后必定得到相同结果。
 
 同步后使用适配分支自身作为`engine-root`，94项Python适配测试全部通过且无跳过，包含19项真实原生集成测试；21项Node测试全部通过。本次未改适配执行代码，也未切换已运行服务的检出目录。运行时以启动参数`--engine-root`为准，更新远端分支不会自动替换其他检出目录中正在使用的算法。
+
+随后补齐了网页和原生CLI共用的SPICE导入兼容，详见下节。该增量只在适配目录，主算法仍与`2405d49`一致。
+
+## SPICE导入兼容（2026-11-26）
+
+`spice-compat.mjs`在原生源文件准备完成后、编译前处理内存副本，浏览器导入按钮和`native.mjs import-spice`使用相同逻辑：
+
+- 只有整个输入没有子电路定义、只有一个且位于文件末尾的无名`.ends`，才解释为`.end`；命名错配、未闭合、多余结束行继续交给原生编译器报错。
+- 对未声明且模型名明确为`NMOS/PMOS`的MOS补充类型声明，已有`.model`优先。不根据器件编号猜类型，未知型号仍需明确映射。
+- 支持`Ename IN+ IN- OUT opamp`及`Ename VDD VSS IN+ IN- OUT opamp`，允许续行及`key=value`参数。使用原生三可见端运放，供电端保留隐藏电气连接；普通数值E源保持原解析。
+- 原生运放属于X类，所以`E1`在原生项目中记为`XE1`；名称冲突时分配无冲突后缀。转换报告记录原编号、原行号、原生编号和每个端子的映射，原始源码保存在原生项目的`source.files[].originalContent`中。不会把`VE opamp`误当作VCVS增益。
+- 检出首行是明确器件语句的无标题网表时，添加内存标题，避免原生SPICE规则吞掉首个器件。报告记录行号偏移。原文件字节不变。
+
+网页通过虚拟资源包装原有`prepareImportSources`公开导出，既不修改目标项目的源码/构建文件，也不替换编译器内部函数。构建缺少已知模块或导出形态时明确拒绝启动。浏览器控制台的`__netlist2schematicImportReport`可查看本次转换；CLI可用`--report <JSON>`保存报告。
+
+JSON布局适配只接受有原生符号契约的黑盒运放，不靠任意X实例名称判定。三信号端进入主算法；隐藏VDD/VSS保留并在原生导出前后做电气等价校验。五个**可见**端的变体仍明确拒绝，不静默漏画。
+
+同时补充原有供电标记修座：发生原生符号碰线时，先尝试2、4单位的小幅位置调整，再尝试整块符号宽度；保留64次、5秒上限。只移动标记和它的引线，器件与信号线路不动，固定出线、异网间距、原生几何和保存重读检查继续执行；无冲突的原结果不进入修座。
+
+实测`fully-differential-cmos-amplifier-with-resistive-cmfb.cir`：原文件直接从浏览器导入，14个器件全部保留，候选3正常完成；约21.73秒（本机单次实测），原生可见线长2616、交叉1、折角11，电气等价、准确引脚、供电连通、无待连飞线、保存与一次Undo/Redo均通过。核心信号线长2568，不能与包含供电引线的原生指标混用。证据目录：`output/web-cmfb-import-investigation/browser-import-fixed/`。
+
+刷新4174后须重新导入原始`.cir`。旧项目若在导入时已经遗漏I1或误解释E1，仅点击Auto Layout无法恢复原网表的连接。
 
 ## 处理流程
 
@@ -46,7 +68,7 @@
 以下命令在适配工作区执行：
 
 ```powershell
-Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
+Set-Location D:\gongzuo\.cache\worktrees\adapt-algorithm-sync
 
 & D:\gongzuo\.venv\Scripts\python.exe -X utf8 -B `
   -m integrations.auto_canvas_huyangc.bootstrap_runtime `
@@ -60,7 +82,7 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 ## 运行一个原生项目
 
 ```powershell
-Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
+Set-Location D:\gongzuo\.cache\worktrees\adapt-algorithm-sync
 
 & D:\gongzuo\.venv\Scripts\python.exe -X utf8 -B `
   -m integrations.auto_canvas_huyangc `
@@ -111,7 +133,7 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 
 ## 第一版支持边界
 
-已接入 R/C/L/D、独立 V/I、三可见端 MOS/BJT，以及原算法已有的三可见端 E 运放代理。支持原生标量接口、选中已有单元、保留未选中单元；模型与实际引脚必须有明确类型和正交几何。
+已接入 R/C/L/D、独立 V/I、三可见端 MOS/BJT、原算法已有的三可见端 E 运放代理，以及经过原生契约验证的三可见端黑盒运放。支持原生标量接口、选中已有单元、保留未选中单元；模型与实际引脚必须有明确类型和正交几何。
 
 以下情况目前明确拒绝，不跳过器件或猜测连接：
 
@@ -129,7 +151,7 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 网页当前先正常运行候选2、3，任一正常结果合法就按原规则选图；两个都失败才共享剩余预算进行恢复。调度只位于 `candidate_schedule.py` 适配层，原主算法及离线完整模式不改。C23同参验证保持相同布局及线路，耗时由162.402秒降到134.444秒；详见[调度及草稿说明](editable-drafts.md)。
 
 ```powershell
-Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
+Set-Location D:\gongzuo\.cache\worktrees\adapt-algorithm-sync
 $env:AUTO_CANVAS_PROJECT_ROOT = 'D:\auto-canvas-huyangc'
 $env:AUTO_CANVAS_RUNTIME = "$PWD\.cache\auto-canvas-runtime"
 $env:NETLIST2SCHEMATIC_ENGINE_ROOT = "$PWD"
@@ -139,13 +161,15 @@ $env:NETLIST2SCHEMATIC_ENGINE_ROOT = "$PWD"
   -t . -v
 ```
 
-当前共有94项适配层Python测试，其中19项经过真实原生包，均已通过；21项Node测试通过。另有上一轮预算接口的151项相关算法测试通过，本轮只改适配展示，没有重跑全部主项目回归。未设置上述环境或未准备缓存时，19项原生集成测试会明确跳过。实际浏览器验证了完整结果的按钮、Undo/Redo、版本保护和取消，也验证了C23草稿的按钮回写、真实待连飞线、手工起线及保存。详见WEB.md。
+导入兼容补齐后共有103项适配层Python测试，其中26项经过真实原生包；36项Node测试覆盖转换、标记修座、Worker与线路验证。本轮只改适配层，没有重跑全部主项目回归。未设置上述环境或未准备缓存时，26项原生集成测试会明确跳过。实际浏览器验证了完整结果的按钮、SPICE导入后自动布局、Undo/Redo、版本保护和取消，也验证了C23草稿的按钮回写、真实待连飞线、手工起线及保存。详见WEB.md。
 
 ```powershell
 & D:\auto-canvas-huyangc\.local\preview\runtime\node.exe --test `
   .\integrations\auto_canvas_huyangc\tests\web-worker.test.mjs `
   .\integrations\auto_canvas_huyangc\tests\visible-routing.test.mjs `
-  .\integrations\auto_canvas_huyangc\tests\visible-supplies.test.mjs
+  .\integrations\auto_canvas_huyangc\tests\visible-supplies.test.mjs `
+  .\integrations\auto_canvas_huyangc\tests\spice-compat.test.mjs `
+  .\integrations\auto_canvas_huyangc\tests\native-marker-seats.test.mjs
 ```
 
 2026-11-24 第一阶段接口验证记录（本次供电判定修复前），使用主算法、20,000 次迭代、默认候选与预算：

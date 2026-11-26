@@ -38,11 +38,23 @@ class EditorAssets:
             raise ValueError('The deployed editor does not reference its known Auto Layout Worker')
         worker = (ADAPTER_ROOT/'web/auto-layout.worker.mjs').read_text(encoding='utf8')
         self.worker = worker.replace('__N2S_TOKEN__', token).encode('utf8')
-        digest = hashlib.sha256(self.index.encode()+worker.encode()).hexdigest()[:12]
+        converters = list((self.root/'assets').glob('convert-import-sources-*.js'))
+        if len(converters) != 1:
+            raise ValueError('Expected exactly one native source-preparation module')
+        self.original_converter = converters[0].name
+        self.native_converter = converters[0].read_text(encoding='utf8')
+        exports = re.findall(r'export\s*\{\s*[$\w]+\s+as\s+([$\w]+)\s*\}\s*;?', self.native_converter)
+        if len(exports) != 1:
+            raise ValueError('Unsupported native source-preparation exports; import adaptation needs review')
+        wrapper = (ADAPTER_ROOT/'web/spice-import.mjs').read_text(encoding='utf8')
+        self.converter = wrapper.replace('__N2S_PREPARE_EXPORT__', exports[0]).encode('utf8')
+        self.spice_compat = (ADAPTER_ROOT/'spice-compat.mjs').read_bytes()
+        digest = hashlib.sha256(self.index.encode()+worker.encode()+self.converter+self.spice_compat).hexdigest()[:12]
         self.prefix = '/__n2s/'+digest+'-'+secrets.token_hex(5)+'/'
 
     def _rewrite(self, text):
         text = text.replace(self.original_worker, 'python-auto-layout.worker.js')
+        text = text.replace(self.original_converter, 'python-convert-import-sources.js')
         for quote in ('"', "'", '`'):
             text = text.replace(quote+'/assets/', quote+self.prefix+'assets/')
         return text
@@ -54,6 +66,12 @@ class EditorAssets:
             pathname = '/'+pathname[len(self.prefix):]
         if pathname in ('/assets/python-auto-layout.worker.js', '/assets/'+self.original_worker):
             return self.worker, 'text/javascript; charset=utf-8', 'no-store'
+        if pathname in ('/assets/python-convert-import-sources.js', '/assets/'+self.original_converter):
+            return self.converter, 'text/javascript; charset=utf-8', 'no-store'
+        if pathname == '/assets/native-convert-import-sources.js':
+            return self._rewrite(self.native_converter).encode('utf8'), 'text/javascript; charset=utf-8', 'no-store'
+        if pathname == '/assets/spice-compat.mjs':
+            return self.spice_compat, 'text/javascript; charset=utf-8', 'no-store'
         relative = pathname.lstrip('/') or 'index.html'
         target = (self.root/relative).resolve()
         if not target.is_relative_to(self.root):

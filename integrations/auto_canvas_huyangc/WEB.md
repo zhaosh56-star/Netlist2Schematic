@@ -15,7 +15,7 @@ http://127.0.0.1:4174/editor
 ## 启动与停止
 
 ```powershell
-Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
+Set-Location D:\gongzuo\.cache\worktrees\adapt-algorithm-sync
 
 # 首次先按 README 准备隔离的 Node 运行库；Python 使用算法现有环境。
 & D:\gongzuo\.venv\Scripts\python.exe -X utf8 -B `
@@ -46,6 +46,10 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 支持 `--engine-seconds`、`--iterations`、`--seed` 配置。网页当前默认总执行上限300秒，含模型读取、候选2/3、必要修复、转换和原生回写复验；20,000次迭代和种子不变。完成即返回，不会等满预算。队列等待和浏览器传输延迟不计入后台执行额度；一次选择多个Document时共享这300秒。监听地址固定为本机loopback，不会开放到局域网。离线完整CLI及主算法默认预算保持原样。
 
 ## 使用
+
+2026-11-26的SPICE导入补充支持无标题器件首行、明确NMOS/PMOS型号、扁平文件末尾的孤立无名`.ends`，以及`Ename [VDD VSS] IN+ IN- OUT opamp`。映射成原生运放后，输出端、输入极性和隐藏供电端保持原连接；原生运放采用X类编号，例如`E1 → XE1`。原始文本仍保存在项目的`originalContent`，转换详情可在控制台查看`__netlist2schematicImportReport`。严格边界见[README](README.md#spice导入兼容2026-11-26)。
+
+本机新服务从`D:\gongzuo\.cache\worktrees\adapt-algorithm-sync`运行；启动、停止命令先进入该工作区。旧页面需刷新，再重新导入原始网表。已经被旧导入器误读的项目不会靠重新布局自动修正电气连接。
 
 网页默认使用`--layout-budget adaptive`，要求`engine-root`包含可选预算接口。该通用接口已同步到最新`main`，可使用本分支或更新后的`main`算法；上面的`.`指当前adapt工作区。使用没有该接口的旧算法检出目录时显式传`--layout-budget legacy`；服务不会静默修改旧算法或忽略策略。健康接口的`layoutBudgetPolicy`显示实际选择。
 
@@ -78,6 +82,8 @@ Set-Location D:\gongzuo\.cache\worktrees\auto-canvas-huyangc
 ```
 
 本地主机用独立版本的虚拟资源地址加载现有构建，为其规划 Worker 提供 Python 实现。修改仅发生在内存响应中；既不手改有哈希的生成文件，也不 monkey-patch 编辑器控制器。旧 Service Worker 的不可变缓存不会把旧规划入口带进新页面。其他静态界面及编辑逻辑沿用目标构建。
+
+SPICE源准备也通过独立虚拟模块包装公开导出；原生转换与编译继续执行。导入兼容代码与原生CLI共用，模块内容加入资源版本指纹；服务重启后旧虚拟地址失效，需要刷新。
 
 这份 Worker 是项目接口适配，不是布局算法。更换算法只需更新 `--engine-root`；目标 Worker 协议发生变化时，更新本目录并重新运行真实浏览器测试。启动时找不到唯一已知 Worker 会拒绝，模型版本不一致也会明确拒绝。
 

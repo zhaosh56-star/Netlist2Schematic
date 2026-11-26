@@ -57,7 +57,12 @@ export function markerSeats(document, plan, context) {
     const other=endpointKey(route.start)===endpointKey(end)?route.legs.at(-1).to.endpoint:route.start;
     const symbol=resolver.resolve(instance.symbolId,instance.symbolVariantId).definition;
     const span=Math.max(24,Math.ceil((Math.max(symbol.viewBox.width,symbol.viewBox.height)+8)/2)*2);
-    const offsets=[[-span,0],[span,0],[0,span],[0,-span],[-span,span],[span,span],[-span,-span],[span,-span]];
+    // A cap can clip a foreign wire by just one artwork unit. Try small
+    // orthogonal seats before jumping a whole symbol width (which may cross
+    // the host device or the very wire we are avoiding). Keep the same 64
+    // transaction / 5 second bound and all existing native geometry checks.
+    const offsets=[...[2,4].flatMap(step=>[[0,-step],[-step,0],[step,0],[0,step]]),
+      [-span,0],[span,0],[0,span],[0,-span],[-span,span],[span,span],[-span,-span],[span,-span]];
     let accepted=false;
     for (const [dx,dy] of offsets) {
       if (accepted || attempts>=64 || performance.now()>=deadline) break;
@@ -74,7 +79,16 @@ export function markerSeats(document, plan, context) {
       for (const middle of middles) {
         if (attempts>=64 || performance.now()>=deadline) break;
         const raw=[a.gridLanding,ae,...middle,be,b.gridLanding];
-        const path=raw.filter((p,i)=>!i || p.x!==raw[i-1].x || p.y!==raw[i-1].y);
+        const path=[];
+        for(const p of raw) {
+          if(path.length && p.x===path.at(-1).x && p.y===path.at(-1).y)continue;
+          while(path.length>=2 && ((path.at(-2).x===path.at(-1).x && path.at(-1).x===p.x) ||
+            (path.at(-2).y===path.at(-1).y && path.at(-1).y===p.y)))path.pop();
+          if(!path.length || p.x!==path.at(-1).x || p.y!==path.at(-1).y)path.push(p);
+        }
+        // Keep both real pin exits after merging artificial collinear cuts.
+        // A shorter seat must not make the host turn before its fixed escape.
+        if(path.length<2 || !on(ae,path[0],path[1]) || !on(be,path.at(-2),path.at(-1)))continue;
         const foreign=current.routes.filter(r=>r.netId!==route.netId).map(r=>pointsOf(current,r));
         if (path.slice(1).some((p,i)=>foreign.some(w=>w.slice(1).some((q,j)=>!separated(path[i],p,w[j],q))))) continue;
         const legs=path.slice(1).map((p,i)=>({id:`${route.id}-seat-leg-${i}`,mode:'manual',
