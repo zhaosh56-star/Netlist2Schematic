@@ -19,7 +19,7 @@ from netlist2schematic.layout.series_alignment import (
     CHANNELS, CONTROLS, EPS, _fixed_ids, _objective_context, _valid_trial,
     discover_series, measure_series)
 
-VERSION = 'conduction-column-plan-v1'
+VERSION = 'conduction-column-plan-v2'
 
 
 def _ports(comp):
@@ -32,6 +32,7 @@ def _identity(prefix, names):
 
 
 def build_column_plan(par, pl, comps, nets, index, structures=(), *, inline_bridges=()):
+    structures = tuple(structures)
     inline_bridges = tuple(inline_bridges)
     protected = (build_column_plan(par, pl, comps, nets, index, structures)
                  if inline_bridges else None)
@@ -163,6 +164,10 @@ def build_column_plan(par, pl, comps, nets, index, structures=(), *, inline_brid
                           'unique_rl_continuation' if e.get('via') else
                           'explicit_composite_ports' if e['explicit'] else
                           'repeated_multilevel_controls' if score[1] else 'unique_active_continuation'))
+    from .local_groups import local_groups, release_conflicting_junctions
+    children = local_groups(pl, comps, index, structures)
+    edges, handoffs = release_conflicting_junctions(edges, active, children)
+    skipped.extend(handoffs)
     after = {e['a']: e['b'] for e in edges}
     predecessors = {e['b'] for e in edges}
     paths = []
@@ -195,7 +200,7 @@ def build_column_plan(par, pl, comps, nets, index, structures=(), *, inline_brid
         active_count=len(active), covered_active_count=covered,
         supported=bool(edges),
         terminal_contract={c['id']: dict(symbol=c['symbol'], nodes=deepcopy(c['nodes'])) for c in comps},
-        active_rows=rows)
+        active_rows=rows, local_groups=children, junction_handoffs=handoffs)
     if protected is not None:
         result['protected_plan'] = protected
     return result
@@ -245,6 +250,9 @@ def preserves_columns(before, trial, index):
     plan = getattr(before, 'column_plan', None)
     if plan is None:
         return True
+    from .local_groups import expanded_groups
+    if expanded_groups(before, trial, index, plan.get('local_groups', ())):
+        return False
     plans = [plan]
     if plan.get('protected_plan') is not None:
         plans.append(plan['protected_plan'])
@@ -315,8 +323,12 @@ def refine_columns(par, pl, comps, nets, index, metadata, plan, options=None, *,
     if type(max_trials) is not int or max_trials < 0:
         raise ValueError('column max_trials must be an integer >= 0')
     started = perf_counter(); stop = min(deadline, started+seconds) if deadline is not None else started+seconds
+    from .local_groups import measure_groups, expanded_groups, VERSION as GROUP_VERSION
+    children = plan.get('local_groups', ())
     report = dict(version=VERSION, policy='auto', reference_candidate=False, plan=deepcopy(plan),
-        applied=False, trials=0, actions=[], seconds_limit=seconds, max_trials=max_trials)
+        applied=False, trials=0, actions=[], seconds_limit=seconds, max_trials=max_trials,
+        local_child_protection=dict(version=GROUP_VERSION, before=measure_groups(pl,index,children),
+            rejected_expansions=0))
     current = pl
     def finish(reason):
         data = deepcopy(metadata)
@@ -327,6 +339,7 @@ def refine_columns(par, pl, comps, nets, index, metadata, plan, options=None, *,
             data['optimization_metrics']['measurement_stage'] = 'after_column_layout'
         report.update(stop_reason=reason, elapsed_seconds=round(perf_counter()-started, 6),
                       current=measure_columns(current, index, plan))
+        report['local_child_protection']['current'] = measure_groups(current, index, children)
         data['layout_columns'] = deepcopy(report)
         return current, data
     if not compatible_plan(plan, pl, comps, index):
@@ -368,6 +381,12 @@ def refine_columns(par, pl, comps, nets, index, metadata, plan, options=None, *,
                     continue
                 trial = deepcopy(current); trial.set_state(cells, trial.orient)
                 if not _valid_trial(trial, current, moved, fixed, check_columns=False):
+                    continue
+                violations = expanded_groups(current, trial, index, children)
+                if violations:
+                    protection = report['local_child_protection']
+                    protection['rejected_expansions'] += 1
+                    protection.setdefault('first_rejection', violations)
                     continue
                 metrics = measure_columns(trial, index, plan)
                 if column_key(metrics) >= column_key(old_metrics):
