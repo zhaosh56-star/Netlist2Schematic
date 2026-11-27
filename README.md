@@ -1,73 +1,51 @@
 # Netlist2Schematic
 
-把 SPICE 网表转换成布局 JSON、彩色 SVG 和黑白 SVG。默认按电流层级和电路子结构布局，使用模拟退火优化位置，再进行正交 A* 布线、连接与几何验收，最后安全缩短绕线、减少多余折角。输入网表保持原样。
+将 SPICE 网表转换为可复验的布局 JSON、彩色 SVG、黑白 SVG 和正式 SVG。算法根据真实连接识别子结构、组织有源支路，再插入无源及源器件模块，经 SA、正交 A*、完整连接与几何验收、安全缩线后出图。原网表不改动，GT 不参与坐标生成。
 
-新网表的结构化主flow默认启用主列与区域前置组织（`--branch-layout auto`）：候选2、3先组织连续支路和局部区域，再执行SA、无源模块插入及最终布线；没有大小图门槛。可用 `--branch-layout off` 关闭，保存位置操作及其他显式布局实验保持原路径。算法、兼容边界和实测见[支路组织说明](docs/branch-organization.md)。
+**文档按 2026-11-27 的源码核对。** 从[文档目录](docs/README.md)进入；理解算法看[通俗流程详解](docs/flow-walkthrough.md)，查参数看[运行指南](docs/flow-guide.md)。历史实验与当时的测试数字已移至 [docs/history/](docs/history/README.md)，不能用作当前默认值。
 
-BJT与MOS现在共用差分对、电流镜、交叉耦合和串接支路的基础识别、结构保护及主列布局接口：MOS提供D/G/S，BJT提供C/B/E，家族、极性和真实引脚仍分别保存。只共电源、共偏置不能形成配对；MOS专用的锁存、折叠复合规则继续独立。默认候选2、3直接使用，无需新开关。规则与含BJT的三张实测见[运行说明](docs/flow-guide.md#bjt与mos共用基础结构)。
+## 运行
 
-VEE现在按独立负电源绘制向下单横杠盖帽；VDD保持向上，GND保持接地符号，不将VEE与地短接。新布局默认启用，旧JSON按原解释重绘；规则和实测见[运行说明](docs/flow-guide.md#vee负电源标记)。
-
-Python 实现已分类放入 `netlist2schematic/`，根目录保留原命令入口。查找算法文件请从[目录与文件用途](docs/project-layout.md)或[旧文件名映射](netlist2schematic/source_map.json)进入；布局插件的开关保持；正式出图现已默认启用。
-
-```text
-netlist2schematic/
-├─ flow/、common/、netlist/、recognition/   # 调度、支持、解析、分层与识别
-├─ layout/、routing/、recovery/            # 布局、最终布线、失败恢复
-├─ postprocess/、rendering/                # 安全缩线、绘图
-└─ plugins/                               # structure、region、readability、symmetry、attachment、net_labels、preflight及共享关系
-examples/、test_data/                      # 输入与本地数据集
-output/、tests/、tools/、docs/              # 出图、回归、开发工具、说明
-dist/、notes/                             # 本地交付包、手工笔记
-```
-
-`agent-rsi-demo/`、`shinka-circuit-rsi/` 和本地 `ShinkaEvolve/` 继续作为独立项目保留。
-
-想理解每一步怎么执行、用哪些代码，以及SA估价、A*、失败恢复和最终简化的区别，请先读[从网表到原理图：当前flow逐步详解](docs/flow-walkthrough.md)。
-
-结构布局改进通过 `--structure-layout auto` 试用，开发期间默认关闭。候选1保留参照，候选2/3按有拓扑证据的局部块和支路改善排列，继续使用原A*、完整验收和安全缩线。分阶段规则与对照命令见[结构布局说明](docs/structure-layout.md)。
-
-区域组织另有独立实验开关 `--region-layout auto`：在有完整端口证据时，先安排功能区、主支路和附件，再做SA。首轮覆盖时控双支路核心、折叠主级及采样控制区；候选1仍保留原算法。不与旧结构或对称实验同时开启，开发期间默认关闭，只有完整出图和视觉发布门槛通过才推广。用法及对照见[区域布局说明](docs/region-layout.md)。
-
-`--presentation clean` 可清理黑白成品展示；新网表的端口冲突修复默认开启，保存JSON不自动摆件。默认候选2／3优先路径自带时间预留；`--candidate-budget reserved` 的旧70/85/100比例用于显式关闭无源模块后的对照。已有JSON可用 `render-clean.py 原JSON 新SVG --presentation clean` 只重绘。
-
-可选的 `--net-labels auto` 在完整布线和安全缩线完成后，额外生成“局部连线＋同名网标”视图，用网标省去少量严重长连接。默认off；完整原图、线路及评分保留，局部组与网标另行验收，不接入现有RSI评分。已有JSON可独立处理，见[网标插件说明](docs/net-labels.md)。
-
-结构布局已完成完整对照及并联RLC专项复验；部分样例尚未满足15%线长或交叉门槛，结构策略继续默认关闭。结果与限制见[分阶段实现与实测结果](docs/structure-layout-results.md)。
-
-想看目前识别的子结构是什么样，见[子结构图鉴说明](docs/structure-gallery.md)。运行 `.\.venv\Scripts\python.exe .\tools\generate_structure_gallery.py` 可生成20张带角色、网表及实际识别记录的示意图，入口为 `output/structure-gallery/index.html`。
-
-## 日常运行
-
-盲测问卷用独立入口 `build_evaluation.py --manifest <图片对清单或正式图集清单> --out-dir <评测目录>` 生成，默认采用全部输入图片，不带历史图号特例。只需发出一份 HTML，客户返回一份含占比图和逐题明细的 HTML 报告。清单模板与命令见[单文件评测说明](docs/blind-evaluation.md)。
-
-在项目目录打开 PowerShell。当前工作区已有运行环境时，直接执行：
+在项目目录打开 PowerShell：
 
 ```powershell
 Set-Location D:\gongzuo
 .\.venv\Scripts\python.exe .\run_flow.py .\examples\3.cir
-```
-
-结果统一放在 `output/3/`：
-
-- **`3-formal.svg`：首选正式图，就近器件标号、统一字体、无端口白圈/虚框、安全合并局部VDD。**
-- `flow-result.json`：本次成品路径、正式图状态、输入指纹及实际总耗时。
-- `3-placement.json`：位置、朝向、完整线路、指标及验收结果。
-- `3-layered.svg`：彩色图。
-- `3-clean.svg`：保留原完整线路及独立供电标记的原生黑白图。
-- `formal/<指纹>/`：正式图方案记录，可独立复验和重绘。
-
-图5包含子电路，需明确选择 `dut`：
-
-```powershell
+# 仅定义子电路时，明确选择要画的单元
 .\.venv\Scripts\python.exe .\run_flow.py .\examples\5.cir --cell dut
+# 串行处理整个目录，完成一张即进入下一张
+.\.venv\Scripts\python.exe .\tools\run_dataset.py .\test_data2 --out-dir .\output\test-data2-new
 ```
 
-结果位于 `output/5-dut/`，首选打开 `5-dut-formal.svg`，同时保留布局JSON及原生黑白、彩色SVG。
+第一条命令的结果在 `output/3/`：
 
-所有日常生成物都在项目根目录的 `output/` 下，按输入名称分组；默认目录不附加布局模式。相同输入再次运行会更新同名结果。要比较不同参数，可用 `--out-dir .\output\3-compare` 指定独立目录。历史出图不作为代码或回归输入保留，需查看时重新生成。
+| 文件 | 用途 |
+| --- | --- |
+| `3-formal.svg` | 首选正式图：就近标号、统一字体、去白圈和调试框、安全合并局部 VDD |
+| `3-placement.json` | 位置、朝向、真实线路、指标、候选及验收记录 |
+| `3-layered.svg`、`3-clean.svg` | 原生彩色分析图和黑白图，保留完整信号线路 |
+| `flow-result.json` | 成品路径、正式图状态和实际耗时 |
+| `formal/<指纹>/` | 正式展示方案，可独立复验及重绘 |
 
-## 首次配置环境
+指定子电路时目录和文件名带单元名，例如 `output/5-dut/`。同名成功运行会更新日常结果；对照时用独立 `--out-dir`。失败不会覆盖已有成功产物。正式展示插件失败时应检查其状态，不能把旧文件当作本轮新图。
+
+## 当前默认流程
+
+```text
+候选2：正常120秒 → 必要时原候选修复30秒 → 局部救援30秒 → 扩距重试30秒
+候选3：同样独立运行
+→ 两者都失败，才尝试候选1；仍失败才总线后备（最多60秒）
+→ 合法候选共享5秒安全缩线，按折角少 → 交叉少 → 信号线短选图
+→ 复验、保存原生结果、正式出图
+```
+
+时间均为上限，提前完成立即继续；整图外层保护默认 **720 秒**。不是每张固定运行 720 秒，也不是两个候选共享 120 秒。[候选预算](docs/candidate-pipeline.md)解释恢复对象、跳过条件和显式回放；[选图规则](docs/candidate-selection.md)说明指标优先级。网页适配有自己的 300 秒调度，见适配分支的 `integrations/auto_canvas_huyangc/WEB.md`，不套用这里的阶段预算。
+
+默认新布局开启有源骨架与无源模块、主列及支路组织、端口冲突预检和正式出图。`flexible` 仍是默认无源移动策略；有可用模块计划时，候选2/3先优化有源骨架，再成组插入附件。实验 `structure`、`region`、`symmetry`、`readability`、`attachment`、`passive-embedding` 均默认关闭；默认支路组织与旧 `region` 实验是不同入口。
+
+安全缩线默认 `safe`、固定5秒、`strict`，不增加交叉；可显式使用 `--simplify-seconds auto` 或 `--route-tradeoff balanced`。额外网标视图和独立共享 VDD 视图默认关闭；**正式图内部的安全 VDD 合并默认开启**，用 `--formal-power-rails off` 单独关闭。完整开关表见[运行指南](docs/flow-guide.md#默认值与可选策略)。
+
+## 安装与已有结果
 
 已有 Python 3.12 时：
 
@@ -76,77 +54,27 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r .\requirements.txt
 ```
 
-没有可用 Python 时，使用项目安装脚本：
+没有可用 Python 时可运行 `setup_python.ps1`，它准备本地 Python 和虚拟环境。主算法依赖见 `requirements.txt`；符号资源已随仓库保留，不需要启动网页服务或安装 Node.js。
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\setup_python.ps1
-```
-
-脚本安装本地 Python 3.12.10 并创建 `.venv/`，依赖固定为 NetworkX 3.7。符号资源已随仓库提供，无需启动 Analog Canvas 网页项目或安装 Node.js。
-
-## 运行方式与预算
-
-**候选2、3各自独立运行120＋30＋30＋30秒的流程，再比较合法结果。** 两者都失败才以相同预算尝试候选1，最后才使用bus；完成一张立即进入下一张。详见[候选独立预算](docs/candidate-pipeline.md)。
-
-| 环节 | 当前默认 |
-| --- | --- |
-| 正常布局、SA与A* | 每个候选最多120秒，不再在38秒截断候选2 |
-| 原候选修复 | 每个失败候选额外最多30秒 |
-| 局部救援 | 同一候选继续失败时额外最多30秒 |
-| 1.5倍扩距重试 | 同一候选再失败时额外最多30秒 |
-| 总线后备 | 候选2、3、1均失败后才执行，最多60秒 |
-| 安全缩线 | 合法候选共享5秒、512案，计入总时限 |
-| 正式出图 | 默认开启，就近标号、GT风格字体与局部VDD合并；总时限内预留输出时间 |
-
-整图外层保护上限默认720秒，包含最坏三个候选630秒、bus60秒及解析和输出余量；阶段预算不随它自动缩放。CLI超时只停止本次拥有的子进程树；全部失败不伪造成功，也不覆盖已有合法成品。SA期间仍不调用A*。
-
-```powershell
-# 默认：独立候选预算，自动正式出图
-.\.venv\Scripts\python.exe .\run_flow.py .\examples\3.cir
-# 需要增加每候选正常时间时，同时提高整图保护上限
-.\.venv\Scripts\python.exe .\run_flow.py .\examples\3.cir --quality-seconds 180 --time-seconds 900
-# 整目录串行运行，同样使用独立候选预算，报告直接展示正式图
-.\.venv\Scripts\python.exe .\tools\run_dataset.py .\test_data2 --out-dir .\output\test-data2-new
-```
-
-`--quality-seconds`、`--rescue-seconds`等是总时限内的阶段上限，不能突破 `--time-seconds`。高级回放可用 `--time-seconds 0` 取消总限，再显式指定各阶段旧预算。正式排版可用 `--formal-output off` 关闭；只关闭正式图中的VDD合并用 `--formal-power-rails off`。
-
-普通新网表默认开启有源骨架优先的无源模块布局：**只自动生成候选2、3，有一份合法就按原规则选图；两份都失败，才修复它们自己的运行检查点，不自动初始化候选1**。合法候选共用原5秒、512案安全缩线后，严格按 **折角数 → 交叉数 → 信号线长** 升序选择；三项完全相同按候选编号稳定决定。结构指标和原综合分Q保留作诊断，不再覆盖排序，也不再用旧115%线长或交叉增长门槛排除合法候选。正常阶段预算（默认95秒）的累计截止点仍为候选2的40%、候选3的80%；剩余正常预算仅在两者都失败时用于同骨架续插、安全接口／模块通道救援或有限扩距，整体仍在100%截止。候选1可用`--candidate-id 1`显式回放。`--passive-skeleton off` 恢复原候选1→2→3生成顺序，最终仍使用新排序；保存坐标操作、baseline、legacy和其他显式布局实验不隐式叠加模块。需要最早的参考布局仍可显式 `--candidate-id 0`。详见[选图规则](docs/candidate-selection.md)和[候选调度](docs/preferred-candidates.md)。
-
-默认 `--passive-layout flexible`；未使用无源模块的结构候选中的R/C/L/D可以跨行、与其他无源件交换，也能使用MOS/BJT同行块外的合法空位。串联、并联和反馈关系用软评分保持规整，不锁成刚体；MOS/BJT的导通层级、原有组动作和镜像规则不变。`--passive-layout fixed` 恢复旧的无源固定行行为。候选0、legacy、baseline及不含R/C/L/D的电路沿用原布局算法；读取保存JSON重布、简化或重绘时不重新摆件。详细规则及对比命令见[无源灵活布局](docs/flow-guide.md#无源器件灵活跨行布局)。
-
-默认 `--symmetry-layout off`：日常命令跳过额外器件对称规整。显式 `auto` 时，候选1保留原摆法，候选2、3在SA和布线反馈之后、最终A*之前，尝试改善有明确对应关系的器件位置与朝向；仍允许多个局部轴，不要求导线镜像。每候选最多1秒，计入对应候选正常阶段及整图保护上限，不新增A*次数。最终选图统一遵守折角、交叉、信号线长顺序；旧对称选优报告仅作诊断。布局及历史实验见[器件对称布局说明](docs/symmetry-layout.md)。
-
-`--passive-layout` 控制SA中的无源动作；可选的对称收尾是后续独立阶段。当前默认已跳过对称收尾；若还需要旧的无源固定行SA，使用 `--passive-layout fixed`。
-
-安全简化默认 `--simplify-routes safe`：直线/L形、支路重接、三段替换和轨道内收按阶段逐步启用，共享5秒和512个候选上限。每阶段为后续操作预留配额，新操作先试，再与已启用操作轮转；每次接受后都从最新线路重新分析。只有完整验收通过，线长、折角、交叉均不增加，且线长或折角至少一项严格改善，才替换。超时保留当前已验收结果。最终同一份线路用于JSON和两种SVG，含线路的JSON重绘时只复验和绘制保存结果。完整顺序见[运行说明](docs/flow-guide.md#最终路线的安全简化)。
-
-当前缩线版本为v8，包含[v6配额调度](docs/route-scheduling-v6.md)、[v7轨道公平轮转](docs/track-fairness-v7.md)和[v8交叉净区预筛](docs/candidate-clearance-v8.md)。保留原几何规则和独立完整验收，`--simplify-routes off` 可关闭后处理。显式添加 `--simplify-seconds auto` 可按初始合法线路复杂度选择5～30秒，默认仍固定5秒；详见[自动预算](docs/auto-simplify-budget.md)。
-
-v4已通过313项测试及9套固定布局的v3/v4对照。最初更新图7主图：线长2812→2676、交叉3→2、折角24→20，后处理约0.93秒；原网表和器件位置不变。随后又按当前完整flow重跑了图4、6、5，最新来源、阶段及指标见[流程详解](docs/flow-walkthrough.md#examples)。先前的本地批量对比页仍记录v3历史结果。
-
-```powershell
-# 固定已有位置，跳过布局，仅重新布线；默认写到 output/3-rerouted/
+# 固定位置重新布线
 .\.venv\Scripts\python.exe .\run_flow.py --reroute-placement .\output\3\3-placement.json
-
-# 只简化保存的合法路线，跳过SA、A*和恢复；默认写到 output/3-simplified/
+# 保留布局，只缩短已保存的合法线路
 .\.venv\Scripts\python.exe .\run_flow.py --simplify-placement .\output\3\3-placement.json
-
-# 独立重绘保存的路线，不再优化
+# 只复验、重绘，不运行布局或寻路
 .\.venv\Scripts\python.exe .\render-clean.py .\output\3\3-placement.json .\output\3\3-redraw.svg
-
-# 运行回归测试；测试输入独立保存在 tests/fixtures/
-.\.venv\Scripts\python.exe -B -m unittest discover -s .\tests -q
 ```
 
-完整参数、器件范围、几何规则、恢复过程和复现命令见[运行说明](docs/flow-guide.md)。各文件用途和目录保留范围见[项目目录说明](docs/project-layout.md)。原来的[README-SA.md](README-SA.md)保留为说明入口。
+固定位置操作不会自动套用新布局策略；要应用新的支路或无源摆法，应从原网表重新运行。支持扁平网表和显式 `--cell`，不递归展开任意 X 子电路；器件与解析边界见[网表范围](docs/flow-guide.md#支持的网表)。几何验收不代替电路功能仿真，也不等同于美观验收。
 
-支持扁平网表和显式指定的子电路，不递归展开任意 X 实例。连接验收检查当前支持器件的可见引脚，不执行电路功能仿真。`examples/6.cir` 原始内容有未配对的 `.ends`，会如实报错；如需运行，应另存副本并补齐子电路声明或移除此孤立标记。
+## 代码与资料
 
-## 独立Agent实验
+- `netlist2schematic/`：主算法、恢复、后处理及插件；根目录保留兼容入口。[文件用途](docs/project-layout.md)
+- `tests/fixtures/`：必要的回归输入，不能当作历史出图清理。
+- `output/`：本地成品和对照页，不随 Git 提交；文档中的历史路径可能在清理后不存在。
+- `agent-rsi-demo/`、`shinka-circuit-rsi/`、`ShinkaEvolve/`：独立研究项目，不参与主 flow。它们的说明与冻结引擎单独维护。
+- [正式出图](docs/formal-figures.md)、[共享 VDD](docs/power-rails.md)、[网标](docs/net-labels.md)、[单文件盲测](docs/blind-evaluation.md)：展示与交付工具。
 
-`agent-rsi-demo/` 提供独立的电路生成Agent实验，包含起跑引擎、冻结参考、评测与源码改进循环。它不参与主flow的日常运行；使用方法见[Agent环境与启动说明](agent-rsi-demo/AGENT_SETUP.md)，已验证范围见[验证记录](agent-rsi-demo/VALIDATION.md)。模型配置和运行产物不进入Git，smoke仅用于接线验证，不代表真实模型自主优化。
+算法测试需主动执行，不会随出图自动运行：`.\.venv\Scripts\python.exe -B -m unittest discover -s .\tests -q`。最近已记录的验证见[验证状态](docs/validation-status.md)。
 
-## 上游资源
-
-符号定义和四份测试网表来自 [Analog Canvas](https://github.com/cascode-ai/analog-canvas)。保留的许可证与来源说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。`output/`、`.cache/`、`.venv/`、`.python/` 和本地 `archive/` 均不进入 Git。
+符号等资源来自 [Analog Canvas](https://github.com/cascode-ai/analog-canvas)，许可证和来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

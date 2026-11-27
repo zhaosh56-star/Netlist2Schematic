@@ -1,5 +1,7 @@
 # 可选网标展示：保留局部连线，省去远距离大绕线
 
+> 2026-11-27????????????????????????????????????????????????????[????](flow-guide.md)????????[????](validation-status.md)?????????????
+
 网标插件把完整合法原理图中的少量远程连接，改为“局部实体连线＋同名网标”。例如一个网络有七个端子，可以保留左侧三端互联、右侧三端互联和一个独立端子，每个局部组接一个相同网名。它不会把每个端子都单独贴标签。
 
 插件默认关闭，只用于主flow的额外展示。原网表、器件位置、完整线路、`metrics`、`quality.score`和原验收结果保持原含义；网标版可见线长不是A*布线质量。它不修改RSI的冻结参考、验收或评分。
@@ -100,4 +102,4 @@ Set-Location D:\gongzuo
 
 StrongARM的`clk`分为四栅极局部组和尾管单端组，`net3`也做了安全拆分；OTA＋CMFB处理了跨区`vop1`。已对这些网标结果做浏览器栅格化目视检查，并补了普通T接、网标短引线T接的真实分支圆点回归。
 
-入口：[本轮对照](../output/net-label-comparison/index.html)、[完整测试日志](../output/net-label-comparison/audits/full-tests.log)、[输入与引擎不变审计](../output/net-label-comparison/audits/batch-verification.json)。
+入口：`output/net-label-comparison/index.html`、`output/net-label-comparison/audits/full-tests.log`、`output/net-label-comparison/audits/batch-verification.json`。

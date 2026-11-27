@@ -1,5 +1,7 @@
 # 结构布局分阶段实现与实测结果
 
+> 历史记录（2026-11-27归档）：以下保留各轮当时的策略、预算、测试数量和结论，不作为当前默认值或可直接复现的保证。当前说明见[文档入口](../README.md)、[候选预算](../candidate-pipeline.md)和[选图规则](../candidate-selection.md)。文中的 output 路径是未随 Git 保存的本地证据。
+
 ## 当前默认：启用长列与短旁支规整
 
 已按用户确认固化到默认主flow：新网表使用 `layered + structured` 时，省略参数即采用 `--column-layout auto`，可显式 `--column-layout off` 恢复此前的列处理与原质量选优。候选1仍为参照，候选2/3执行本页介绍的通用规整；不改SA、A*权重、几何规则、恢复预算或原网表。
@@ -17,7 +19,7 @@
 
 ## 2026-11-16：长列与短旁支规整试验
 
-新增独立模块 [column_layout.py](../netlist2schematic/plugins/columns/column_layout.py)，开发期通过 `--column-layout auto` 试用，当时默认 off；当前已按上节固化到默认主flow。不隐式启用旧结构、区域、对称、readability 或附件实验；这些布局实验与新开关互斥。
+新增独立模块 [column_layout.py](../../netlist2schematic/plugins/columns/column_layout.py)，开发期通过 `--column-layout auto` 试用，当时默认 off；当前已按上节固化到默认主flow。不隐式启用旧结构、区域、对称、readability 或附件实验；这些布局实验与新开关互斥。
 
 先按真实导通端及固定显示行建立有向图。无歧义的续接形成列；真正分叉处必须有复合结构端口角色，或两条互不共享器件、至少两级不同控制节点的对应长支路证据，才确定续接。仅凭某条路径更长、共同VDD/GND/CLK，不选择主列；同等分叉保留歧义，公共尾节点作为接口。每个有源器件只属于一条最低层列，较短的导通接入支路另记旁支，不以偏置连接传递合并。
 
@@ -27,7 +29,7 @@
 
 JSON增加 `layout_columns`，记录依据、列成员、短支路接口、未确认分叉、覆盖数、前后断点／引脚偏差、动作、预算及选择原因。保存、重布、简化和重绘只恢复坐标和重新测量，不再次规整。
 
-图10已完成真实出图及独立复验：两条四层长列完整保留，错列1→0；最终线长2002→2226（+11.2%），交叉0→0，折角13→16。结构更连贯，但不是所有布线指标都变好。主项目2143项测试通过；[test_data2整批对照](../output/column-layout-trial-20261116/index.html)另记录全部21张的实际结果，原图不覆盖。
+图10已完成真实出图及独立复验：两条四层长列完整保留，错列1→0；最终线长2002→2226（+11.2%），交叉0→0，折角13→16。结构更连贯，但不是所有布线指标都变好。主项目2143项测试通过；`output/column-layout-trial-20261116/index.html`另记录全部21张的实际结果，原图不覆盖。
 
 整批已完成：21/21通过原始引脚、同网连接、完整几何及独立重绘验收，18张正常、3张局部救援，无总线降级。17张与关闭版的位置、线路和指标完全一致；变化为图2、6、10、13。最终总线长51167→51523（+0.70%），交叉43→42，折角322→320；逐图均满足线长115%及交叉护栏，原小结构穿插未增加。
 
@@ -41,7 +43,7 @@ JSON增加 `layout_columns`，记录依据、列成员、短支路接口、未�
 
 ## 2026-11-16：明确串接段的对齐收尾
 
-新增 [series_alignment.py](../netlist2schematic/layout/series_alignment.py)，默认structured新布局在SA、朝向／间距、候选3反馈和端口预检之后，捕获恢复快照、最终A*之前执行。不增加候选数或A*次数；legacy/baseline、保存位置重布、单独缩线和独立重绘不重新执行摆件。structure、region、readability、attachment和实验对称开启时，继续使用各自的收尾，不叠加本补丁。
+新增 [series_alignment.py](../../netlist2schematic/layout/series_alignment.py)，默认structured新布局在SA、朝向／间距、候选3反馈和端口预检之后，捕获恢复快照、最终A*之前执行。不增加候选数或A*次数；legacy/baseline、保存位置重布、单独缩线和独立重绘不重新执行摆件。structure、region、readability、attachment和实验对称开启时，继续使用各自的收尾，不叠加本补丁。
 
 仅接受同极性MOS的D/S或BJT的C/E唯一串接：节点恰有两个导通端，其他接点只能为栅／基极控制端。供电节点、额外有源／无源／源器件的导通分叉、同端相接、显示行方向冲突均跳过。依据是类型和端口连接，不使用文件名、实例名、网名特例或GT坐标，也不将全部串接关系合成刚体。
 
@@ -49,7 +51,7 @@ JSON增加 `layout_columns`，记录依据、列成员、短支路接口、未�
 
 JSON新增 `series_alignment`：依据、跳过原因、前后误差、动作、候选数及耗时。原SA能量和估价记录保存在收尾报告中，`optimization_metrics`更新为收尾后的估价，原 `quality.score`仍由真实布线计算。候选反馈继承的对齐动作也有记录；恢复／保存输出时按实际坐标重新测量，不重新摆件。
 
-[图10 GT／旧版／新版对照](../output/series-alignment-20261116/index.html)使用同一网表、种子20261029、20000次总提案和同样60秒档预算（正常40秒、救援10秒、严格缩线5秒及开销）：
+`output/series-alignment-20261116/index.html`使用同一网表、种子20261029、20000次总提案和同样60秒档预算（正常40秒、救援10秒、严格缩线5秒及开销）：
 
 | 指标 | 修改前 | 修改后 |
 | --- | ---: | ---: |
@@ -70,13 +72,13 @@ JSON新增 `series_alignment`：依据、跳过原因、前后误差、动作、
 
 `circuit_structures.analyze_structures()` 已保留差分对、折叠核心、锁存等记录及父子关系，小结构并没有被识别器删除。但 `_relations()` 把重叠高置信结构合并为集体移动块，旧 `blocks_contiguous()` 仅保护这些大块的边界。大块内其他成员可以插进小差分对。折叠核心的旧角色顺序还偏好“输入左—折叠左—折叠右—输入右”，与小输入对完整性冲突。
 
-新增 [structure_hierarchy.py](../netlist2schematic/layout/structure_hierarchy.py)，保留大块集体移动，额外保护已确认的同行小块。初排先把子块作为单位排序，SA的移动、镜像、拒绝、重热和最佳状态恢复继续检查相同约束。小块之间允许整体换位，空白通道不被禁止；不把父块整个二维包围盒设为禁区。已有附件模式仍按明确宿主证据允许相关附件进入，无关器件不因此获得豁免。
+新增 [structure_hierarchy.py](../../netlist2schematic/layout/structure_hierarchy.py)，保留大块集体移动，额外保护已确认的同行小块。初排先把子块作为单位排序，SA的移动、镜像、拒绝、重热和最佳状态恢复继续检查相同约束。小块之间允许整体换位，空白通道不被禁止；不把父块整个二维包围盒设为禁区。已有附件模式仍按明确宿主证据允许相关附件进入，无关器件不因此获得豁免。
 
 保护依据仅来自高置信结构和已确认复合结构的明确端口角色。共电源、共地、共偏置本身不新增配对。无法形成层级的部分重叠关系记录歧义，不靠实例名决定；跨显示行的配对记录 `different_fixed_rows`，本次不强行改有源行。原解析器、SA权重、A*代价、恢复链和安全缩线算法均未调整。子块复用已有分散评分权重，新增保护不调用A*。
 
 ### 代表样例与边界
 
-对照页：[GT、同预算旧版、新版](../output/structure-hierarchy-20261116/index.html)，原输出和网表保持原样。
+对照页：`output/structure-hierarchy-20261116/index.html`，原输出和网表保持原样。
 
 | 对象 | 结果 |
 | --- | --- |
@@ -91,7 +93,7 @@ JSON新增 `series_alignment`：依据、跳过原因、前后误差、动作、
 
 ### `test_data2` 全部21图完整流程复验
 
-[GT／原成品／当前成品对照](../output/structure-hierarchy-test-data2/20261116/index.html)覆盖全部21份网表，保持种子20261029、20000次总提案、flexible、端口预检和严格缩线；其他实验布局仍关闭。每张顺序执行，首档总执行上限60秒（正常40、救援10、缩线5及开销），失败或超出历史美观护栏时最多再执行一次120秒档（正常90、救援20、缩线5及开销）。本次不运行扩距与总线后备，也不改变主flow默认预算。旧参照是300秒正常预算，须区分预算和候选选择造成的差异。
+`output/structure-hierarchy-test-data2/20261116/index.html`覆盖全部21份网表，保持种子20261029、20000次总提案、flexible、端口预检和严格缩线；其他实验布局仍关闭。每张顺序执行，首档总执行上限60秒（正常40、救援10、缩线5及开销），失败或超出历史美观护栏时最多再执行一次120秒档（正常90、救援20、缩线5及开销）。本次不运行扩距与总线后备，也不改变主flow默认预算。旧参照是300秒正常预算，须区分预算和候选选择造成的差异。
 
 - 21/21通过原始可见引脚连接、同网连通、异网分离、器件／标记几何及独立重绘验收；18张正常A*、3张局部救援，无失败图或总线结果。
 - 共24次完整flow，整批约969秒。02、09、18首档已合法但超出旧版线长／交叉护栏，120秒复验均恢复到旧成品；其余不再重跑。原网表、源码和符号资源指纹一致，旧输出未修改。
@@ -158,7 +160,7 @@ JSON新增 `series_alignment`：依据、跳过原因、前后误差、动作、
 
 其余未通过逐图门槛的案例为图3、图6、data07、data12、data15、data17、data22和data23，
 逐项原因在完整对照页。上述四个核心案例另做了主种子及额外种子的8组GT／off／auto视觉检查，
-见[视觉审查](../output/structure-incremental-comparison/visual-review/index.html)。这不是全部32例逐图审美通过的声明。
+见`output/structure-incremental-comparison/visual-review/index.html`。这不是全部32例逐图审美通过的声明。
 
 `branch_error=0`仅说明当前已接受、已量测关系的残差为零，不覆盖所有分叉主支路。
 `consumption`中的阶段和目录应结合实际actions、尝试候选及最终selected_candidate读取，
@@ -167,8 +169,8 @@ JSON新增 `series_alignment`：依据、跳过原因、前后误差、动作、
 因此，本轮完成了证据纠偏、关系扩展和布局接入，但整体美观发布门槛未通过，
 `--structure-layout`继续默认off；原几何规则、交叉门槛和线长门槛均未放宽。
 
-对照入口：[本轮总览](../output/structure-incremental-comparison/index.html)、[识别证据图册](../output/structure-incremental-comparison/recognition/index.html)、
-[完整flow对照](../output/structure-incremental-comparison/full/index.html)。识别图册明确区分历史图片与新识别记录，
+对照入口：`output/structure-incremental-comparison/index.html`、`output/structure-incremental-comparison/recognition/index.html`、
+`output/structure-incremental-comparison/full/index.html`。识别图册明确区分历史图片与新识别记录，
 不能把它当作新布局出图或准确率。完整flow报告按相同v5简化后的最终结果检查发布门槛。
 
 ```powershell
@@ -208,7 +210,7 @@ JSON新增 `series_alignment`：依据、跳过原因、前后误差、动作、
 - 全批期间源文件、模型声明、GT、符号与运行代码哈希保持一致。
 - 29组对照中24组通过全部发布门槛，5组未通过。因此没有切换默认值。
 
-入口：[全量对照](../output/structure-layout-comparison/first-pass-index.html)、[原始JSON](../output/structure-layout-comparison/first-pass-comparison.json)。GT仅用于视觉参照，没有当作同规则下的数值最优解。
+入口：`output/structure-layout-comparison/first-pass-index.html`、`output/structure-layout-comparison/first-pass-comparison.json`。GT仅用于视觉参照，没有当作同规则下的数值最优解。
 
 代表结果均为最终v5简化后的线路：
 
@@ -241,7 +243,7 @@ JSON新增 `series_alignment`：依据、跳过原因、前后误差、动作、
 
 专项重新运行完整off/auto：两组RLC现在各自成组，一组横排、一组竖排；规整残差0.35→0.0333，交叉保持1、折角保持8，完整验收与独立重绘通过。线长904→1042，增加15.27%，略超15%门槛，仍不能据此默认启用。
 
-入口：[最新RLC专项](../output/structure-layout-comparison/parallel-refinement/index.html)。第一版全批没有被覆盖或冒充成修复后的全版本重跑。
+入口：`output/structure-layout-comparison/parallel-refinement/index.html`。第一版全批没有被覆盖或冒充成修复后的全版本重跑。
 
 影响检测在当前数据集中只找到data07两组并联负载。对其余28个支持案例做了隔离旧／新代码的定迭代初排与SA等价检查：84对候选、2352项状态与能量精确一致。此检查没有调用A*，不是28个完整flow的再次运行。
 
@@ -272,4 +274,4 @@ JSON新增 `series_alignment`：依据、跳过原因、前后误差、动作、
 .\.venv\Scripts\python.exe .\tools\compare_structure_layouts.py --jobs 6
 ```
 
-更完整的规则、字段和执行顺序见[结构布局说明](structure-layout.md)。目前尚未解决的是所有复杂支路都能形成GT式宏观排列、每例都在15%线长内，以及全部大绕线都可收紧；这些限制与电气／几何正确性分别记录。
+更完整的规则、字段和执行顺序见[结构布局说明](../structure-layout.md)。目前尚未解决的是所有复杂支路都能形成GT式宏观排列、每例都在15%线长内，以及全部大绕线都可收紧；这些限制与电气／几何正确性分别记录。
