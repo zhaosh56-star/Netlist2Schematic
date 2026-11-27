@@ -1,5 +1,7 @@
 # 正式电路图导出
 
+> 2026-11-27????????????????????????????????????????????????????[????](flow-guide.md)????????[????](validation-status.md)?????????????
+
 正式出图已封装为 `netlist2schematic/plugins/formal_output/` 插件。默认开启，在主 flow 最后调用；用 `--formal-output off` 关闭。它复用现有字体排版与 VDD 合并规则，不重新运行布局、SA、A*、恢复或安全缩线。
 
 ## 主 flow 最后生成正式图
@@ -29,7 +31,7 @@ Set-Location D:\gongzuo
 
 已有v1正式JSON重绘仍用冻结v1排版，保持字节一致；主动重新导出采用v2。原生JSON与完整线路始终保持原义。
 
-单图和默认批量命令共用120秒总时限，包括正常候选、失败恢复、缩线和正式收尾。默认正常95秒、局部救援15秒，留出缩线与输出余量；扩距或总线只使用剩余时间。单独对已有JSON调用本插件不运行SA或A*。预算与命令见[批量说明](batch-flow.md)。
+当前主CLI和默认批量采用每候选独立120＋30＋30＋30秒、整图720秒外层保护，正式输出也受剩余总时间限制；不是早期每图120秒的共享调度。单独处理已有JSON不运行SA或A*。预算见[候选流程](candidate-pipeline.md)，批量命令见[批量说明](batch-flow.md)。
 
 ## 对已有 JSON 单独调用
 
@@ -118,7 +120,7 @@ Set-Location D:\gongzuo
 
 另用一个全新的 RC 电路实际运行了带 `--formal-output auto` 的完整 flow，正常产生原 JSON、两种 SVG 及额外正式图。以上没有重新跑整批 SA/A*；检查记录保存在 `output/formal-plugin-validation/`。
 
-## 本轮就近标号与120秒默认实测
+## 历史验证：就近标号与当时120秒整图预算
 
 本地对照页为 `output/default-flow-120s/index.html`，指标记录为同目录的 `label-comparison.json`：
 

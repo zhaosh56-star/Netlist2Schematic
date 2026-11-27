@@ -2,7 +2,7 @@
 
 日常仍从项目根目录运行 `run_flow.py`。实际 Python 实现已经按职责放入 `netlist2schematic/`：主流程代码和可选插件分开，输入网表、出图、测试及独立 RSI 项目各有自己的目录。
 
-根目录保留原 Python 兼容入口，以及独立的评测生成入口；读算法时应打开包内实现。旧文件名到新路径的完整对应表见 [source_map.json](../netlist2schematic/source_map.json)。本次分类不改变各实验开关的默认值。
+根目录保留原 Python 兼容入口，以及独立的评测生成入口；读算法时应打开包内实现。旧文件名到新路径的完整对应表见 [source_map.json](../netlist2schematic/source_map.json)。目录分类不代表默认开关；最新状态统一见[文档目录](README.md)和[运行指南](flow-guide.md)。
 
 ```text
 Netlist2Schematic/
@@ -32,9 +32,9 @@ Netlist2Schematic/
 │  │  ├─ attachment/           # 无源与源器件联合布局实验
 │  │  ├─ columns/              # 当前默认的连续长列和短旁支规整
 │  │  ├─ passive_embedding/    # 成品之后的安全无源试摆（默认off）
-│  │  ├─ passive_skeleton/     # 默认有源骨架、串并联模块；仅2/3，均失败后修复原候选
+│  │  ├─ passive_skeleton/     # 默认有源骨架、串并联模块及有界二维找位
 │  │  ├─ net_labels/           # 局部实体连线＋同名网标的额外视图
-│  │  └─ preflight/            # 最终 A* 前的静态端口修复实验
+│  │  └─ preflight/            # 新布局默认启用的静态端口预检修复
 │  └─ source_map.json          # 旧文件名 → 当前实现路径
 ├─ symbol-geometry.json        # 符号几何缓存，仍保留在根目录
 ├─ analog-canvas-main/         # 上游符号定义、验收网表及许可证
@@ -52,7 +52,7 @@ Netlist2Schematic/
 ├─ archive/                    # 本地历史材料，如原始 TXT，不是运行依赖
 ├─ requirements.txt            # 主项目依赖
 ├─ setup_python.ps1            # 本地 Python 和虚拟环境配置
-├─ README.md / README-SA.md    # 日常使用与详细说明入口
+├─ README.md / docs/README.md    # 日常使用与详细说明入口
 ├─ .venv/ / .python/           # 本地运行环境，不进入 Git
 └─ .cache/                     # 本地工具缓存，不进入 Git
 ```
@@ -65,10 +65,10 @@ Netlist2Schematic/
 | 解析 | `netlist/netlist_core.py`、`netlist/parse_netlist.py` | 读取扁平电路或显式指定的 cell，规范器件与引脚连接 |
 | 分层与识别 | `recognition/device_leveling.py`、`circuit_structures.py`、`transistor_topology.py`、`vf2_match.py` | 计算导通层级，识别有角色的子结构；VF2 保留给旧参考路径 |
 | 布局 | `layout/structured_placement.py`、`passive_placement.py`、`layout_quality.py` | 结构初排、SA、无源跨行和真实布线质量测量 |
-| 默认模块布局 | `plugins/passive_skeleton/` | 候选2/3先排有源骨架，再插入真实串并联无源模块；均失败后修复原候选 |
+| 默认模块布局 | `plugins/passive_skeleton/` | 候选2/3先保有源框架，再插入真实串并联模块；每份独立恢复 |
 | 基础布局能力 | `layout/place_layered.py`、`layout/place_and_route.py` | Placement、真实引脚坐标、快速估价和旧布局参考；结构化流程也会复用 |
 | 最终布线 | `routing/sa_routing.py`、`orthogonal_router.py`、`routing_rules.py` | 正交 A*、拆网重布、真实引脚连通和几何验收 |
-| 失败恢复 | `recovery/candidate_rescue.py`、`local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 独立保留候选失败现场，在共享预算内救援，再按既定顺序扩距、总线恢复 |
+| 失败恢复 | `recovery/candidate_rescue.py`、`local_rescue.py`、`spacing_retry.py`、`fallback_bus.py` | 独立保留候选失败现场，每候选独立修复、救援、扩距；均失败才候选1及总线 |
 | 安全缩线 | `postprocess/simplify_routes.py`、`route_reattachment.py`、`route_patterns.py`、`route_tracks.py` | 在已合法线路上生成、验收及提交更短的候选 |
 | 缩线策略与预算 | `postprocess/simplify_budget.py`、`route_tradeoff.py` | 固定或自动预算，以及 strict／balanced 的接受规则 |
 | 绘图 | `rendering/sa_render.py`、`presentation.py` | 同一份验收线路生成彩色和黑白 SVG，安排文字和端口展示 |
@@ -106,7 +106,7 @@ Netlist2Schematic/
 - `tests/fixtures/` 是冻结的回归输入，包含网表、布局和失败现场。它们不是历史出图，不能作为清理输出的一部分删除。
 - `tools/` 保存开发对照和图鉴工具，例如 `compare_layouts.py`、`compare_attachment_integration.py` 和 `generate_structure_gallery.py`。按工具说明选择只读复验或完整出图；有些对照工具会运行多次完整 flow。
 - `tools/build_blind_review.py` 与 `tools/blind_review/` 保存评测生成器、配置和页面。根目录 `build_evaluation.py` 调用它们；生成后只需把一份 HTML 发给客户。它不参与布局或布线，见[评测说明](blind-evaluation.md)。
-- `docs/` 保存解释与实测记录；历史版本的性能数字、测试数量和停止状态仍按当时口径保留。
+- `docs/`保存当前使用与设计说明，`docs/history/`保存逐轮实测和旧策略；从[文档目录](README.md)查找，不把历史默认值当作当前设置。
 - `dist/` 只存放交付包，`notes/` 只存放手工笔记。运行主 flow 不依赖这两个目录中的文件。
 
 当前含线路的成功 JSON 在固定布局重布、单独缩线或独立重绘时，继续恢复保存坐标；目录整理不要求重新布局。既有成功图仍保留在原输出位置。各轮对照报告是否完成、是否通过发布门槛，应读取对应记录，不能因源码已经归档到插件目录就认定实验已发布。
@@ -129,7 +129,7 @@ python tools/package_demo.py --out ..\dist
 
 这些命令是按需打包，不是主 flow 的前置步骤。
 
-`.venv/` 可能引用 `.python/distribution/`，因此两者一起保留；移动项目或换机器时按 [运行说明](flow-guide.md#环境重建与验证) 重建环境。`.cache/` 可含本地 Git 等工具，清理前应确认工具已经有其他可用位置。
+`.venv/` 可能引用 `.python/distribution/`，因此两者一起保留；移动项目或换机器时按 [运行说明](flow-guide.md#日常运行) 重建环境。`.cache/` 可含本地Git、worktree和运行服务缓存，不应把整个目录当作无用输出删除。
 
 ## 常用入口保持不变
 
@@ -149,7 +149,9 @@ Set-Location D:\gongzuo
 
 逐步理解算法见 [当前flow逐步详解](flow-walkthrough.md)；参数、预算和环境说明见 [flow-guide.md](flow-guide.md)。通过 [source_map.json](../netlist2schematic/source_map.json) 可以从旧文档中的模块名找到当前源码。
 
-## 本次目录整理的验证
+## 历史代码搬迁验证
+
+以下记录早期Python模块分类迁移的检查，不是2026-11-27本次Markdown整理的新跑结果。最近算法验证见[验证状态](validation-status.md)。
 
 54个实现模块均可导入，六个根命令入口可从其他工作目录调用。两组共199项针对性回归通过，覆盖解析、布局插件接口、保存恢复、网标、源码指纹，以及短小RC例子的入口和重绘；没有启动数据集批量出图或完整1197项测试。
 

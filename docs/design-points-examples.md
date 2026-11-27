@@ -1,6 +1,8 @@
 # 默认布局设计点：小电路前后对照
 
-给别人讲解时，直接打开或转发 [前后对照页](../output/design-points-gallery/index.html)。所有图片、讲解、网表均已内嵌，只需这一个 HTML；支持点击放大、逐页讲解、打印为 PDF。
+> 2026-11-27????????????????????????????????????????????????????[????](flow-guide.md)????????[????](validation-status.md)?????????????
+
+给别人讲解时，直接打开或转发 `output/design-points-gallery/index.html`。所有图片、讲解、网表均已内嵌，只需这一个 HTML；支持点击放大、逐页讲解、打印为 PDF。
 
 这里只讲此前逐步加入的具体设计，不展开解析、SA、A* 的全部技术细节。以下方法已在普通新网表的默认路径中，满足各自条件时才执行。
 
@@ -98,4 +100,4 @@ Set-Location D:\gongzuo
 
 每例目录保存 `example.cir`、`before.svg`、`after.svg`、`record.json`。记录包括实际位置、朝向、线路、指标、独立验收、方法诊断和实现哈希；顶层 `manifest.json` 保存核对到的默认开关。没有修改算法、默认设置、原输入或已有成品，也没有重跑数据集。
 
-旧 structure/region/readability/attachment/symmetry 实验仍默认关闭。本页无源/源器件能力来自默认 `passive_skeleton + columns`，不依赖旧附件实验。正式字体、VDD 合并和网标另行显式调用。完整 flow 最终仍按 **折角少 → 交叉少 → 信号线长短** 选图。
+旧 structure/region/readability/attachment/symmetry 实验仍默认关闭。本页无源/源器件能力来自默认 `passive_skeleton + columns`，不依赖旧附件实验。教学图单独展示这些设计点；日常完整flow已经默认生成正式字体与安全局部VDD合并的正式版，额外网标仍需显式开启。最终按 **折角少 → 交叉少 → 信号线长短** 选图。
